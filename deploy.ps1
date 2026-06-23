@@ -22,6 +22,10 @@
     # PI 기본값을 스크립트 상단에서 수정하면 -PI 생략 가능
 #>
 
+# 한글 깨짐 방지
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 param(
     [Parameter(Position = 0)]
     [ValidateSet('setup-ssh', 'deploy', 'sync', 'deps', 'run', 'run-headless', 'ping', 'help')]
