@@ -173,7 +173,7 @@ class _TFLiteBackend:
             except ImportError:
                 import tensorflow.lite as tflite  # type: ignore[no-redef]
 
-        self._interp = tflite.Interpreter(model_path=str(_TFLITE_MODEL))
+        self._interp = tflite.Interpreter(model_path=str(_TFLITE_MODEL), num_threads=4)
         self._interp.allocate_tensors()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
