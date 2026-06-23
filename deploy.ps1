@@ -73,7 +73,7 @@ function Invoke-SetupSSH {
 
     # Register public key on Pi (password required this one time)
     Write-Step "Registering public key on Pi... (enter Pi password when prompted)"
-    Get-Content $pubPath | ssh $Target "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    Get-Content $pubPath | ssh $Target "mkdir -p ~/.ssh && chmod go-w ~ && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
     if (-not $?) {
         Write-Fail "Failed. Verify PI=$PI and User=$User are correct."
         return
