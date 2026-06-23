@@ -251,15 +251,18 @@ class _Picamera2Source:
     def __init__(self, width: int = 640, height: int = 480) -> None:
         from picamera2 import Picamera2  # type: ignore[import]
         self._cam = Picamera2()
+        # RGB888 명시적 요청 후 BGR로 변환 — picamera2는 BGR888을 지정해도
+        # 실제로 RGB 배열을 반환하는 경우가 있어 명시적 변환이 필요함
         cfg = self._cam.create_preview_configuration(
-            main={"format": "BGR888", "size": (width, height)}
+            main={"format": "RGB888", "size": (width, height)}
         )
         self._cam.configure(cfg)
         self._cam.start()
         time.sleep(0.5)  # 카메라 센서 워밍업
 
     def read(self) -> tuple[bool, np.ndarray]:
-        return True, self._cam.capture_array()
+        frame = self._cam.capture_array()
+        return True, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
     def release(self) -> None:
         self._cam.stop()

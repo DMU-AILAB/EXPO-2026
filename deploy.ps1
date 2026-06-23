@@ -16,7 +16,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('setup-ssh', 'deploy', 'sync', 'deps', 'run', 'run-headless', 'ping', 'help')]
+    [ValidateSet('setup-ssh', 'deploy', 'sync', 'deps', 'coral-setup', 'run', 'run-headless', 'ping', 'help')]
     [string]$Action = 'help',
 
     # Pi IP or hostname (raspberrypi.local works when mDNS is available)
@@ -135,6 +135,30 @@ function Invoke-Deps {
     }
 }
 
+# ── coral-setup: Install Edge TPU runtime + compile model on Pi ──────
+function Invoke-CoralSetup {
+    Write-Step "Adding Google Coral apt repository..."
+    ssh $Target @"
+echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
+curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg
+sudo apt-get update -q
+"@
+
+    Write-Step "Installing Edge TPU runtime and compiler on Pi..."
+    ssh $Target "sudo apt-get install -y libedgetpu1-std edgetpu-compiler"
+    if (-not $?) { Write-Fail "Edge TPU runtime install failed"; return }
+    Write-Ok "libedgetpu1-std + edgetpu-compiler installed"
+
+    Write-Step "Compiling TFLite model for Edge TPU on Pi..."
+    ssh $Target "cd $RemoteDir/runs/white_cane_v1-2/weights && edgetpu_compiler best_int8.tflite"
+    if ($?) {
+        Write-Ok "Compiled: best_int8_edgetpu.tflite"
+        Write-Info "Restart run-headless to use Coral backend automatically."
+    } else {
+        Write-Fail "Compilation failed. Check edgetpu-compiler is installed."
+    }
+}
+
 # ── deploy: sync + deps ──────────────────────────────────────────────
 function Invoke-Deploy {
     Invoke-Sync
@@ -171,6 +195,7 @@ VisionGuide Pi Deploy Script
   .\deploy.ps1 deploy       [-PI <ip>]   Transfer files + install deps
   .\deploy.ps1 sync         [-PI <ip>]   Re-send files only
   .\deploy.ps1 deps         [-PI <ip>]   Install deps only
+  .\deploy.ps1 coral-setup  [-PI <ip>]   Install Edge TPU runtime + compile model for Coral
   .\deploy.ps1 run-headless [-PI <ip>]   Start MJPEG stream on Pi
   .\deploy.ps1 run          [-PI <ip>]   Start display mode on Pi
   .\deploy.ps1 ping         [-PI <ip>]   Check Pi connection
@@ -189,6 +214,7 @@ switch ($Action) {
     'deploy'       { Invoke-Deploy }
     'sync'         { Invoke-Sync }
     'deps'         { Invoke-Deps }
+    'coral-setup'  { Invoke-CoralSetup }
     'run-headless' { Invoke-RunHeadless }
     'run'          { Invoke-Run }
     'ping'         { Invoke-Ping }
