@@ -1,4 +1,4 @@
-# Raspberry Pi 4 / Raspberry Pi OS 64-bit Bookworm (Python 3.11) 전용
+# Raspberry Pi 4 / Debian Trixie (Python 3.13) 전용
 #
 # picamera2는 pip 대신 apt로 설치:
 #   sudo apt-get install -y python3-picamera2
@@ -6,7 +6,14 @@
 # ultralytics / torch / torchvision 은 Pi에 설치하지 않습니다.
 # TFLite 백엔드(best_int8.tflite)가 우선 사용되므로 불필요합니다.
 
+# ── Python 3.13 (system) — 메인 앱 (카메라, MJPEG 스트리밍) ──────────
 # tflite-runtime은 Python 3.11+ ARM64 미지원 → ai-edge-litert 사용
 ai-edge-litert>=1.0.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
+
+# ── Python 3.9 (~/.python39) — Coral EdgeTPU 전용 서브프로세스 ────────
+# 설치: make install-edgetpu-py39  (Python 3.9 빌드 후 실행)
+#   tflite_runtime==2.5.0.post1  (Coral 공식, libedgetpu v16.0 전용 호환)
+#   numpy<2                      (tflite_runtime 2.5.0 은 NumPy 1.x 로 빌드됨)
+#   opencv-python-headless>=4.8.0

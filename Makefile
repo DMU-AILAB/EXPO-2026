@@ -15,18 +15,19 @@
 # =============================================================================
 
 PI   ?= raspberrypi.local
-USER ?= pi
+USER ?= ailab
 DEST  = $(USER)@$(PI):~/visionguide
 
 # Pi에 배포할 Python 소스 — 새 파일 추가 시 여기에 추가
 DEPLOY_PY = \
 	camera_live_pi.py \
-	detect.py
+	detect.py \
+	edgetpu_infer.py
 
 # Pi에 배포할 모델 파일
 DEPLOY_MODEL = runs/white_cane_v1-2/weights/best_int8.tflite
 
-.PHONY: deploy sync deps run-headless run ping help
+.PHONY: deploy sync deps install-edgetpu-py39 run-headless run ping help
 
 help:
 	@echo "VisionGuide Pi 배포 도구"
@@ -51,11 +52,20 @@ sync:
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
 	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v1-2/weights/
 
-## Pi에 Python 의존성 설치
+## Pi에 Python 의존성 설치 (Python 3.13 메인 앱용)
 deps:
 	@echo "[DEPS] Pi 의존성 설치..."
 	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 || true"
-	ssh $(USER)@$(PI) "pip install -q tflite-runtime opencv-python-headless numpy"
+	ssh $(USER)@$(PI) "pip install --break-system-packages -q ai-edge-litert opencv-python-headless numpy"
+
+## Python 3.9 EdgeTPU 전용 패키지 설치 (Python 3.9 빌드 후 실행)
+install-edgetpu-py39:
+	@echo "[PY39] Python 3.9 EdgeTPU 의존성 설치..."
+	ssh $(USER)@$(PI) "~/.python39/bin/pip3 install -q \
+		'https://github.com/google-coral/pycoral/releases/download/v2.0.0/tflite_runtime-2.5.0.post1-cp39-cp39-linux_aarch64.whl' \
+		'numpy<2' \
+		opencv-python-headless"
+	@echo "[완료] Python 3.9 EdgeTPU 의존성 설치 완료"
 
 ## Pi에서 headless MJPEG 스트리밍 시작 (모니터 없는 경우)
 run-headless:

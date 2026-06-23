@@ -16,7 +16,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('setup-ssh', 'deploy', 'sync', 'deps', 'coral-setup', 'run', 'run-headless', 'ping', 'help')]
+    [ValidateSet('setup-ssh', 'deploy', 'sync', 'deps', 'install-edgetpu-py39', 'coral-setup', 'coral-compile', 'run', 'run-headless', 'ping', 'help')]
     [string]$Action = 'help',
 
     # Pi IP or hostname (raspberrypi.local works when mDNS is available)
@@ -36,7 +36,8 @@ $RemoteDir = "~/visionguide"
 # Files to deploy — add new Pi scripts here
 $PyFiles   = @(
     "camera_live_pi.py",
-    "detect.py"
+    "detect.py",
+    "edgetpu_infer.py"
 )
 $ModelFile = "runs/white_cane_v1-2/weights/best_int8.tflite"
 
@@ -121,6 +122,37 @@ function Invoke-Sync {
     } else {
         Write-Fail "Model file not found: $ModelFile"
     }
+
+    # Edge TPU model is optional — ship it only if it has been compiled.
+    $edgetpuModel = "runs/white_cane_v1-2/weights/best_int8_edgetpu.tflite"
+    if (Test-Path $edgetpuModel) {
+        Write-Step "Transferring Edge TPU model (best_int8_edgetpu.tflite)..."
+        scp $edgetpuModel "${Target}:${RemoteDir}/runs/white_cane_v1-2/weights/"
+        if ($?) { Write-Ok "best_int8_edgetpu.tflite" } else { Write-Fail "Edge TPU model transfer failed" }
+    }
+}
+
+# ── install-edgetpu-py39: Install Python 3.9 EdgeTPU packages on Pi ──
+#   Run this AFTER Python 3.9 is compiled on the Pi:
+#     cd ~ && wget https://www.python.org/ftp/python/3.9.21/Python-3.9.21.tgz
+#     tar xf Python-3.9.21.tgz && cd Python-3.9.21
+#     ./configure --prefix=$HOME/.python39 && make -j4 && make install
+function Invoke-InstallEdgeTPUPy39 {
+    Write-Step "Installing Python 3.9 EdgeTPU packages on Pi..."
+    Write-Info "Requires ~/.python39 — build it first if missing:"
+    Write-Info "  cd ~ && wget https://www.python.org/ftp/python/3.9.21/Python-3.9.21.tgz"
+    Write-Info "  tar xf Python-3.9.21.tgz && cd Python-3.9.21"
+    Write-Info "  ./configure --prefix=`$HOME/.python39 && make -j4 && make install"
+
+    $whl = "https://github.com/google-coral/pycoral/releases/download/v2.0.0/tflite_runtime-2.5.0.post1-cp39-cp39-linux_aarch64.whl"
+    ssh $Target "~/.python39/bin/pip3 install -q '$whl' 'numpy<2' opencv-python-headless"
+    if ($?) {
+        Write-Ok "Python 3.9 EdgeTPU packages installed"
+        Write-Info "Test: ssh $Target '~/.python39/bin/python3.9 ~/visionguide/edgetpu_infer.py'"
+        Write-Info "  => should print READY and wait (Ctrl+C to exit)"
+    } else {
+        Write-Fail "Install failed. Ensure ~/.python39 exists on the Pi."
+    }
 }
 
 # ── deps: Install Python dependencies on Pi ──────────────────────────
@@ -135,43 +167,104 @@ function Invoke-Deps {
     }
 }
 
-# ── coral-setup: Install Edge TPU runtime + compile model on Pi ──────
+# ── coral-setup: Install Edge TPU RUNTIME on Pi (runtime only!) ───────
+#   NOTE: edgetpu_compiler is x86-64 ONLY and cannot run on the Pi (aarch64).
+#         The Pi needs the runtime (libedgetpu1-std) so it can USE a model
+#         that was compiled elsewhere. Compile with:  .\deploy.ps1 coral-compile
 function Invoke-CoralSetup {
     # Write a bash script with LF line endings and upload via scp
     # (ssh -t is needed so sudo can prompt for password interactively)
     $scriptLines = @(
         '#!/bin/bash',
         'set -e',
-        'echo "[1/4] Adding Coral apt repository..."',
-        'echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
-        'curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg 2>/dev/null',
+        'echo "[1/3] Adding Coral apt repository (Bookworm signed-by)..."',
+        'curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg',
+        'echo "deb [signed-by=/usr/share/keyrings/coral-edgetpu.gpg] https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
         'sudo apt-get update -q',
-        'echo "[2/4] Installing libedgetpu1-std and edgetpu-compiler..."',
-        'sudo apt-get install -y libedgetpu1-std edgetpu-compiler',
-        'echo "[3/4] Compiling TFLite model for Edge TPU..."',
-        "cd ~/visionguide/runs/white_cane_v1-2/weights",
-        'edgetpu_compiler best_int8.tflite',
-        'echo "[4/4] Done! best_int8_edgetpu.tflite is ready."'
+        'echo "[2/3] Installing libedgetpu1-std runtime (NO compiler — aarch64)..."',
+        'sudo apt-get install -y libedgetpu1-std',
+        'echo "[3/3] Checking USB Accelerator..."',
+        'lsusb | grep -i "1a6e\|18d1\|global unichip\|google" && echo "  -> Coral USB detected" || echo "  -> WARNING: Coral USB NOT detected. Plug it in (a USB3/blue port is best)."'
     )
     $scriptBody = $scriptLines -join "`n"
     $tmpScript  = "$env:TEMP\vg_coral_setup.sh"
     [System.IO.File]::WriteAllText($tmpScript, $scriptBody, [System.Text.UTF8Encoding]::new($false))
 
-    Write-Step "Uploading Coral setup script to Pi..."
+    Write-Step "Uploading Coral runtime setup script to Pi..."
     scp $tmpScript "${Target}:~/vg_coral_setup.sh"
     if (-not $?) { Write-Fail "Failed to upload setup script."; return }
 
-    Write-Step "Running Coral setup (sudo password will be required)..."
-    Write-Info "This may take a few minutes."
+    Write-Step "Installing Coral runtime on Pi (sudo password will be required)..."
     ssh -t $Target "bash ~/vg_coral_setup.sh; rm -f ~/vg_coral_setup.sh"
 
     Remove-Item $tmpScript -ErrorAction SilentlyContinue
 
     if ($?) {
-        Write-Ok "Coral setup complete."
-        Write-Info "Restart run-headless — Edge TPU backend will be selected automatically."
+        Write-Ok "Coral runtime installed on Pi."
+        Write-Info "Next: compile the model with  .\deploy.ps1 coral-compile  (needs WSL),"
+        Write-Info "then  .\deploy.ps1 sync  to push best_int8_edgetpu.tflite to the Pi."
     } else {
-        Write-Fail "Coral setup failed. Check the output above."
+        Write-Fail "Coral runtime setup failed. Check the output above."
+    }
+}
+
+# ── coral-compile: Compile TFLite model for Edge TPU in WSL (x86-64) ──
+#   edgetpu_compiler only runs on x86-64 Linux, so we use WSL. The output
+#   best_int8_edgetpu.tflite is written next to best_int8.tflite locally,
+#   then `sync` ships it to the Pi.
+function Invoke-CoralCompile {
+    $wslCheck = wsl --status 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "WSL is not installed."
+        Write-Info "Install it (admin PowerShell, then reboot):  wsl --install -d Ubuntu"
+        return
+    }
+
+    $modelDir = "runs/white_cane_v1-2/weights"
+    if (-not (Test-Path "$modelDir/best_int8.tflite")) {
+        Write-Fail "Model not found: $modelDir/best_int8.tflite"
+        return
+    }
+
+    # Bash script run inside WSL: install compiler (x86-64) if missing, then compile.
+    $scriptLines = @(
+        '#!/bin/bash',
+        'set -e',
+        'if ! command -v edgetpu_compiler >/dev/null 2>&1; then',
+        '  echo "[1/2] Installing edgetpu-compiler in WSL (x86-64)..."',
+        '  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg',
+        '  echo "deb [signed-by=/usr/share/keyrings/coral-edgetpu.gpg] https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
+        '  sudo apt-get update -q',
+        '  sudo apt-get install -y edgetpu-compiler',
+        'fi',
+        'echo "[2/2] Compiling for Edge TPU..."',
+        'cd "$(dirname "$0")"',
+        'edgetpu_compiler -s best_int8.tflite',
+        'ls -lh best_int8_edgetpu.tflite'
+    )
+    $scriptBody = $scriptLines -join "`n"
+    $tmpScript  = Join-Path (Resolve-Path $modelDir) "vg_compile.sh"
+    [System.IO.File]::WriteAllText($tmpScript, $scriptBody, [System.Text.UTF8Encoding]::new($false))
+
+    Write-Step "Compiling model for Edge TPU in WSL (sudo password may be required)..."
+    # Translate the Windows path to a WSL path and run the script there.
+    $wslPath = (wsl wslpath -a ("'" + (Resolve-Path "$modelDir/vg_compile.sh").Path + "'")) 2>$null
+    if (-not $wslPath) {
+        # Fallback: cd into the dir via wslpath of the directory
+        $wslDir = wsl wslpath -a ("'" + (Resolve-Path $modelDir).Path + "'")
+        wsl bash -c "cd $wslDir && bash vg_compile.sh"
+    } else {
+        wsl bash "$wslPath"
+    }
+    $ok = $?
+
+    Remove-Item $tmpScript -ErrorAction SilentlyContinue
+
+    if ($ok -and (Test-Path "$modelDir/best_int8_edgetpu.tflite")) {
+        Write-Ok "Compiled: $modelDir/best_int8_edgetpu.tflite"
+        Write-Info "Now push it to the Pi:  .\deploy.ps1 sync -PI $PI"
+    } else {
+        Write-Fail "Compilation failed or output missing. Check the output above."
     }
 }
 
@@ -211,7 +304,9 @@ VisionGuide Pi Deploy Script
   .\deploy.ps1 deploy       [-PI <ip>]   Transfer files + install deps
   .\deploy.ps1 sync         [-PI <ip>]   Re-send files only
   .\deploy.ps1 deps         [-PI <ip>]   Install deps only
-  .\deploy.ps1 coral-setup  [-PI <ip>]   Install Edge TPU runtime + compile model for Coral
+  .\deploy.ps1 install-edgetpu-py39 [-PI <ip>]   Install Python 3.9 EdgeTPU packages (after py3.9 build)
+  .\deploy.ps1 coral-setup  [-PI <ip>]   Install Edge TPU RUNTIME on Pi (libedgetpu1-std)
+  .\deploy.ps1 coral-compile             Compile model for Edge TPU in WSL (x86-64)
   .\deploy.ps1 run-headless [-PI <ip>]   Start MJPEG stream on Pi
   .\deploy.ps1 run          [-PI <ip>]   Start display mode on Pi
   .\deploy.ps1 ping         [-PI <ip>]   Check Pi connection
@@ -226,11 +321,13 @@ If you get an execution policy error:
 
 # ── Router ───────────────────────────────────────────────────────────
 switch ($Action) {
-    'setup-ssh'    { Invoke-SetupSSH }
-    'deploy'       { Invoke-Deploy }
-    'sync'         { Invoke-Sync }
-    'deps'         { Invoke-Deps }
-    'coral-setup'  { Invoke-CoralSetup }
+    'setup-ssh'           { Invoke-SetupSSH }
+    'deploy'              { Invoke-Deploy }
+    'sync'                { Invoke-Sync }
+    'deps'                { Invoke-Deps }
+    'install-edgetpu-py39' { Invoke-InstallEdgeTPUPy39 }
+    'coral-setup'         { Invoke-CoralSetup }
+    'coral-compile'       { Invoke-CoralCompile }
     'run-headless' { Invoke-RunHeadless }
     'run'          { Invoke-Run }
     'ping'         { Invoke-Ping }

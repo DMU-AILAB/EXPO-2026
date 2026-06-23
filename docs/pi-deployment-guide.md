@@ -406,10 +406,20 @@ USB 웹캠을 사용하는 경우에는 이 경고를 무시해도 됩니다. Op
             └── best_int8_edgetpu.tflite  ← Coral 사용 시 (별도 컴파일 필요)
 ```
 
-Coral Edge TPU 모델 컴파일이 필요한 경우:
+### Coral Edge TPU 사용 (USB Accelerator)
 
-```bash
-# PC (Linux/WSL) 또는 Pi에서
-edgetpu_compiler runs/white_cane_v1-2/weights/best_int8.tflite
-# → best_int8_edgetpu.tflite 생성
-```
+> **중요:** `edgetpu_compiler`는 **x86-64 전용** 바이너리입니다. Raspberry Pi(aarch64)에서는
+> 설치/실행되지 않습니다. **모델 컴파일은 PC(WSL/Linux)에서**, **Pi에는 런타임만** 설치합니다.
+
+| 단계 | 명령 | 실행 위치 |
+|------|------|-----------|
+| 1. Pi 런타임 설치 | `.\deploy.ps1 coral-setup -PI <ip>` | PC → Pi (sudo 비밀번호 입력) |
+| 2. 모델 컴파일 | `.\deploy.ps1 coral-compile` | PC의 WSL (x86-64) |
+| 3. 컴파일 모델 전송 | `.\deploy.ps1 sync -PI <ip>` | PC → Pi |
+| 4. 실행 (자동 선택) | `.\deploy.ps1 run-headless -PI <ip>` | Pi |
+
+- **USB 연결:** Coral USB Accelerator를 Pi의 **USB 3.0 포트(파란색)** 에 꽂습니다.
+  연결되면 드라이버 없이도 `lsusb`에 `1a6e:089a`(초기) 또는 `18d1:9302`(추론 후)로 표시됩니다.
+- **WSL 미설치 시:** 관리자 PowerShell에서 `wsl --install -d Ubuntu` 실행 후 재부팅.
+- 컴파일된 `best_int8_edgetpu.tflite`가 Pi에 있으면 `camera_live_pi.py`가 자동으로
+  Edge TPU 백엔드를 1순위로 선택합니다.

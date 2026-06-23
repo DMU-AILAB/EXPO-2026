@@ -28,8 +28,11 @@ Coral 모델 컴파일 (아직 안 했다면):
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import signal
+import struct
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -100,11 +103,10 @@ def _postprocess(output: np.ndarray, conf_thr: float,
     pred, scores = pred[mask], scores[mask]
     cx, cy, w, h = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
 
-    sx, sy = img_w / _INPUT_SIZE, img_h / _INPUT_SIZE
-    bx = (cx - w / 2) * sx
-    by = (cy - h / 2) * sy
-    bw = w * sx
-    bh = h * sy
+    bx = (cx - w / 2) * img_w
+    by = (cy - h / 2) * img_h
+    bw = w * img_w
+    bh = h * img_h
 
     boxes = np.stack([bx, by, bw, bh], axis=1).tolist()
     confs = scores.tolist()
@@ -133,31 +135,54 @@ def _postprocess(output: np.ndarray, conf_thr: float,
 # ── 추론 백엔드 ────────────────────────────────────────────────────
 
 class _CoralBackend:
-    """Google Coral Edge TPU 백엔드."""
+    """Google Coral Edge TPU 백엔드 (Python 3.9 서브프로세스).
+
+    libedgetpu v16.0 은 tflite_runtime 2.5.0.post1(cp39) 과만 안정적으로
+    동작한다. Python 3.11+ 빌드는 partial delegation 모델에서 segfault 발생.
+    메인 앱(Python 3.13)은 서브프로세스로 Python 3.9 워커를 기동한 뒤
+    stdin/stdout 바이너리 프로토콜로 프레임을 교환한다.
+    """
+
+    _PY39   = Path.home() / ".python39" / "bin" / "python3.9"
+    _WORKER = Path(__file__).parent / "edgetpu_infer.py"
 
     def __init__(self, conf: float) -> None:
+        if not self._PY39.exists():
+            raise FileNotFoundError(
+                "~/.python39 없음 — make install-edgetpu-py39 실행 필요"
+            )
+        if not self._WORKER.exists():
+            raise FileNotFoundError(f"워커 스크립트 없음: {self._WORKER}")
         self.conf = conf
-        try:
-            import tflite_runtime.interpreter as tflite
-        except ImportError:
-            try:
-                import ai_edge_litert.interpreter as tflite  # type: ignore[no-redef]
-            except ImportError:
-                import tensorflow.lite as tflite  # type: ignore[no-redef]
-
-        lib      = _EDGETPU_LIB.get(platform.system(), "libedgetpu.so.1")
-        delegate = tflite.load_delegate(lib)
-        self._interp = tflite.Interpreter(
-            model_path=str(_EDGETPU_MODEL),
-            experimental_delegates=[delegate],
+        self._proc = subprocess.Popen(
+            [str(self._PY39), str(self._WORKER), str(conf)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            bufsize=0,
         )
-        self._interp.allocate_tensors()
+        ready = self._proc.stdout.readline()
+        if ready.strip() != b"READY":
+            self._proc.terminate()
+            self._proc.wait()
+            raise RuntimeError(f"EdgeTPU 워커 초기화 실패: {ready!r}")
 
     def predict(self, frame: np.ndarray) -> list[dict]:
-        _set_input(self._interp, frame)
-        self._interp.invoke()
         h, w = frame.shape[:2]
-        return _postprocess(_get_output(self._interp), self.conf, w, h)
+        self._proc.stdin.write(struct.pack(">II", h, w) + frame.tobytes())
+        size_bytes = self._proc.stdout.read(4)
+        if len(size_bytes) < 4:
+            raise RuntimeError("EdgeTPU 워커가 예기치 않게 종료되었습니다")
+        size = struct.unpack(">I", size_bytes)[0]
+        return json.loads(self._proc.stdout.read(size))
+
+    def __del__(self) -> None:
+        proc = getattr(self, "_proc", None)
+        if proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                pass
 
 
 class _TFLiteBackend:
@@ -251,8 +276,9 @@ class _Picamera2Source:
     def __init__(self, width: int = 640, height: int = 480) -> None:
         from picamera2 import Picamera2  # type: ignore[import]
         self._cam = Picamera2()
-        # RGB888 명시적 요청 후 BGR로 변환 — picamera2는 BGR888을 지정해도
-        # 실제로 RGB 배열을 반환하는 경우가 있어 명시적 변환이 필요함
+        # picamera2 naming is counter-intuitive: the "RGB888" format returns a
+        # numpy array in B,G,R memory order — exactly what OpenCV expects.
+        # ("BGR888" would return R,G,B order.) So NO conversion is needed here.
         cfg = self._cam.create_preview_configuration(
             main={"format": "RGB888", "size": (width, height)}
         )
@@ -262,7 +288,10 @@ class _Picamera2Source:
 
     def read(self) -> tuple[bool, np.ndarray]:
         frame = self._cam.capture_array()
-        return True, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        # Drop 4th channel if picamera2 returns XBGR/BGRX on some configurations
+        if frame.ndim == 3 and frame.shape[2] == 4:
+            frame = frame[:, :, :3]
+        return True, frame
 
     def release(self) -> None:
         self._cam.stop()
@@ -362,16 +391,109 @@ class MJPEGServer:
             self._httpd.shutdown()
 
 
+# ── 객체 트래커 ────────────────────────────────────────────────────
+
+class SimpleTracker:
+    """IoU 기반 단순 객체 트래커.
+
+    매칭된 트랙: EMA 스무딩으로 bbox 떨림 제거, age 초기화
+    미탐지 트랙: max_age 프레임 동안 마지막 bbox 유지 (coasting)
+    새 탐지:     신규 트랙 생성
+    """
+
+    def __init__(self, max_age: int = 10, min_iou: float = 0.3,
+                 ema_alpha: float = 0.6) -> None:
+        self.max_age  = max_age
+        self.min_iou  = min_iou
+        self.alpha    = ema_alpha   # 높을수록 새 탐지에 빠르게 반응
+        self._tracks: list[dict] = []
+        self._next_id = 0
+
+    @staticmethod
+    def _iou(a: list, b: list) -> float:
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if inter == 0:
+            return 0.0
+        return inter / ((ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter)
+
+    def update(self, detections: list[dict]) -> list[dict]:
+        """탐지 결과를 받아 트랙 목록을 갱신하고 반환."""
+        matched_det: set[int] = set()
+        matched_trk: set[int] = set()
+
+        # 탐지-트랙 greedy IoU 매칭
+        for di, det in enumerate(detections):
+            best_iou, best_ti = self.min_iou, -1
+            for ti, trk in enumerate(self._tracks):
+                if ti in matched_trk:
+                    continue
+                iou = self._iou(det["bbox"], trk["bbox"])
+                if iou > best_iou:
+                    best_iou, best_ti = iou, ti
+            if best_ti >= 0:
+                matched_det.add(di)
+                matched_trk.add(best_ti)
+                a = self.alpha
+                old = self._tracks[best_ti]["bbox"]
+                new = det["bbox"]
+                self._tracks[best_ti]["bbox"] = [
+                    round(a * new[i] + (1 - a) * old[i]) for i in range(4)
+                ]
+                self._tracks[best_ti]["age"]  = 0
+                self._tracks[best_ti]["conf"] = det["conf"]
+
+        # 미매칭 탐지 → 신규 트랙 생성
+        for di, det in enumerate(detections):
+            if di not in matched_det:
+                self._tracks.append({
+                    "track_id": self._next_id,
+                    "bbox":     det["bbox"][:],
+                    "conf":     det["conf"],
+                    "class":    det["class"],
+                    "label":    det["label"],
+                    "age":      0,
+                })
+                self._next_id += 1
+
+        # 미매칭 트랙 age 증가
+        for ti in range(len(self._tracks)):
+            if ti not in matched_trk:
+                self._tracks[ti]["age"] += 1
+
+        # max_age 초과 트랙 제거
+        self._tracks = [t for t in self._tracks if t["age"] <= self.max_age]
+
+        return [dict(t) for t in self._tracks]
+
+
 # ── 그리기 헬퍼 ────────────────────────────────────────────────────
 
 def _draw_detections(frame: np.ndarray, detections: list[dict]) -> None:
+    fh, fw = frame.shape[:2]
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
-        label = f"{det['label']} {det['conf']:.2f}"
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        # 좌표를 프레임 범위로 클램핑
+        x1 = max(0, min(x1, fw - 1))
+        y1 = max(0, min(y1, fh - 1))
+        x2 = max(0, min(x2, fw - 1))
+        y2 = max(0, min(y2, fh - 1))
+
+        age   = det.get("age", 0)
+        tid   = det.get("track_id", "")
+        # 탐지 중: 초록, coasting(미탐지 유지): 노랑
+        color = (0, 255, 0) if age == 0 else (0, 200, 255)
+
+        label = f"#{tid} {det['conf']:.2f}"
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-        cv2.rectangle(frame, (x1, y1 - th - 6), (x1 + tw + 4, y1), (0, 255, 0), -1)
-        cv2.putText(frame, label, (x1 + 2, y1 - 4),
+        # 레이블이 프레임 위로 나가면 박스 아래에 표시
+        label_y = y1 if y1 >= th + 6 else y2 + th + 6
+        cv2.rectangle(frame, (x1, label_y - th - 6), (x1 + tw + 4, label_y), color, -1)
+        cv2.putText(frame, label, (x1 + 2, label_y - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
 
 
@@ -383,8 +505,8 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--source",   default="0",
                    help="웹캠 인덱스 또는 영상 파일 경로 (기본값: 0)")
-    p.add_argument("--conf",     type=float, default=0.25,
-                   help="신뢰도 임계값 0~1 (기본값: 0.25)")
+    p.add_argument("--conf",     type=float, default=0.55,
+                   help="신뢰도 임계값 0~1 (기본값: 0.55)")
     p.add_argument("--headless", action="store_true",
                    help="MJPEG 서버 모드로 실행 (모니터 없이 네트워크 스트리밍)")
     p.add_argument("--port",     type=int, default=8080,
@@ -399,6 +521,7 @@ def main() -> None:
 
     backend = build_backend(args.conf)
     camera  = build_camera(args.source)
+    tracker = SimpleTracker()
 
     mjpeg: MJPEGServer | None = None
     if args.headless:
@@ -429,7 +552,7 @@ def main() -> None:
                 print(f"[ERROR] 추론 중 오류 발생: {e}")
                 break
 
-            _draw_detections(frame, dets)
+            _draw_detections(frame, tracker.update(dets))
 
             now   = time.time()
             fps   = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
