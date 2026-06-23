@@ -73,11 +73,22 @@ function Invoke-SetupSSH {
 
     # Register public key on Pi (password required this one time)
     Write-Step "Registering public key on Pi... (enter Pi password when prompted)"
-    Get-Content $pubPath | ssh $Target "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-    if ($?) {
-        Write-Ok "Done. No password will be required for future deploys."
-    } else {
+    Get-Content $pubPath | ssh $Target "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    if (-not $?) {
         Write-Fail "Failed. Verify PI=$PI and User=$User are correct."
+        return
+    }
+    Write-Ok "Public key registered."
+
+    # Verify passwordless auth actually works
+    Write-Step "Verifying passwordless login..."
+    $test = ssh -o "BatchMode=yes" -o "ConnectTimeout=5" $Target "echo ok" 2>&1
+    if ($test -eq "ok") {
+        Write-Ok "Passwordless login confirmed. No password needed from now on."
+    } else {
+        Write-Fail "Key registered but passwordless login failed."
+        Write-Info "Check Pi sshd config: PubkeyAuthentication yes"
+        Write-Info "Or try: ssh -v $Target"
     }
 }
 
@@ -110,7 +121,7 @@ function Invoke-Sync {
 function Invoke-Deps {
     Write-Step "Installing dependencies on Pi..."
     ssh $Target "sudo apt-get install -y python3-picamera2 2>/dev/null; true"
-    ssh $Target "pip install -q tflite-runtime opencv-python-headless numpy"
+    ssh $Target "pip install -q --break-system-packages tflite-runtime opencv-python-headless numpy"
     if ($?) {
         Write-Ok "Dependencies installed"
     } else {
