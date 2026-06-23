@@ -1,0 +1,11 @@
+# Raspberry Pi 4 / Raspberry Pi OS 64-bit Bookworm (Python 3.11) 전용
+#
+# picamera2는 pip 대신 apt로 설치:
+#   sudo apt-get install -y python3-picamera2
+#
+# ultralytics / torch / torchvision 은 Pi에 설치하지 않습니다.
+# TFLite 백엔드(best_int8.tflite)가 우선 사용되므로 불필요합니다.
+
+tflite-runtime>=2.14.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
