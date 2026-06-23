@@ -140,7 +140,10 @@ class _CoralBackend:
         try:
             import tflite_runtime.interpreter as tflite
         except ImportError:
-            import tensorflow.lite as tflite  # type: ignore[no-redef]
+            try:
+                import ai_edge_litert.interpreter as tflite  # type: ignore[no-redef]
+            except ImportError:
+                import tensorflow.lite as tflite  # type: ignore[no-redef]
 
         lib      = _EDGETPU_LIB.get(platform.system(), "libedgetpu.so.1")
         delegate = tflite.load_delegate(lib)
@@ -165,7 +168,10 @@ class _TFLiteBackend:
         try:
             import tflite_runtime.interpreter as tflite
         except ImportError:
-            import tensorflow.lite as tflite  # type: ignore[no-redef]
+            try:
+                import ai_edge_litert.interpreter as tflite  # type: ignore[no-redef]
+            except ImportError:
+                import tensorflow.lite as tflite  # type: ignore[no-redef]
 
         self._interp = tflite.Interpreter(model_path=str(_TFLITE_MODEL))
         self._interp.allocate_tensors()

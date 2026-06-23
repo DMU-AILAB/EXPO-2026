@@ -127,7 +127,7 @@ function Invoke-Sync {
 function Invoke-Deps {
     Write-Step "Installing dependencies on Pi..."
     ssh $Target "sudo apt-get install -y python3-picamera2 2>/dev/null; true"
-    ssh $Target "pip install -q --break-system-packages tflite-runtime opencv-python-headless numpy"
+    ssh $Target "pip install -q --break-system-packages ai-edge-litert opencv-python-headless numpy"
     if ($?) {
         Write-Ok "Dependencies installed"
     } else {

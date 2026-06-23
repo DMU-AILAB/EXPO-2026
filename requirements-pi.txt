@@ -6,6 +6,7 @@
 # ultralytics / torch / torchvision 은 Pi에 설치하지 않습니다.
 # TFLite 백엔드(best_int8.tflite)가 우선 사용되므로 불필요합니다.
 
-tflite-runtime>=2.14.0
+# tflite-runtime은 Python 3.11+ ARM64 미지원 → ai-edge-litert 사용
+ai-edge-litert>=1.0.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
