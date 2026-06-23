@@ -71,11 +71,17 @@ function Invoke-SetupSSH {
         Write-Ok "SSH key created: $pubPath"
     }
 
-    # Register public key on Pi (password required this one time)
+    # Register public key on Pi via scp (avoids CRLF corruption from PowerShell pipe)
     Write-Step "Registering public key on Pi... (enter Pi password when prompted)"
-    Get-Content $pubPath | ssh $Target "mkdir -p ~/.ssh && chmod go-w ~ && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    ssh $Target "mkdir -p ~/.ssh && chmod go-w ~ && chmod 700 ~/.ssh"
+    if (-not $?) { Write-Fail "Failed. Verify PI=$PI and User=$User are correct."; return }
+
+    scp $pubPath "${Target}:~/.ssh/temp_vg.pub"
+    if (-not $?) { Write-Fail "Failed to copy public key."; return }
+
+    ssh $Target "cat ~/.ssh/temp_vg.pub >> ~/.ssh/authorized_keys && rm ~/.ssh/temp_vg.pub && chmod 600 ~/.ssh/authorized_keys"
     if (-not $?) {
-        Write-Fail "Failed. Verify PI=$PI and User=$User are correct."
+        Write-Fail "Failed to register public key."
         return
     }
     Write-Ok "Public key registered."
