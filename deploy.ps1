@@ -137,25 +137,41 @@ function Invoke-Deps {
 
 # ── coral-setup: Install Edge TPU runtime + compile model on Pi ──────
 function Invoke-CoralSetup {
-    Write-Step "Adding Google Coral apt repository..."
-    ssh $Target @"
-echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
-curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg
-sudo apt-get update -q
-"@
+    # Write a bash script with LF line endings and upload via scp
+    # (ssh -t is needed so sudo can prompt for password interactively)
+    $scriptLines = @(
+        '#!/bin/bash',
+        'set -e',
+        'echo "[1/4] Adding Coral apt repository..."',
+        'echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
+        'curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg 2>/dev/null',
+        'sudo apt-get update -q',
+        'echo "[2/4] Installing libedgetpu1-std and edgetpu-compiler..."',
+        'sudo apt-get install -y libedgetpu1-std edgetpu-compiler',
+        'echo "[3/4] Compiling TFLite model for Edge TPU..."',
+        "cd ~/visionguide/runs/white_cane_v1-2/weights",
+        'edgetpu_compiler best_int8.tflite',
+        'echo "[4/4] Done! best_int8_edgetpu.tflite is ready."'
+    )
+    $scriptBody = $scriptLines -join "`n"
+    $tmpScript  = "$env:TEMP\vg_coral_setup.sh"
+    [System.IO.File]::WriteAllText($tmpScript, $scriptBody, [System.Text.UTF8Encoding]::new($false))
 
-    Write-Step "Installing Edge TPU runtime and compiler on Pi..."
-    ssh $Target "sudo apt-get install -y libedgetpu1-std edgetpu-compiler"
-    if (-not $?) { Write-Fail "Edge TPU runtime install failed"; return }
-    Write-Ok "libedgetpu1-std + edgetpu-compiler installed"
+    Write-Step "Uploading Coral setup script to Pi..."
+    scp $tmpScript "${Target}:~/vg_coral_setup.sh"
+    if (-not $?) { Write-Fail "Failed to upload setup script."; return }
 
-    Write-Step "Compiling TFLite model for Edge TPU on Pi..."
-    ssh $Target "cd $RemoteDir/runs/white_cane_v1-2/weights && edgetpu_compiler best_int8.tflite"
+    Write-Step "Running Coral setup (sudo password will be required)..."
+    Write-Info "This may take a few minutes."
+    ssh -t $Target "bash ~/vg_coral_setup.sh; rm -f ~/vg_coral_setup.sh"
+
+    Remove-Item $tmpScript -ErrorAction SilentlyContinue
+
     if ($?) {
-        Write-Ok "Compiled: best_int8_edgetpu.tflite"
-        Write-Info "Restart run-headless to use Coral backend automatically."
+        Write-Ok "Coral setup complete."
+        Write-Info "Restart run-headless — Edge TPU backend will be selected automatically."
     } else {
-        Write-Fail "Compilation failed. Check edgetpu-compiler is installed."
+        Write-Fail "Coral setup failed. Check the output above."
     }
 }
 
