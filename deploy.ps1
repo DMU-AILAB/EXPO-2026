@@ -21,7 +21,7 @@ param(
 
     # Pi IP or hostname (raspberrypi.local works when mDNS is available)
     [string]$PI   = 'raspberrypi.local',
-    [string]$User = 'pi'
+    [string]$User = 'ailab'
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
