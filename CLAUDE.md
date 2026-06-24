@@ -15,32 +15,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 아직 구현되지 않은 상태
+## 현재 저장소 상태
 
-현재 저장소에는 소스 코드가 없고 `datasets/` (흰 지팡이 학습 이미지 + YOLO 라벨)와 `docs/` 기획 문서만 존재합니다. 코드 작성 시 아래 명세를 참고하세요.
+- **AI 모델**: YOLOv8n 학습 완료. 최적 가중치 → `runs/white_cane_v1-2/weights/best.pt` (6.3MB)
+- **소스 코드**: 아직 없음 (디바이스 파이프라인, 백엔드, 프론트엔드 모두 미구현)
+- **기타**: `datasets/` (학습 데이터), `docs/` (기획 문서), `runs/` (학습 결과)
 
 ---
 
 ## 데이터셋
 
-- 위치: `datasets/images/` (JPG), `datasets/labels/` (YOLO format txt)
-- 라벨 형식: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이
-- `*.Zone.Identifier` 파일은 Windows에서 복사된 부산물이며 무시하면 됩니다 (`.gitignore`에 등록됨)
+- `datasets/data.yaml` — 학습 설정 파일 (nc=1, names=['white_cane'])
+- `datasets/train/images/`, `datasets/val/images/`, `datasets/test/images/` — 분할된 이미지
+- `datasets/labels/` — YOLO format txt: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이
+- `*.Zone.Identifier` 파일은 Windows 복사 부산물 (`.gitignore`에 등록됨)
+
+---
+
+## 학습 완료 모델 (white_cane_v1-2)
+
+| 항목 | 값 |
+|------|-----|
+| 기반 모델 | YOLOv8n (pretrained) |
+| 학습 환경 | RTX 3060 12GB, Python 3.13, torch 2.6.0+cu124, Ultralytics 8.4.54 |
+| epochs / batch / imgsz | 100 / 32 / 640 |
+| 최적 mAP@0.5 (best.pt) | **0.994** |
+| 최적 mAP@0.5-95 (best.pt) | 0.761 |
+| 모델 크기 | 6.3 MB |
+| 학습 시간 | 1.763 시간 |
+| 학습 결과 | `runs/white_cane_v1-2/results.csv`, 곡선 PNG들 |
+
+실제 학습에 사용된 명령어:
+
+```bash
+yolo train data=/home/ubuntu/expo/datasets/data.yaml model=yolov8n.pt \
+     epochs=100 batch=32 imgsz=640 device=0 workers=8 \
+     project=/home/ubuntu/expo/runs name=white_cane_v1-2
+```
+
+---
+
+## PC 시뮬레이터 (simulator/)
+
+라즈베리 파이 없이 전체 디바이스 파이프라인을 PC에서 테스트하는 Streamlit 앱.
+
+```bash
+# 의존성 설치 (anaconda base 환경 — ultralytics/streamlit이 설치된 곳)
+/home/ubuntu/anaconda3/bin/pip install shapely streamlit-drawable-canvas
+
+# 실행 (프로젝트 루트에서)
+/home/ubuntu/anaconda3/bin/streamlit run simulator/app.py
+```
+
+기능: 웹캠/영상 파일 입력 → YOLOv8 탐지 → ROI 폴리곤 그리기 → 디바운싱(0.5s)/쿨다운(10s) → Mock 음성 안내
 
 ---
 
 ## 디바이스 개발 명령어
 
 ```bash
-# Python 환경 (Python 3.11 권장)
+# Python 환경 (Python 3.11 권장; 학습 환경은 Python 3.13 + CUDA 12.4)
 pip install ultralytics opencv-python-headless picamera2 httpx pydantic \
             filterpy scipy albumentations pyaudio gpiozero psutil
 
-# YOLOv8 학습 (PC/GPU 환경)
-yolo train data=data.yaml model=yolov8n.pt epochs=100 imgsz=640
-
-# PT → TFLite INT8 변환
-yolo export model=best.pt format=tflite int8=True
+# PT → TFLite INT8 변환 (라즈베리 파이 배포용)
+yolo export model=runs/white_cane_v1-2/weights/best.pt format=tflite int8=True
 
 # 파이프라인 실행 (라즈베리 파이)
 python main_pipeline.py
