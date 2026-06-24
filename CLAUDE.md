@@ -55,6 +55,87 @@ sudo journalctl -u visionguide-device -f
 
 ---
 
+## Pi 배포 자동화 (Makefile)
+
+`Makefile`로 PC → Pi 파일 전송과 의존성 설치를 자동화합니다.
+
+**필요**: Git Bash (rsync + ssh 포함) 또는 WSL.
+Windows에서 `make` 미설치 시: `scoop install make` 또는 `choco install make`.
+
+```bash
+# 전체 배포 (파일 전송 + 의존성 설치)
+make deploy
+
+# 코드만 변경된 경우 — 파일만 빠르게 재전송
+make sync
+
+# Pi에서 headless 스트리밍 시작
+make run-headless   # 브라우저: http://raspberrypi.local:8080/stream.mjpg
+
+# Pi 연결 및 환경 확인
+make ping
+```
+
+**IP 주소 지정** (Pi IP가 동적으로 바뀌는 경우):
+
+```bash
+# mDNS 호스트명이 작동할 때 (기본값, 대부분의 경우)
+make deploy                          # PI=raspberrypi.local 기본값 사용
+
+# IP를 직접 지정할 때
+make deploy PI=192.168.0.89
+make sync   PI=192.168.0.89
+
+# 현재 Pi IP 확인 (라우터 DHCP 테이블 또는 Pi에서 실행)
+#   Pi에서: hostname -I
+#   PC에서: arp -a | findstr raspberry  (Windows)
+```
+
+**배포 대상 파일** — `Makefile` 상단 `DEPLOY_PY` 변수로 관리:
+
+| 변수 | 파일 | 설명 |
+|------|------|------|
+| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py` | Pi에 배포할 Python 소스 |
+| `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
+
+새 Python 파일을 Pi에 배포해야 할 때는 `Makefile`의 `DEPLOY_PY`에 추가하세요.
+
+---
+
+## Pi 호환성 코딩 지침
+
+Pi에서 실행될 코드를 작성하거나 수정할 때 반드시 지켜야 할 규칙입니다.
+
+### 파일 쌍 유지
+
+| PC 버전 | Pi 버전 | 관계 |
+|---------|---------|------|
+| `camera_live.py` | `camera_live_pi.py` | 동일 기능, 추론 백엔드·카메라 소스만 다름 |
+| `detect.py` | — | Pi에서는 TFLite가 우선; `detect.py`는 PyTorch fallback 전용 |
+
+`camera_live.py`에 새 기능(ROI 오버레이, 통계 표시 등)을 추가하면 `camera_live_pi.py`에도 반영하세요.
+
+### Pi 코드 경로에서 금지
+
+- `torch` / `torchvision` / `ultralytics` 직접 import → TFLite 백엔드 우선, PyTorch는 마지막 fallback
+- `cv2.imshow` 단독 사용 → `--headless` MJPEG 경로도 항상 함께 지원
+- `cuda` 하드코딩 → `device` 파라미터로 추상화
+
+### 모델 가중치 변경 시 체크리스트
+
+1. `yolo export model=best.pt format=tflite int8=True` 로 TFLite 재생성
+2. `runs/white_cane_v1-2/weights/best_int8.tflite` 교체
+3. `camera_live_pi.py`의 `_postprocess` 출력 형상 확인 (`[1,5,8400]` vs `[1,8400,5]`)
+4. `make sync` 로 Pi에 재배포
+
+### 의존성 추가 시
+
+- `requirements.txt` (PC용) 와 `requirements-pi.txt` (Pi용) 모두 업데이트
+- Pi에 설치하지 않는 패키지: `torch`, `torchvision`, `ultralytics` (무거움)
+- Pi 전용 패키지: `tflite-runtime`, `picamera2` (apt), `gpiozero`, `RPi.GPIO`
+
+---
+
 ## 대시보드 백엔드 개발 명령어
 
 ```bash
