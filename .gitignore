@@ -2,3 +2,8 @@
 
 # YOLO cache files
 *.cache
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
