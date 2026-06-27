@@ -1,0 +1,7 @@
+streamlit>=1.28
+ultralytics>=8.0
+opencv-python-headless
+shapely
+streamlit-drawable-canvas
+numpy
+Pillow
