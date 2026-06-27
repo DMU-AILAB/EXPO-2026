@@ -13,6 +13,7 @@ from PIL import Image
 from simulator.detector import Detector, DEFAULT_MODEL_PATH
 from simulator.roi_manager import ROIManager
 from simulator.trigger_dispatcher import TriggerDispatcher
+from audio_trigger import AudioPlayer
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -34,6 +35,7 @@ def _init():
         "edit_mode": False,
         "roi_manager": ROIManager(),
         "dispatcher": TriggerDispatcher(),
+        "audio_player": AudioPlayer(),
         "event_log": [],
         "cap": None,
         "frozen_frame": None,       # last captured frame (used in edit mode)
@@ -104,8 +106,9 @@ with st.sidebar:
     if edit_mode_toggle != st.session_state.edit_mode:
         st.session_state.edit_mode = edit_mode_toggle
 
-    roi_name_input = st.text_input("ROI 이름", placeholder="예: 횡단보도")
-    roi_text_input = st.text_input("안내 텍스트", placeholder="예: 횡단보도 앞입니다")
+    roi_name_input  = st.text_input("ROI 이름", placeholder="예: 횡단보도")
+    roi_text_input  = st.text_input("안내 텍스트", placeholder="예: 횡단보도 앞입니다")
+    roi_audio_input = st.text_input("MP3 경로 (선택)", placeholder="예: audio/crosswalk.mp3")
 
     btn_col1, btn_col2 = st.columns(2)
     add_roi_btn = btn_col1.button("추가", use_container_width=True)
@@ -315,7 +318,8 @@ if st.session_state.edit_mode:
                 else:
                     priority = len(st.session_state.roi_manager.rois) + 1
                     st.session_state.roi_manager.add_roi(
-                        roi_name_input, pts, priority, roi_text_input
+                        roi_name_input, pts, priority, roi_text_input,
+                        audio_file=roi_audio_input,
                     )
                     st.sidebar.success(f"ROI '{roi_name_input}' 추가됨")
     else:
@@ -375,6 +379,8 @@ elif st.session_state.running:
                     st.session_state.last_announcement = roi.announcement_text
                     st.session_state.last_announcement_time = now
                     st.toast(f"🔊 {roi.announcement_text}")
+                    if roi.audio_file:
+                        st.session_state.audio_player.play(roi.audio_file)
 
         # Reset debounce for ROIs with no detection this frame
         for roi in st.session_state.roi_manager.rois:

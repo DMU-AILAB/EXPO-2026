@@ -41,6 +41,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+try:
+    from simulator.roi_manager import ROIManager
+    from audio_trigger import StandaloneDispatcher, AudioPlayer
+    _TRIGGER_AVAILABLE = True
+except ImportError as _e:
+    _TRIGGER_AVAILABLE = False
+    print(f"[WARN] ROI/오디오 기능 비활성 (의존성 누락): {_e}")
+
 # ── 경로 / 상수 ────────────────────────────────────────────────────
 _WEIGHTS       = Path(__file__).parent / "runs/white_cane_v1-2/weights"
 _EDGETPU_MODEL = _WEIGHTS / "best_int8_edgetpu.tflite"
@@ -470,6 +478,51 @@ class SimpleTracker:
         return [dict(t) for t in self._tracks]
 
 
+# ── ROI 로드 / 그리기 ──────────────────────────────────────────────
+
+def _load_rois(path: str) -> tuple:
+    """JSON 설정 파일에서 ROIManager, debounce, cooldown 을 로드."""
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    mgr = ROIManager()
+    for r in cfg.get("rois", []):
+        mgr.add_roi(
+            name=r["name"],
+            points=r["points"],
+            priority=r.get("priority", 1),
+            announcement_text=r.get("announcement_text", r.get("name", "")),
+            audio_file=r.get("audio_file", ""),
+        )
+    print(f"[INFO] ROI {len(mgr.rois)}개 로드: {[r.name for r in mgr.rois]}")
+    return mgr, cfg.get("debounce", 0.5), cfg.get("cooldown", 10.0)
+
+
+def _draw_rois(frame: np.ndarray, roi_manager: "ROIManager",
+               dispatcher: "StandaloneDispatcher", now: float) -> None:
+    """프레임에 ROI 폴리곤 + 이름 + 쿨다운 오버레이를 그린다."""
+    fh, fw = frame.shape[:2]
+    for roi in roi_manager.rois:
+        pts = np.array(
+            [[int(x * fw), int(y * fh)] for x, y in roi.points],
+            dtype=np.int32,
+        )
+        if len(pts) < 3:
+            continue
+        remaining = dispatcher.cooldown_remaining(roi.name, now)
+        color = (0, 0, 200) if remaining > 0 else roi.color
+
+        overlay = frame.copy()
+        cv2.fillPoly(overlay, [pts], color)
+        cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+        cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=2)
+
+        cx = int(np.mean(pts[:, 0]))
+        cy = int(np.mean(pts[:, 1]))
+        label = roi.name + (f" ({remaining:.1f}s)" if remaining > 0 else "")
+        cv2.putText(frame, label, (cx - 40, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+
+
 # ── 그리기 헬퍼 ────────────────────────────────────────────────────
 
 def _draw_detections(frame: np.ndarray, detections: list[dict]) -> None:
@@ -511,6 +564,8 @@ def _parse_args() -> argparse.Namespace:
                    help="MJPEG 서버 모드로 실행 (모니터 없이 네트워크 스트리밍)")
     p.add_argument("--port",     type=int, default=8080,
                    help="MJPEG 서버 포트 (기본값: 8080, --headless 시 사용)")
+    p.add_argument("--roi-config", default=None, metavar="PATH",
+                   help="ROI 설정 JSON 경로 (없으면 ROI/오디오 기능 비활성)")
     return p.parse_args()
 
 
@@ -522,6 +577,22 @@ def main() -> None:
     backend = build_backend(args.conf)
     camera  = build_camera(args.source)
     tracker = SimpleTracker()
+
+    # ROI + 오디오 초기화 (--roi-config 미지정 시 None)
+    roi_manager = None
+    dispatcher  = None
+    audio_player = None
+    if args.roi_config:
+        if not _TRIGGER_AVAILABLE:
+            print("[WARN] --roi-config 지정됐으나 ROI 모듈 로드 실패 — 무시")
+        else:
+            try:
+                roi_manager, debounce, cooldown = _load_rois(args.roi_config)
+                dispatcher  = StandaloneDispatcher(debounce, cooldown)
+                audio_player = AudioPlayer()
+            except Exception as exc:
+                print(f"[WARN] ROI 설정 로드 실패: {exc} — ROI 기능 비활성")
+                roi_manager = None
 
     mjpeg: MJPEGServer | None = None
     if args.headless:
@@ -552,11 +623,32 @@ def main() -> None:
                 print(f"[ERROR] 추론 중 오류 발생: {e}")
                 break
 
-            _draw_detections(frame, tracker.update(dets))
+            tracks = tracker.update(dets)
+            _draw_detections(frame, tracks)
 
-            now   = time.time()
-            fps   = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
+            now    = time.time()
+            fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
             prev_t = now
+
+            # ROI 판별 + 트리거 + 오디오
+            if roi_manager is not None:
+                fh, fw = frame.shape[:2]
+                active: set[str] = set()
+                for trk in tracks:
+                    x1, y1, x2, y2 = trk["bbox"]
+                    cx_n = ((x1 + x2) / 2) / fw
+                    cy_n = ((y1 + y2) / 2) / fh
+                    roi = roi_manager.check(cx_n, cy_n)
+                    if roi:
+                        active.add(roi.name)
+                        if dispatcher.on_detected(roi.name, now):
+                            print(f"[TRIGGER] ROI={roi.name}  audio={roi.audio_file or '없음'}")
+                            audio_player.play(roi.audio_file)
+                for r in roi_manager.rois:
+                    if r.name not in active:
+                        dispatcher.on_not_detected(r.name)
+                _draw_rois(frame, roi_manager, dispatcher, now)
+
             cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
 

@@ -19,13 +19,15 @@ class ROI:
     priority: int
     announcement_text: str
     color: tuple = field(default_factory=lambda: _COLORS[0])
+    audio_file: str = ""  # MP3 경로 (없으면 빈 문자열)
 
 
 class ROIManager:
     def __init__(self):
         self.rois: list[ROI] = []
 
-    def add_roi(self, name: str, points: list, priority: int, announcement_text: str):
+    def add_roi(self, name: str, points: list, priority: int,
+                announcement_text: str, audio_file: str = ""):
         color = _COLORS[len(self.rois) % len(_COLORS)]
         self.rois.append(ROI(
             name=name,
@@ -33,6 +35,7 @@ class ROIManager:
             priority=priority,
             announcement_text=announcement_text,
             color=color,
+            audio_file=audio_file,
         ))
 
     def check(self, cx_norm: float, cy_norm: float) -> Optional[ROI]:
