@@ -15,9 +15,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 아직 구현되지 않은 상태
+## 현재 구현 상태
 
-현재 저장소에는 소스 코드가 없고 `datasets/` (흰 지팡이 학습 이미지 + YOLO 라벨)와 `docs/` 기획 문서만 존재합니다. 코드 작성 시 아래 명세를 참고하세요.
+### 구현 완료
+
+| 파일/디렉토리 | 설명 |
+|------|------|
+| `camera_live_pi.py` | Pi 전용 추론 뷰어 — Coral EdgeTPU / TFLite INT8 / PyTorch 자동 선택, MJPEG 스트리밍 |
+| `camera_live.py` | PC용 추론 뷰어 (PyTorch) |
+| `detect.py` | `WhiteCaneDetector` 클래스 |
+| `edgetpu_infer.py` | Coral Edge TPU Python 3.9 서브프로세스 워커 |
+| `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (논블로킹 MP3 재생, mpg123/pygame) |
+| `simulator/app.py` | Streamlit PC 시뮬레이터 — ROI 폴리곤 편집, 실시간 탐지, 오디오 트리거 |
+| `simulator/detector.py` | 시뮬레이터용 탐지기 |
+| `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file 포함) |
+| `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
+| `rois_example.json` | ROI 설정 파일 예시 |
+| `runs/white_cane_v1-2/weights/` | 학습된 가중치 (`best.pt`, `best_int8.tflite`) |
+
+### 미구현 (계획)
+
+- 관리자 대시보드 백엔드 (`visionguide-backend/` — FastAPI)
+- 관리자 대시보드 프론트엔드 (`visionguide-frontend/` — React)
+- GPIO 릴레이 트리거 (`gpiozero`)
+- 설정 폴링 (`config_syncer.py`)
+- 이벤트 로거 / 서버 전송 (`event_logger.py`)
+- 헬스 워치독 (`watchdog.py`)
+
+---
+
+## 핵심 파일 관계
+
+`camera_live_pi.py` (Pi 메인) ←→ `audio_trigger.py` + `simulator/roi_manager.py`  
+`simulator/app.py` (PC 시뮬레이터) ←→ `audio_trigger.py` + `simulator/roi_manager.py` + `simulator/trigger_dispatcher.py`
+
+새 기능을 추가할 때: `simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유하므로 변경 시 양쪽 동작을 확인하세요.
 
 ---
 
@@ -32,18 +64,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디바이스 개발 명령어
 
 ```bash
-# Python 환경 (Python 3.11 권장)
-pip install ultralytics opencv-python-headless picamera2 httpx pydantic \
-            filterpy scipy albumentations pyaudio gpiozero psutil
+# PC 의존성 (Python 3.11 권장)
+pip install -r requirements.txt
+# 또는: ultralytics opencv-python shapely pygame
+
+# PC 시뮬레이터 실행
+cd simulator && streamlit run app.py
+
+# Pi 전용 카메라 뷰어 (ROI + 오디오 없음)
+python camera_live_pi.py --source 0 --headless
+
+# Pi 전용 카메라 뷰어 (ROI + MP3 음성 안내)
+python camera_live_pi.py --roi-config rois.json --headless
 
 # YOLOv8 학습 (PC/GPU 환경)
 yolo train data=data.yaml model=yolov8n.pt epochs=100 imgsz=640
 
 # PT → TFLite INT8 변환
 yolo export model=best.pt format=tflite int8=True
-
-# 파이프라인 실행 (라즈베리 파이)
-python main_pipeline.py
 
 # 개별 모듈 단위 테스트
 python -m pytest tests/ -v
@@ -199,20 +237,19 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 
 ---
 
-## 디바이스 핵심 모듈 (구현 예정 파일명)
+## 디바이스 핵심 모듈
 
-| 파일 | 역할 |
-|------|------|
-| `camera_source.py` | Pi Camera / RTSP 추상화 (끊김 시 5초 재연결) |
-| `preprocess.py` | Letterbox 리사이즈 + CLAHE 야간 보정 |
-| `roi_manager.py` | `cv2.pointPolygonTest`로 BBox 중심 ROI 판별 |
-| `tracker.py` | SORT (Kalman + Hungarian), `max_age=30` |
-| `trigger_dispatcher.py` | 디바운싱 0.5s, 쿨다운 10s, asyncio 이벤트 큐 |
-| `priority_policy.py` | 다중 ROI 동시 점유 시 heapq 우선순위 |
-| `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 |
-| `event_logger.py` | 로컬 SQLite 버퍼 → 비동기 서버 전송 |
-| `mjpeg_server.py` | aiohttp/Flask MJPEG 송출 `:8080` |
-| `watchdog.py` | psutil CPU/온도/디스크, 픽셀 분산으로 렌즈 오염 탐지 |
+| 파일 | 역할 | 상태 |
+|------|------|------|
+| `camera_live_pi.py` | Pi Camera/OpenCV 추상화 + 추론 + 추적 + MJPEG 송출 | ✅ 구현됨 |
+| `audio_trigger.py` | `StandaloneDispatcher` (디바운싱/쿨다운) + `AudioPlayer` (MP3) | ✅ 구현됨 |
+| `simulator/roi_manager.py` | Shapely 기반 ROI Point-in-Polygon 판별 | ✅ 구현됨 |
+| `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운싱/쿨다운 (시뮬레이터용) | ✅ 구현됨 |
+| `preprocess.py` | Letterbox 리사이즈 + CLAHE 야간 보정 | 미구현 (예정) |
+| `priority_policy.py` | 다중 ROI 동시 점유 시 heapq 우선순위 | 미구현 (예정) |
+| `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 | 미구현 (예정) |
+| `event_logger.py` | 로컬 SQLite 버퍼 → 비동기 서버 전송 | 미구현 (예정) |
+| `watchdog.py` | psutil CPU/온도/디스크, 픽셀 분산으로 렌즈 오염 탐지 | 미구현 (예정) |
 
 ---
 
