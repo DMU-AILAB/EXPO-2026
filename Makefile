@@ -27,7 +27,7 @@ DEPLOY_PY = \
 # Pi에 배포할 모델 파일
 DEPLOY_MODEL = runs/white_cane_v1-2/weights/best_int8.tflite
 
-.PHONY: deploy sync deps install-edgetpu-py39 run-headless run ping help
+.PHONY: deploy sync deps install-edgetpu-py39 setup-pi-python310 run-headless run ping help
 
 help:
 	@echo "VisionGuide Pi 배포 도구"
@@ -52,11 +52,11 @@ sync:
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
 	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v1-2/weights/
 
-## Pi에 Python 의존성 설치 (Python 3.13 메인 앱용)
+## Pi에 Python 의존성 설치 (Python 3.10 메인 앱용)
 deps:
 	@echo "[DEPS] Pi 의존성 설치..."
 	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 || true"
-	ssh $(USER)@$(PI) "pip install --break-system-packages -q ai-edge-litert opencv-python-headless numpy"
+	ssh $(USER)@$(PI) "~/.pyenv/versions/3.10.14/bin/pip install -q ai-edge-litert opencv-python-headless numpy shapely"
 
 ## Python 3.9 EdgeTPU 전용 패키지 설치 (Python 3.9 빌드 후 실행)
 install-edgetpu-py39:
@@ -67,15 +67,23 @@ install-edgetpu-py39:
 		opencv-python-headless"
 	@echo "[완료] Python 3.9 EdgeTPU 의존성 설치 완료"
 
+## Pi Python 3.10 환경 일회성 설치 (pyenv 이용)
+setup-pi-python310:
+	@echo "[SETUP] Pi에 Python 3.10 설치 (pyenv)..."
+	ssh $(USER)@$(PI) "curl https://pyenv.run | bash || true"
+	ssh $(USER)@$(PI) "grep -q 'pyenv init' ~/.bashrc || echo 'export PYENV_ROOT=\"\$$HOME/.pyenv\"\nexport PATH=\"\$$PYENV_ROOT/bin:\$$PATH\"\neval \"\$$(pyenv init -)\"' >> ~/.bashrc"
+	ssh $(USER)@$(PI) "~/.pyenv/bin/pyenv install -s 3.10.14 && ~/.pyenv/bin/pyenv global 3.10.14"
+	@echo "[완료] Python 3.10 설치 완료. 확인: make ping"
+
 ## Pi에서 headless MJPEG 스트리밍 시작 (모니터 없는 경우)
 run-headless:
 	@echo "[RUN] 스트리밍 주소: http://$(PI):8080/stream.mjpg"
-	ssh -t $(USER)@$(PI) "cd ~/visionguide && python camera_live_pi.py --headless --port 8080"
+	ssh -t $(USER)@$(PI) "cd ~/visionguide && ~/.pyenv/versions/3.10.14/bin/python camera_live_pi.py --headless --port 8080"
 
 ## Pi에서 디스플레이 모드 실행 (모니터 연결된 경우)
 run:
-	ssh -t $(USER)@$(PI) "cd ~/visionguide && python camera_live_pi.py"
+	ssh -t $(USER)@$(PI) "cd ~/visionguide && ~/.pyenv/versions/3.10.14/bin/python camera_live_pi.py"
 
 ## Pi 연결 및 배포 환경 확인
 ping:
-	ssh $(USER)@$(PI) "python3 --version && ls ~/visionguide/ 2>/dev/null || echo '(아직 배포 전)'"
+	ssh $(USER)@$(PI) "~/.pyenv/versions/3.10.14/bin/python --version 2>/dev/null || python3 --version && ls ~/visionguide/ 2>/dev/null || echo '(아직 배포 전)'"

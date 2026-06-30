@@ -1,3 +1,4 @@
+# Streamlit 시뮬레이터 전용 (Python 3.10+)
 streamlit>=1.28
 ultralytics>=8.0
 opencv-python-headless

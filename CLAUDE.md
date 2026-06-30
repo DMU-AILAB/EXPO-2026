@@ -64,9 +64,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디바이스 개발 명령어
 
 ```bash
-# PC 의존성 (Python 3.11 권장)
-pip install -r requirements.txt
-# 또는: ultralytics opencv-python shapely pygame
+# PC 의존성 (Python 3.10, Anaconda 가상환경)
+conda env create -f environment.yml   # 최초 1회
+conda activate visionguide
+# 또는 기존 환경에 직접 설치:
+# pip install -r requirements.txt
 
 # PC 시뮬레이터 실행
 cd simulator && streamlit run app.py
@@ -101,6 +103,9 @@ sudo journalctl -u visionguide-device -f
 Windows에서 `make` 미설치 시: `scoop install make` 또는 `choco install make`.
 
 ```bash
+# Pi Python 3.10 환경 일회성 설치 (최초 1회 — pyenv 이용)
+make setup-pi-python310
+
 # 전체 배포 (파일 전송 + 의존성 설치)
 make deploy
 

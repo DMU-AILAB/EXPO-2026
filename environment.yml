@@ -1,0 +1,18 @@
+name: visionguide
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - ultralytics>=8.0.0
+    - opencv-python>=4.8.0
+    - numpy>=1.24.0
+    - torch>=2.0.0
+    - torchvision>=0.15.0
+    - pillow>=9.0.0
+    - shapely>=2.0.0
+    - pygame>=2.0.0
+    - streamlit>=1.28
+    - streamlit-drawable-canvas

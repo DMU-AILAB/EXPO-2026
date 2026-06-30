@@ -1,4 +1,6 @@
-# Raspberry Pi 4 / Debian Trixie (Python 3.13) 전용
+# Raspberry Pi 4 / Python 3.10 전용
+# (Debian Trixie 시스템은 Python 3.13이므로 pyenv로 3.10 설치 필요)
+# → make setup-pi-python310 으로 일회성 설치 가능
 #
 # picamera2는 pip 대신 apt로 설치:
 #   sudo apt-get install -y python3-picamera2
@@ -6,8 +8,8 @@
 # ultralytics / torch / torchvision 은 Pi에 설치하지 않습니다.
 # TFLite 백엔드(best_int8.tflite)가 우선 사용되므로 불필요합니다.
 
-# ── Python 3.13 (system) — 메인 앱 (카메라, MJPEG 스트리밍) ──────────
-# tflite-runtime은 Python 3.11+ ARM64 미지원 → ai-edge-litert 사용
+# ── Python 3.10 — 메인 앱 (카메라, MJPEG 스트리밍) ──────────────────────
+# ai-edge-litert: Python 3.9~3.13 지원, tflite-runtime 공식 후계 패키지
 ai-edge-litert>=1.0.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
