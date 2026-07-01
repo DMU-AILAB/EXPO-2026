@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VisionGuide — ROI Editor</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── header ── */
+header {
+  background: #16213e;
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 2px solid #0f3460;
+  flex-shrink: 0;
+}
+header h1 { font-size: 16px; color: #e94560; white-space: nowrap; }
+.hint { font-size: 11px; color: #666; margin-left: auto; white-space: nowrap; }
+
+/* ── buttons ── */
+.btn {
+  padding: 6px 13px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-save  { background: #27ae60; color: #fff; }
+.btn-save:hover  { background: #2ecc71; }
+.btn-prim  { background: #0f3460; color: #fff; }
+.btn-prim:hover  { background: #1a5490; }
+.btn-danger { background: #c0392b; color: #fff; }
+.btn-danger:hover { background: #e74c3c; }
+.btn-sm { font-size: 10px; padding: 3px 7px; }
+
+/* ── layout ── */
+main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── viewer ── */
+#viewer {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  overflow: hidden;
+  position: relative;
+}
+#canvas-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+#stream {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 84px);
+}
+#canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  cursor: crosshair;
+}
+#no-stream {
+  color: #555;
+  font-size: 13px;
+  text-align: center;
+  padding: 40px;
+}
+
+/* ── panel ── */
+#panel {
+  width: 270px;
+  background: #16213e;
+  border-left: 2px solid #0f3460;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+#panel-top {
+  padding: 10px 12px;
+  border-bottom: 1px solid #0f3460;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+#roi-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.roi-item {
+  background: #0f3460;
+  border-radius: 6px;
+  padding: 9px 10px;
+  margin-bottom: 7px;
+}
+.roi-item-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+.color-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+  flex-shrink: 0;
+}
+.roi-name  { font-weight: bold; font-size: 13px; }
+.roi-meta  { font-size: 11px; color: #99a; margin-top: 2px; }
+
+/* ── form ── */
+#form-section {
+  border-top: 2px solid #0f3460;
+  padding: 12px;
+  flex-shrink: 0;
+}
+#form-section h3 {
+  font-size: 12px;
+  color: #e94560;
+  margin-bottom: 9px;
+}
+.fg { margin-bottom: 8px; }
+.fg label {
+  font-size: 10px;
+  color: #99a;
+  display: block;
+  margin-bottom: 3px;
+}
+.fg input {
+  width: 100%;
+  padding: 5px 8px;
+  background: #0f3460;
+  border: 1px solid #2a3a60;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 12px;
+}
+.fg input:focus { outline: none; border-color: #e94560; }
+.form-btns { display: flex; gap: 6px; margin-top: 4px; }
+.form-btns .btn { flex: 1; }
+
+/* ── status bar ── */
+#statusbar {
+  background: #0a0a1a;
+  padding: 5px 16px;
+  font-size: 11px;
+  color: #666;
+  flex-shrink: 0;
+  border-top: 1px solid #0f3460;
+}
+.s-ok   { color: #27ae60; }
+.s-warn { color: #f39c12; }
+.s-err  { color: #e74c3c; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🦯 VisionGuide ROI Editor</h1>
+  <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+  <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
+</header>
+
+<main>
+  <div id="viewer">
+    <div id="canvas-wrap">
+      <img id="stream" alt="">
+      <canvas id="canvas"></canvas>
+    </div>
+    <div id="no-stream" style="display:none">
+      카메라 스트림에 연결할 수 없습니다.<br>
+      <code>camera_live_pi.py --headless</code> 가 실행 중인지 확인하세요.
+    </div>
+  </div>
+
+  <div id="panel">
+    <div id="panel-top">
+      <span id="roi-count">ROI 목록 (0)</span>
+      <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
+    </div>
+    <div id="roi-list">
+      <div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>
+    </div>
+    <div id="form-section" style="display:none">
+      <h3>➕ 새 ROI 정보 입력</h3>
+      <div class="fg">
+        <label>이름 *</label>
+        <input id="fName" placeholder="예: 횡단보도">
+      </div>
+      <div class="fg">
+        <label>안내 텍스트 *</label>
+        <input id="fText" placeholder="예: 횡단보도 앞입니다">
+      </div>
+      <div class="fg">
+        <label>오디오 파일 경로 (선택)</label>
+        <input id="fAudio" placeholder="audio/crosswalk.mp3">
+      </div>
+      <div class="fg">
+        <label>우선순위 (낮을수록 높음)</label>
+        <input id="fPriority" type="number" value="1" min="1">
+      </div>
+      <div class="form-btns">
+        <button class="btn btn-prim" id="btnAddRoi">ROI 추가</button>
+        <button class="btn btn-danger" id="btnCancel">취소</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="statusbar"><span id="status" class="s-ok">서버에 연결 중...</span></div>
+
+<script>
+/* ================================================================
+   Constants & state
+================================================================ */
+const COLORS = ['#00dc00','#ff8c00','#00c8ff','#ff00c8','#00ffc8'];
+
+let rois        = [];   // [{name, points, priority, announcement_text, audio_file}]
+let drawing     = [];   // 현재 그리는 중인 꼭짓점 [[nx,ny], ...]
+let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
+let mousePos    = null; // canvas 픽셀 좌표 [x, y]
+
+/* ================================================================
+   DOM refs
+================================================================ */
+const stream     = document.getElementById('stream');
+const canvas     = document.getElementById('canvas');
+const ctx        = canvas.getContext('2d');
+const statusEl   = document.getElementById('status');
+const formSec    = document.getElementById('form-section');
+const roiListEl  = document.getElementById('roi-list');
+const noStream   = document.getElementById('no-stream');
+const canvasWrap = document.getElementById('canvas-wrap');
+
+/* ================================================================
+   Stream setup
+================================================================ */
+const STREAM_URL = `http://${location.hostname}:8080/stream.mjpg`;
+stream.src = STREAM_URL;
+
+stream.onload = syncSize;
+stream.onerror = () => {
+  canvasWrap.style.display = 'none';
+  noStream.style.display = 'block';
+  setStatus('카메라 스트림 연결 실패 — camera_live_pi.py 실행 여부 확인', 'err');
+};
+
+// MJPEG는 onload가 늦게 오므로 폴링으로 보완
+setInterval(() => {
+  if (stream.offsetWidth > 0 &&
+      (canvas.width !== stream.offsetWidth || canvas.height !== stream.offsetHeight)) {
+    syncSize();
+  }
+}, 800);
+
+function syncSize() {
+  const w = stream.offsetWidth;
+  const h = stream.offsetHeight;
+  if (w === 0 || h === 0) return;
+  canvas.width  = w;
+  canvas.height = h;
+  redraw();
+}
+
+/* ================================================================
+   Coordinate helpers
+================================================================ */
+function toPx(nx, ny)  { return [nx * canvas.width,  ny * canvas.height]; }
+function toNorm(px, py) { return [px / canvas.width, py / canvas.height]; }
+
+function canvasPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+
+/* ================================================================
+   Drawing
+================================================================ */
+function redraw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 저장된 ROIs
+  rois.forEach((roi, i) => {
+    const color = COLORS[i % COLORS.length];
+    drawPoly(roi.points, color, 0.20, roi.name, true);
+  });
+
+  // 폼 대기 중인 폴리곤
+  if (pendingPoly) {
+    drawPoly(pendingPoly, '#ffff00', 0.12, '(미저장)', false);
+  }
+
+  // 현재 그리는 중
+  drawInProgress();
+}
+
+function drawPoly(points, color, alpha, label, closed) {
+  if (points.length < 2) return;
+
+  ctx.beginPath();
+  const [x0, y0] = toPx(points[0][0], points[0][1]);
+  ctx.moveTo(x0, y0);
+  for (let i = 1; i < points.length; i++) {
+    const [x, y] = toPx(points[i][0], points[i][1]);
+    ctx.lineTo(x, y);
+  }
+  if (closed) ctx.closePath();
+
+  // fill
+  ctx.fillStyle = color + Math.round(alpha * 255).toString(16).padStart(2, '0');
+  ctx.fill();
+
+  // stroke
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.stroke();
+
+  // vertex dots
+  for (const p of points) {
+    const [x, y] = toPx(p[0], p[1]);
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  // label
+  if (label && points.length >= 3) {
+    const cx = points.reduce((s, p) => s + p[0], 0) / points.length * canvas.width;
+    const cy = points.reduce((s, p) => s + p[1], 0) / points.length * canvas.height;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText(label, cx - 20, cy + 5);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, cx - 20, cy + 5);
+  }
+}
+
+function drawInProgress() {
+  if (drawing.length === 0) return;
+
+  ctx.beginPath();
+  const [x0, y0] = toPx(drawing[0][0], drawing[0][1]);
+  ctx.moveTo(x0, y0);
+  for (let i = 1; i < drawing.length; i++) {
+    const [x, y] = toPx(drawing[i][0], drawing[i][1]);
+    ctx.lineTo(x, y);
+  }
+  if (mousePos) ctx.lineTo(mousePos[0], mousePos[1]);
+
+  ctx.strokeStyle = '#ffff00';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // first-vertex close hint circle
+  if (drawing.length >= 3) {
+    const [fx, fy] = toPx(drawing[0][0], drawing[0][1]);
+    ctx.beginPath();
+    ctx.arc(fx, fy, 8, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // vertex dots
+  for (const p of drawing) {
+    const [x, y] = toPx(p[0], p[1]);
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffff00';
+    ctx.fill();
+  }
+}
+
+/* ================================================================
+   Canvas events
+================================================================ */
+canvas.addEventListener('mousemove', e => {
+  mousePos = canvasPos(e);
+  if (drawing.length > 0) redraw();
+});
+
+canvas.addEventListener('mouseleave', () => {
+  mousePos = null;
+  if (drawing.length > 0) redraw();
+});
+
+let lastClickTime = 0;
+canvas.addEventListener('click', e => {
+  if (pendingPoly) return;
+
+  const now = Date.now();
+  // dblclick fires click×2 → ignore second click within 300ms
+  if (now - lastClickTime < 300) { lastClickTime = now; return; }
+  lastClickTime = now;
+
+  const [cx, cy] = canvasPos(e);
+  drawing.push(toNorm(cx, cy));
+  setStatus(`꼭짓점 ${drawing.length}개 추가됨 — 더블클릭으로 완성 | ESC 취소`, 'warn');
+  redraw();
+});
+
+canvas.addEventListener('dblclick', e => {
+  if (pendingPoly) return;
+  if (drawing.length < 3) {
+    setStatus('꼭짓점이 3개 이상 필요합니다', 'err');
+    return;
+  }
+  pendingPoly = drawing.slice();
+  drawing = [];
+  formSec.style.display = 'block';
+  document.getElementById('fName').focus();
+  document.getElementById('fPriority').value = rois.length + 1;
+  setStatus('ROI 정보를 입력하고 [ROI 추가]를 누르세요', 'warn');
+  redraw();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') cancelDrawing();
+});
+
+/* ================================================================
+   Form
+================================================================ */
+function cancelDrawing() {
+  drawing = [];
+  pendingPoly = null;
+  formSec.style.display = 'none';
+  setStatus('취소됨 — 캔버스를 클릭해 다시 그리세요', 'ok');
+  redraw();
+}
+
+document.getElementById('btnCancel').addEventListener('click', cancelDrawing);
+
+document.getElementById('btnAddRoi').addEventListener('click', () => {
+  const name  = document.getElementById('fName').value.trim();
+  const text  = document.getElementById('fText').value.trim();
+  const audio = document.getElementById('fAudio').value.trim();
+  const prio  = parseInt(document.getElementById('fPriority').value) || 1;
+
+  if (!name || !text) { setStatus('이름과 안내 텍스트는 필수입니다', 'err'); return; }
+  if (rois.find(r => r.name === name)) { setStatus(`'${name}' 이름이 이미 존재합니다`, 'err'); return; }
+
+  rois.push({
+    name,
+    points: pendingPoly,
+    priority: prio,
+    announcement_text: text,
+    audio_file: audio,
+  });
+
+  pendingPoly = null;
+  formSec.style.display = 'none';
+  ['fName','fText','fAudio'].forEach(id => document.getElementById(id).value = '');
+
+  renderList();
+  redraw();
+  setStatus(`'${name}' 추가됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
+});
+
+/* ================================================================
+   ROI list
+================================================================ */
+function renderList() {
+  document.getElementById('roi-count').textContent = `ROI 목록 (${rois.length})`;
+
+  if (rois.length === 0) {
+    roiListEl.innerHTML = '<div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>';
+    return;
+  }
+
+  roiListEl.innerHTML = rois.map((roi, i) => `
+    <div class="roi-item">
+      <div class="roi-item-hd">
+        <span>
+          <span class="color-dot" style="background:${COLORS[i % COLORS.length]}"></span>
+          <span class="roi-name">${escHtml(roi.name)}</span>
+        </span>
+        <button class="btn btn-danger btn-sm" onclick="deleteRoi('${escAttr(roi.name)}')">삭제</button>
+      </div>
+      <div class="roi-meta">${escHtml(roi.announcement_text)}</div>
+      ${roi.audio_file ? `<div class="roi-meta">🎵 ${escHtml(roi.audio_file)}</div>` : ''}
+      <div class="roi-meta">우선순위 ${roi.priority} | 꼭짓점 ${roi.points.length}개</div>
+    </div>
+  `).join('');
+}
+
+function deleteRoi(name) {
+  if (!confirm(`'${name}' ROI를 삭제하시겠습니까?`)) return;
+  rois = rois.filter(r => r.name !== name);
+  renderList();
+  redraw();
+  saveToServer();
+}
+
+document.getElementById('btnClearAll').addEventListener('click', () => {
+  if (rois.length === 0) return;
+  if (!confirm('모든 ROI를 삭제하시겠습니까?')) return;
+  rois = [];
+  cancelDrawing();
+  renderList();
+  saveToServer();
+});
+
+/* ================================================================
+   API
+================================================================ */
+document.getElementById('btnSaveAll').addEventListener('click', saveToServer);
+
+async function saveToServer() {
+  try {
+    const res = await fetch('/api/rois', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rois }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    setStatus(`✅ ${rois.length}개 ROI 저장 완료 — Pi가 60초 이내 자동 반영합니다`, 'ok');
+  } catch (e) {
+    setStatus(`❌ 저장 실패: ${e.message}`, 'err');
+  }
+}
+
+async function loadFromServer() {
+  try {
+    const res  = await fetch('/api/rois');
+    const data = await res.json();
+    rois = data.rois || [];
+    renderList();
+    redraw();
+    setStatus(`${rois.length}개 ROI 불러옴`, 'ok');
+  } catch (e) {
+    setStatus('rois.json 불러오기 실패', 'err');
+  }
+}
+
+/* ================================================================
+   Utilities
+================================================================ */
+function setStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = type === 'err' ? 's-err' : type === 'warn' ? 's-warn' : 's-ok';
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) {
+  return String(s).replace(/'/g,"\\'");
+}
+
+/* ================================================================
+   Boot
+================================================================ */
+loadFromServer();
+syncSize();
+</script>
+</body>
+</html>

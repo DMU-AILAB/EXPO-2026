@@ -14,7 +14,7 @@
 # PI, USER 기본값을 아래에서 수정해두면 make deploy 만으로 실행 가능
 # =============================================================================
 
-PI   ?= raspberrypi.local
+PI   ?= 192.168.0.89
 USER ?= ailab
 DEST  = $(USER)@$(PI):~/visionguide
 
@@ -27,36 +27,54 @@ DEPLOY_PY = \
 # Pi에 배포할 모델 파일
 DEPLOY_MODEL = runs/white_cane_v1-2/weights/best_int8.tflite
 
-.PHONY: deploy sync deps install-edgetpu-py39 setup-pi-python310 run-headless run ping help
+.PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
+        install-edgetpu-py39 setup-pi-python310 \
+        run-headless run run-roi-editor ping help
 
 help:
 	@echo "VisionGuide Pi 배포 도구"
 	@echo ""
-	@echo "  make deploy [PI=<ip>] [USER=<user>]   파일 전송 + 의존성 설치 (전체 배포)"
-	@echo "  make sync   [PI=<ip>]                 파일만 재전송 (코드 변경 후)"
-	@echo "  make deps   [PI=<ip>]                 의존성만 설치"
-	@echo "  make run-headless [PI=<ip>]           Pi에서 MJPEG 스트리밍 시작"
-	@echo "  make run    [PI=<ip>]                 Pi에서 디스플레이 모드 실행"
-	@echo "  make ping   [PI=<ip>]                 Pi 연결 및 환경 확인"
+	@echo "  make deploy          [PI=<ip>]  전체 배포 (카메라 앱 + ROI 에디터)"
+	@echo "  make sync            [PI=<ip>]  카메라 앱 파일만 재전송"
+	@echo "  make sync-roi-editor [PI=<ip>]  ROI 에디터 파일만 재전송"
+	@echo "  make deps            [PI=<ip>]  카메라 앱 의존성 설치"
+	@echo "  make deps-roi-editor [PI=<ip>]  ROI 에디터 의존성 설치 (fastapi, uvicorn)"
+	@echo "  make run-headless    [PI=<ip>]  Pi에서 MJPEG 스트리밍 시작 (포트 8080)"
+	@echo "  make run-roi-editor  [PI=<ip>]  Pi에서 ROI 웹 에디터 시작 (포트 5000)"
+	@echo "  make run             [PI=<ip>]  Pi에서 디스플레이 모드 실행"
+	@echo "  make ping            [PI=<ip>]  Pi 연결 및 환경 확인"
 	@echo ""
 	@echo "  현재 기본값: PI=$(PI)  USER=$(USER)"
 
-## 전체 배포 (파일 전송 + 의존성 설치)
-deploy: sync deps
-	@echo "[완료] $(PI) 배포 완료"
+## 전체 배포 (카메라 앱 + ROI 에디터 파일 전송 + 의존성 설치)
+deploy: sync sync-roi-editor deps deps-roi-editor
+	@echo "[완료] $(PI) 전체 배포 완료"
 
-## Pi로 파일만 전송
+## Pi로 카메라 앱 파일만 전송
 sync:
-	@echo "[SYNC] $(DEST) 으로 파일 전송..."
+	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
 	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/runs/white_cane_v1-2/weights"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
 	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v1-2/weights/
 
-## Pi에 Python 의존성 설치 (Python 3.10 메인 앱용)
+## Pi로 ROI 에디터 파일만 전송
+sync-roi-editor:
+	@echo "[SYNC] ROI 에디터 파일 전송..."
+	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/roi_editor/static"
+	rsync -avz --progress roi_editor/ $(DEST)/roi_editor/
+	rsync -avz --progress simulator/roi_manager.py $(DEST)/simulator/
+	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/simulator && touch ~/visionguide/simulator/__init__.py"
+
+## Pi에 카메라 앱 의존성 설치 (Python 3.10)
 deps:
-	@echo "[DEPS] Pi 의존성 설치..."
-	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 || true"
-	ssh $(USER)@$(PI) "~/.pyenv/versions/3.10.14/bin/pip install -q ai-edge-litert opencv-python-headless numpy shapely"
+	@echo "[DEPS] 카메라 앱 의존성 설치..."
+	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum || true"
+	ssh $(USER)@$(PI) "~/.pyenv/versions/3.10.14/bin/pip install -q ai-edge-litert opencv-python-headless numpy shapely pillow"
+
+## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn)
+deps-roi-editor:
+	@echo "[DEPS] ROI 에디터 의존성 설치..."
+	ssh $(USER)@$(PI) "~/.pyenv/versions/3.10.14/bin/pip install -q 'fastapi>=0.100.0' 'uvicorn[standard]>=0.20.0'"
 
 ## Python 3.9 EdgeTPU 전용 패키지 설치 (Python 3.9 빌드 후 실행)
 install-edgetpu-py39:
@@ -79,6 +97,12 @@ setup-pi-python310:
 run-headless:
 	@echo "[RUN] 스트리밍 주소: http://$(PI):8080/stream.mjpg"
 	ssh -t $(USER)@$(PI) "cd ~/visionguide && ~/.pyenv/versions/3.10.14/bin/python camera_live_pi.py --headless --port 8080"
+
+## Pi에서 ROI 웹 에디터 실행 (브라우저에서 http://PI:5000 접속)
+run-roi-editor:
+	@echo "[ROI Editor] 브라우저에서 http://$(PI):5000 으로 접속하세요"
+	@echo "[ROI Editor] camera_live_pi.py 를 먼저 실행해야 스트림이 표시됩니다 (make run-headless)"
+	ssh -t $(USER)@$(PI) "cd ~/visionguide && ~/.pyenv/versions/3.10.14/bin/python roi_editor/server.py --rois ~/visionguide/rois.json"
 
 ## Pi에서 디스플레이 모드 실행 (모니터 연결된 경우)
 run:
