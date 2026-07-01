@@ -1,4 +1,4 @@
-# PC / Windows 환경용 의존성 (Raspberry Pi 전용 패키지 제외)
+# PC / Windows 환경용 의존성 (Python 3.10+, Anaconda 가상환경 권장)
 ultralytics>=8.0.0
 opencv-python>=4.8.0
 numpy>=1.24.0
