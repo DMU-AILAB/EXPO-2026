@@ -376,9 +376,12 @@ class MJPEGServer:
                             data = srv._jpeg
                         if data:
                             self.wfile.write(
-                                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                                b"--frame\r\n"
+                                b"Content-Type: image/jpeg\r\n"
+                                + f"Content-Length: {len(data)}\r\n\r\n".encode()
                                 + data + b"\r\n"
                             )
+                            self.wfile.flush()
                         time.sleep(0.033)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # 클라이언트가 연결을 끊은 경우
