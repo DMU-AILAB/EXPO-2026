@@ -6,8 +6,9 @@ Wants=sound.target
 [Service]
 Type=simple
 User=__USER__
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/home/__USER__/visionguide
-ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/camera_live_pi.py --headless --port 8080 --roi-config /home/__USER__/visionguide/rois.json
+ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/camera_live_pi.py --headless --port 8080 --roi-config /home/__USER__/visionguide/rois.json --status-led 27
 Restart=on-failure
 RestartSec=3
 

@@ -33,7 +33,7 @@ _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="VisionGuide ROI Editor", docs_url=None, redoc_url=None)
+app = FastAPI(title="VisionGuide ROI Editor", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -85,11 +85,16 @@ async def get_rois():
 
 class RoisPayload(BaseModel):
     rois: list
+    conf: float | None = None
 
 
 @app.post("/api/rois")
 async def post_rois(payload: RoisPayload):
-    _save({"rois": payload.rois})
+    data = {"rois": payload.rois}
+    conf = payload.conf if payload.conf is not None else _load().get("conf")
+    if conf is not None:
+        data["conf"] = conf
+    _save(data)
     return {"ok": True, "count": len(payload.rois)}
 
 
@@ -143,4 +148,7 @@ if __name__ == "__main__":
     print(f"[ROI Editor] audio_dir: {audio_dir}")
     print(f"[ROI Editor] 브라우저: http://<Pi-IP>:{args.port}")
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(
+        app, host=args.host, port=args.port,
+        log_level="warning", access_log=False, workers=1,
+    )

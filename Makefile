@@ -28,7 +28,9 @@ DEPLOY_PY = \
 	camera_live_pi.py \
 	detect.py \
 	edgetpu_infer.py \
-	audio_trigger.py
+	audio_trigger.py \
+	gpio_controls.py \
+	fan_controller.py
 
 # Pi에 배포할 모델 파일
 DEPLOY_MODEL = runs/white_cane_v1-2/weights/best_int8.tflite
@@ -79,7 +81,7 @@ sync-roi-editor:
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
 	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 || true"
-	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert opencv-python-headless numpy shapely pillow"
+	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert opencv-python-headless numpy shapely pillow gpiozero lgpio"
 
 ## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
 deps-roi-editor:
@@ -118,15 +120,15 @@ run-roi-editor:
 run:
 	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py"
 
-## systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터가 완전 자동/headless 로 구동됨
+## systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터 + GPIO 재시작버튼이 완전 자동/headless 로 구동됨
 ## 이후로는 최초 ROI/오디오 설정 시에만 http://<Pi-IP>:5000 접속이 필요하고,
 ## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service $(USER)@$(PI):/tmp/
-	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service"
-	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /etc/systemd/system/"
-	ssh $(USER)@$(PI) "sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor"
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service $(USER)@$(PI):/tmp/
+	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service"
+	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /etc/systemd/system/"
+	ssh $(USER)@$(PI) "sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."
 	@echo "       확인: ssh $(USER)@$(PI) sudo systemctl status visionguide-device"
 	@echo "       ROI 에디터를 끄고 싶으면: ssh $(USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"

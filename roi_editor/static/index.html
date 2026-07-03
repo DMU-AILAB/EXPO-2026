@@ -97,6 +97,20 @@ main {
   overflow: hidden;
   flex-shrink: 0;
 }
+#conf-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid #0f3460;
+  flex-shrink: 0;
+}
+#conf-section label {
+  font-size: 11px;
+  color: #99a;
+  display: block;
+  margin-bottom: 4px;
+}
+#conf-section input[type="range"] {
+  width: 100%;
+}
 #panel-top {
   padding: 10px 12px;
   border-bottom: 1px solid #0f3460;
@@ -200,6 +214,10 @@ main {
   </div>
 
   <div id="panel">
+    <div id="conf-section">
+      <label for="fConf">신뢰도 임계값: <span id="confValue">0.55</span></label>
+      <input type="range" id="fConf" min="0.1" max="0.95" step="0.05" value="0.55">
+    </div>
     <div id="panel-top">
       <span id="roi-count">ROI 목록 (0)</span>
       <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
@@ -249,6 +267,7 @@ let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
 let mousePos    = null; // canvas 픽셀 좌표 [x, y]
 let pendingAudioPath = ''; // 새 ROI 폼에서 업로드된 오디오의 Pi 경로
 let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
+let confThreshold = 0.55; // 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영
 
 /* ================================================================
    DOM refs
@@ -264,6 +283,8 @@ const canvasWrap = document.getElementById('canvas-wrap');
 const audioPick  = document.getElementById('fAudioPick');
 const audioStatusEl = document.getElementById('audioStatus');
 const existingAudioPick = document.getElementById('fAudioPickExisting');
+const confInput  = document.getElementById('fConf');
+const confValueEl = document.getElementById('confValue');
 
 /* ================================================================
    Stream setup
@@ -610,7 +631,7 @@ async function saveToServer() {
     const res = await fetch('/api/rois', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rois }),
+      body: JSON.stringify({ rois, conf: confThreshold }),
     });
     if (!res.ok) throw new Error(await res.text());
     setStatus(`✅ ${rois.length}개 ROI 저장 완료 — 기기가 2초 이내 자동 반영합니다`, 'ok');
@@ -624,6 +645,11 @@ async function loadFromServer() {
     const res  = await fetch('/api/rois');
     const data = await res.json();
     rois = data.rois || [];
+    if (typeof data.conf === 'number') {
+      confThreshold = data.conf;
+      confInput.value = confThreshold;
+      confValueEl.textContent = confThreshold.toFixed(2);
+    }
     renderList();
     redraw();
     setStatus(`${rois.length}개 ROI 불러옴`, 'ok');
@@ -631,6 +657,15 @@ async function loadFromServer() {
     setStatus('rois.json 불러오기 실패', 'err');
   }
 }
+
+confInput.addEventListener('input', () => {
+  confThreshold = parseFloat(confInput.value);
+  confValueEl.textContent = confThreshold.toFixed(2);
+});
+
+confInput.addEventListener('change', () => {
+  saveToServer();
+});
 
 /* ================================================================
    Utilities

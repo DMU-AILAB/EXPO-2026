@@ -1,0 +1,15 @@
+[Unit]
+Description=VisionGuide GPIO 물리 버튼 — Wi-Fi 홈/핫스팟 전환
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/__USER__/visionguide
+ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/gpio_controls.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

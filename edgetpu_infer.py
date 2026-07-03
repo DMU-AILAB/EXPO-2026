@@ -17,6 +17,7 @@ stdin/stdout 바이너리 프로토콜:
 from __future__ import annotations
 
 import json
+import signal
 import struct
 import sys
 from pathlib import Path
@@ -24,6 +25,20 @@ from pathlib import Path
 import cv2
 import numpy as np
 import tflite_runtime.interpreter as tflite
+
+
+def _on_sigterm(signum, frame):
+    """부모(camera_live_pi.py)가 종료될 때 SIGTERM으로 이 워커도 같이 종료된다.
+    핸들러 없이 죽으면 stdin.read()에서 블록된 채로 강제 종료되어 tflite
+    Interpreter/delegate 객체가 정상적으로 파괴되지 않고, Coral 칩이 세션 종료를
+    인지하지 못한 채 USB 연결만 뚝 끊긴다 — 다음 실행 때 델리게이트 초기화 실패,
+    물리적 재연결 전엔 복구가 안 되는 원인이었다. SystemExit을 직접 발생시켜
+    (자동 EINTR 재시도로 넘어가지 않도록) 블로킹 read()를 확실히 끊고 정상
+    인터프리터 종료 경로를 타게 해서 delegate/interpreter가 제대로 정리되게 한다."""
+    raise SystemExit(0)
+
+
+signal.signal(signal.SIGTERM, _on_sigterm)
 
 _WEIGHTS       = Path(__file__).parent / "runs/white_cane_v1-2/weights"
 _EDGETPU_MODEL = _WEIGHTS / "best_int8_edgetpu.tflite"
