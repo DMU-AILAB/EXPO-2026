@@ -35,7 +35,7 @@ import struct
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 import cv2
@@ -377,7 +377,7 @@ class MJPEGServer:
         self._port  = port
         self._jpeg: bytes = b""
         self._lock  = threading.Lock()
-        self._httpd: HTTPServer | None = None
+        self._httpd: ThreadingHTTPServer | None = None
 
     def push(self, frame: np.ndarray) -> None:
         """메인 루프에서 매 프레임마다 호출."""
@@ -422,7 +422,11 @@ class MJPEGServer:
         return _Handler
 
     def start(self) -> None:
-        self._httpd = HTTPServer(("", self._port), self._handler_class())
+        # 일반 HTTPServer는 싱글 스레드라 요청 하나(스트림은 무한 루프로 붙어있음)가
+        # 스레드를 계속 물고 있으면 다른 뷰어(핫스팟 쪽 접속 등)가 영원히 대기하게 된다.
+        # ThreadingHTTPServer로 접속마다 별도 스레드를 띄워 동시 접속을 지원한다.
+        self._httpd = ThreadingHTTPServer(("", self._port), self._handler_class())
+        self._httpd.daemon_threads = True
         t = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         t.start()
         print(f"[INFO] MJPEG 스트리밍 주소: http://0.0.0.0:{self._port}/stream.mjpg")
