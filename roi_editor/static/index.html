@@ -218,8 +218,9 @@ main {
         <input id="fText" placeholder="예: 횡단보도 앞입니다">
       </div>
       <div class="fg">
-        <label>오디오 파일 경로 (선택)</label>
-        <input id="fAudio" placeholder="audio/crosswalk.mp3">
+        <label>오디오 파일 (선택 — PC/폰에서 mp3 선택 시 Pi로 자동 업로드)</label>
+        <input type="file" id="fAudioPick" accept="audio/*">
+        <div id="audioStatus" class="roi-meta" style="margin-top:4px"></div>
       </div>
       <div class="fg">
         <label>우선순위 (낮을수록 높음)</label>
@@ -234,6 +235,7 @@ main {
 </main>
 
 <div id="statusbar"><span id="status" class="s-ok">서버에 연결 중...</span></div>
+<input type="file" id="fAudioPickExisting" accept="audio/*" style="display:none">
 
 <script>
 /* ================================================================
@@ -245,6 +247,8 @@ let rois        = [];   // [{name, points, priority, announcement_text, audio_fi
 let drawing     = [];   // 현재 그리는 중인 꼭짓점 [[nx,ny], ...]
 let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
 let mousePos    = null; // canvas 픽셀 좌표 [x, y]
+let pendingAudioPath = ''; // 새 ROI 폼에서 업로드된 오디오의 Pi 경로
+let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
 
 /* ================================================================
    DOM refs
@@ -257,6 +261,9 @@ const formSec    = document.getElementById('form-section');
 const roiListEl  = document.getElementById('roi-list');
 const noStream   = document.getElementById('no-stream');
 const canvasWrap = document.getElementById('canvas-wrap');
+const audioPick  = document.getElementById('fAudioPick');
+const audioStatusEl = document.getElementById('audioStatus');
+const existingAudioPick = document.getElementById('fAudioPickExisting');
 
 /* ================================================================
    Stream setup
@@ -456,6 +463,7 @@ function cancelDrawing() {
   drawing = [];
   pendingPoly = null;
   formSec.style.display = 'none';
+  resetAudioPick();
   setStatus('취소됨 — 캔버스를 클릭해 다시 그리세요', 'ok');
   redraw();
 }
@@ -465,7 +473,6 @@ document.getElementById('btnCancel').addEventListener('click', cancelDrawing);
 document.getElementById('btnAddRoi').addEventListener('click', () => {
   const name  = document.getElementById('fName').value.trim();
   const text  = document.getElementById('fText').value.trim();
-  const audio = document.getElementById('fAudio').value.trim();
   const prio  = parseInt(document.getElementById('fPriority').value) || 1;
 
   if (!name || !text) { setStatus('이름과 안내 텍스트는 필수입니다', 'err'); return; }
@@ -476,16 +483,74 @@ document.getElementById('btnAddRoi').addEventListener('click', () => {
     points: pendingPoly,
     priority: prio,
     announcement_text: text,
-    audio_file: audio,
+    audio_file: pendingAudioPath,
   });
 
   pendingPoly = null;
   formSec.style.display = 'none';
-  ['fName','fText','fAudio'].forEach(id => document.getElementById(id).value = '');
+  ['fName','fText'].forEach(id => document.getElementById(id).value = '');
+  resetAudioPick();
 
   renderList();
   redraw();
   setStatus(`'${name}' 추가됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
+});
+
+/* ================================================================
+   Audio upload — 파일 선택 즉시 Pi로 업로드하고 경로를 자동 반영
+================================================================ */
+function resetAudioPick() {
+  pendingAudioPath = '';
+  audioPick.value = '';
+  audioStatusEl.textContent = '';
+}
+
+async function uploadAudio(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/audio/upload', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()).path;
+}
+
+audioPick.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) { resetAudioPick(); return; }
+  audioStatusEl.textContent = `⏳ 업로드 중... (${file.name})`;
+  audioStatusEl.className = 'roi-meta';
+  try {
+    pendingAudioPath = await uploadAudio(file);
+    audioStatusEl.textContent = `✅ 업로드됨: ${pendingAudioPath}`;
+    audioStatusEl.className = 's-ok';
+  } catch (err) {
+    pendingAudioPath = '';
+    audioStatusEl.textContent = `❌ 업로드 실패: ${err.message}`;
+    audioStatusEl.className = 's-err';
+  }
+});
+
+function pickAudioFor(i) {
+  audioTargetIndex = i;
+  existingAudioPick.value = '';
+  existingAudioPick.click();
+}
+
+existingAudioPick.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file || audioTargetIndex === null) return;
+  const roiName = rois[audioTargetIndex].name;
+  setStatus(`⏳ 업로드 중... (${file.name})`, 'warn');
+  try {
+    const path = await uploadAudio(file);
+    rois[audioTargetIndex].audio_file = path;
+    renderList();
+    await saveToServer();
+    setStatus(`✅ '${roiName}' 오디오 적용 및 저장 완료 — 기기가 2초 이내 자동 반영합니다`, 'ok');
+  } catch (err) {
+    setStatus(`❌ 업로드 실패: ${err.message}`, 'err');
+  } finally {
+    audioTargetIndex = null;
+  }
 });
 
 /* ================================================================
@@ -509,8 +574,11 @@ function renderList() {
         <button class="btn btn-danger btn-sm" onclick="deleteRoi('${escAttr(roi.name)}')">삭제</button>
       </div>
       <div class="roi-meta">${escHtml(roi.announcement_text)}</div>
-      ${roi.audio_file ? `<div class="roi-meta">🎵 ${escHtml(roi.audio_file)}</div>` : ''}
+      ${roi.audio_file ? `<div class="roi-meta">🎵 ${escHtml(roi.audio_file.split(/[\\/]/).pop())}</div>` : ''}
       <div class="roi-meta">우선순위 ${roi.priority} | 꼭짓점 ${roi.points.length}개</div>
+      <div class="form-btns" style="margin-top:6px">
+        <button class="btn btn-prim btn-sm" onclick="pickAudioFor(${i})">🎵 오디오 ${roi.audio_file ? '변경' : '추가'}</button>
+      </div>
     </div>
   `).join('');
 }
@@ -545,7 +613,7 @@ async function saveToServer() {
       body: JSON.stringify({ rois }),
     });
     if (!res.ok) throw new Error(await res.text());
-    setStatus(`✅ ${rois.length}개 ROI 저장 완료 — Pi가 60초 이내 자동 반영합니다`, 'ok');
+    setStatus(`✅ ${rois.length}개 ROI 저장 완료 — 기기가 2초 이내 자동 반영합니다`, 'ok');
   } catch (e) {
     setStatus(`❌ 저장 실패: ${e.message}`, 'err');
   }

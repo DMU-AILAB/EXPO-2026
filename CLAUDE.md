@@ -30,6 +30,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `simulator/detector.py` | 시뮬레이터용 탐지기 |
 | `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file 포함) |
 | `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
+| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD + 오디오 파일 업로드(`/api/audio/upload`), `rois.json` atomic write |
+| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v1-2/weights/` | 학습된 가중치 (`best.pt`, `best_int8.tflite`) |
 
@@ -88,8 +90,8 @@ yolo export model=best.pt format=tflite int8=True
 # 개별 모듈 단위 테스트
 python -m pytest tests/ -v
 
-# systemd 데몬 등록 후 실행
-sudo systemctl start visionguide-device
+# systemd 데몬 등록 (PC에서: make install-service). 등록 후 Pi에서:
+sudo systemctl status visionguide-device
 sudo journalctl -u visionguide-device -f
 ```
 
@@ -112,12 +114,21 @@ make deploy
 # 코드만 변경된 경우 — 파일만 빠르게 재전송
 make sync
 
-# Pi에서 headless 스트리밍 시작
+# Pi에서 headless 스트리밍 시작 (수동 실행/테스트용)
 make run-headless   # 브라우저: http://raspberrypi.local:8080/stream.mjpg
+
+# systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터 완전 자동/headless 구동 (최초 1회)
+make install-service
 
 # Pi 연결 및 환경 확인
 make ping
 ```
+
+**임베디드 headless 운영 흐름**: `make install-service` 이후로는 Pi IP 접속이 최초 ROI/오디오 설정(또는 재설정) 시에만 필요합니다.
+탐지·음성 안내(`visionguide-device.service`)는 네트워크 연결 여부와 무관하게 기기 단독으로 부팅 시 자동 시작되며,
+`roi_editor`(포트 5000, `visionguide-roi-editor.service`)에서 저장한 `rois.json` 변경은 최대 2초 내 재시작 없이 자동 반영됩니다
+(`camera_live_pi.py`가 mtime을 폴링). ROI 에디터를 계속 켜두고 싶지 않으면
+`ssh <user>@<pi> sudo systemctl disable --now visionguide-roi-editor` 로 끌 수 있습니다.
 
 **IP 주소 지정** (Pi IP가 동적으로 바뀌는 경우):
 
@@ -138,8 +149,10 @@ make sync   PI=192.168.0.89
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py` | Pi에 배포할 Python 소스 |
+| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py` | Pi에 배포할 Python 소스 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
+
+`roi_editor/` 디렉토리는 별도로 `make sync-roi-editor` (deploy에 포함됨)로 전송됩니다.
 
 새 Python 파일을 Pi에 배포해야 할 때는 `Makefile`의 `DEPLOY_PY`에 추가하세요.
 

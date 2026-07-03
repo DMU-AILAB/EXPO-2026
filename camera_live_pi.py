@@ -604,6 +604,17 @@ def main() -> None:
     else:
         print("[INFO] 실시간 탐지 시작 — 'q' 키로 종료")
 
+    # roi_editor(같은 기기, 포트 5000)가 rois.json을 수정하면 재시작 없이 반영되도록
+    # mtime을 주기적으로 확인 — 완전 로컬 동작이라 네트워크 폴링 없이 파일만 검사한다.
+    roi_mtime = 0.0
+    if args.roi_config and roi_manager is not None:
+        try:
+            roi_mtime = Path(args.roi_config).stat().st_mtime
+        except OSError:
+            roi_mtime = 0.0
+    last_roi_check = time.time()
+    ROI_CHECK_INTERVAL = 2.0
+
     stop_event = threading.Event()
 
     def _on_sigint(sig, frame):
@@ -632,6 +643,19 @@ def main() -> None:
             now    = time.time()
             fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
             prev_t = now
+
+            # ROI 설정 변경 감지 (roi_editor 저장 → 재시작 없이 자동 반영)
+            if args.roi_config and roi_manager is not None and now - last_roi_check >= ROI_CHECK_INTERVAL:
+                last_roi_check = now
+                try:
+                    mtime = Path(args.roi_config).stat().st_mtime
+                    if mtime != roi_mtime:
+                        roi_mtime = mtime
+                        roi_manager, debounce, cooldown = _load_rois(args.roi_config)
+                        dispatcher = StandaloneDispatcher(debounce, cooldown)
+                        print("[INFO] ROI 설정 변경 감지 — 자동 반영 완료")
+                except (OSError, json.JSONDecodeError, KeyError) as exc:
+                    print(f"[WARN] ROI 설정 재로드 실패: {exc}")
 
             # ROI 판별 + 트리거 + 오디오
             if roi_manager is not None:

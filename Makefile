@@ -27,13 +27,14 @@ PI_PIP    ?= pip3
 DEPLOY_PY = \
 	camera_live_pi.py \
 	detect.py \
-	edgetpu_infer.py
+	edgetpu_infer.py \
+	audio_trigger.py
 
 # Pi에 배포할 모델 파일
 DEPLOY_MODEL = runs/white_cane_v1-2/weights/best_int8.tflite
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
-        install-edgetpu-py39 setup-pi-python310 \
+        install-edgetpu-py39 setup-pi-python310 install-service \
         run-headless run run-roi-editor ping help
 
 help:
@@ -43,10 +44,11 @@ help:
 	@echo "  make sync            [PI=<ip>]  카메라 앱 파일만 재전송"
 	@echo "  make sync-roi-editor [PI=<ip>]  ROI 에디터 파일만 재전송"
 	@echo "  make deps            [PI=<ip>]  카메라 앱 의존성 설치"
-	@echo "  make deps-roi-editor [PI=<ip>]  ROI 에디터 의존성 설치 (fastapi, uvicorn)"
-	@echo "  make run-headless    [PI=<ip>]  Pi에서 MJPEG 스트리밍 시작 (포트 8080)"
-	@echo "  make run-roi-editor  [PI=<ip>]  Pi에서 ROI 웹 에디터 시작 (포트 5000)"
+	@echo "  make deps-roi-editor [PI=<ip>]  ROI 에디터 의존성 설치 (fastapi, uvicorn, python-multipart)"
+	@echo "  make run-headless    [PI=<ip>]  Pi에서 MJPEG 스트리밍 시작 (포트 8080, 수동 실행/테스트용)"
+	@echo "  make run-roi-editor  [PI=<ip>]  Pi에서 ROI 웹 에디터 시작 (포트 5000, 수동 실행/테스트용)"
 	@echo "  make run             [PI=<ip>]  Pi에서 디스플레이 모드 실행"
+	@echo "  make install-service [PI=<ip>]  systemd 등록 — 부팅 시 완전 자동/headless 구동"
 	@echo "  make ping            [PI=<ip>]  Pi 연결 및 환경 확인"
 	@echo ""
 	@echo "  현재 기본값: PI=$(PI)  USER=$(USER)  PI_PYTHON=$(PI_PYTHON)"
@@ -76,13 +78,13 @@ sync-roi-editor:
 ## Pi에 카메라 앱 의존성 설치
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
-	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum || true"
+	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 || true"
 	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert opencv-python-headless numpy shapely pillow"
 
-## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn)
+## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
 deps-roi-editor:
 	@echo "[DEPS] ROI 에디터 의존성 설치..."
-	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q 'fastapi>=0.100.0' 'uvicorn[standard]>=0.20.0'"
+	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q 'fastapi>=0.100.0' 'uvicorn[standard]>=0.20.0' python-multipart"
 
 ## Python 3.9 EdgeTPU 전용 패키지 설치 (Python 3.9 빌드 후 실행)
 install-edgetpu-py39:
@@ -115,6 +117,19 @@ run-roi-editor:
 ## Pi에서 디스플레이 모드 실행 (모니터 연결된 경우)
 run:
 	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py"
+
+## systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터가 완전 자동/headless 로 구동됨
+## 이후로는 최초 ROI/오디오 설정 시에만 http://<Pi-IP>:5000 접속이 필요하고,
+## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
+install-service:
+	@echo "[SERVICE] systemd 유닛 설치..."
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service $(USER)@$(PI):/tmp/
+	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service"
+	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /etc/systemd/system/"
+	ssh $(USER)@$(PI) "sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor"
+	@echo "[완료] 재부팅해도 자동 시작됩니다."
+	@echo "       확인: ssh $(USER)@$(PI) sudo systemctl status visionguide-device"
+	@echo "       ROI 에디터를 끄고 싶으면: ssh $(USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"
 
 ## Pi 연결 및 배포 환경 확인
 ping:

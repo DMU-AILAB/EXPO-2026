@@ -11,10 +11,11 @@
 import argparse
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,8 +24,11 @@ from pydantic import BaseModel
 # Paths (overridden by CLI args at startup)
 # ---------------------------------------------------------------------------
 _DEFAULT_ROIS = Path(__file__).parent.parent / "rois.json"
+_DEFAULT_AUDIO_DIR = Path(__file__).parent.parent / "audio"
 rois_path: Path = _DEFAULT_ROIS
+audio_dir: Path = _DEFAULT_AUDIO_DIR
 STATIC_DIR = Path(__file__).parent / "static"
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # ---------------------------------------------------------------------------
 # App
@@ -59,6 +63,13 @@ def _save(data: dict) -> None:
         raise
 
 
+def _safe_filename(name: str) -> str:
+    """업로드 파일명에서 경로 조작 문자를 제거하고 영숫자/./_/- 만 남긴다."""
+    name = Path(name).name
+    name = _SAFE_NAME_RE.sub("_", name)
+    return name or "audio.mp3"
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -82,6 +93,26 @@ async def post_rois(payload: RoisPayload):
     return {"ok": True, "count": len(payload.rois)}
 
 
+@app.post("/api/audio/upload")
+async def upload_audio(file: UploadFile = File(...)):
+    """PC/폰에서 고른 오디오 파일을 Pi의 audio_dir에 저장하고 절대경로를 반환.
+
+    반환된 경로를 그대로 ROI의 audio_file에 넣으면 camera_live_pi.py가
+    같은 기기에서 바로 재생할 수 있다 (별도 다운로드/스트리밍 없음).
+    """
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    filename = _safe_filename(file.filename or "audio.mp3")
+    dest = audio_dir / filename
+    stem, suffix = dest.stem, dest.suffix
+    n = 1
+    while dest.exists():
+        dest = audio_dir / f"{stem}_{n}{suffix}"
+        n += 1
+    content = await file.read()
+    dest.write_bytes(content)
+    return {"ok": True, "path": str(dest.resolve())}
+
+
 @app.delete("/api/rois/{name}")
 async def delete_roi(name: str):
     data = _load()
@@ -101,12 +132,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="VisionGuide ROI Web Editor")
     parser.add_argument("--rois", default=str(_DEFAULT_ROIS), help="rois.json 경로")
+    parser.add_argument("--audio-dir", default=str(_DEFAULT_AUDIO_DIR), help="업로드된 오디오 저장 경로")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
 
     rois_path = Path(args.rois).resolve()
+    audio_dir = Path(args.audio_dir).resolve()
     print(f"[ROI Editor] rois.json: {rois_path}")
+    print(f"[ROI Editor] audio_dir: {audio_dir}")
     print(f"[ROI Editor] 브라우저: http://<Pi-IP>:{args.port}")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
