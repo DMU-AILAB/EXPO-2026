@@ -1,0 +1,15 @@
+[Unit]
+Description=VisionGuide 냉각팬 (부팅 시 ON, 종료 시 OFF, 상시 가동)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/__USER__/visionguide
+ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/fan_controller.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

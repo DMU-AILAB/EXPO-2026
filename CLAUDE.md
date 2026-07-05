@@ -30,6 +30,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `simulator/detector.py` | 시뮬레이터용 탐지기 |
 | `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file 포함) |
 | `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
+| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD + 오디오 파일 업로드(`/api/audio/upload`), `rois.json` atomic write |
+| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
+| `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v1-2/weights/` | 학습된 가중치 (`best.pt`, `best_int8.tflite`) |
 
@@ -88,8 +91,8 @@ yolo export model=best.pt format=tflite int8=True
 # 개별 모듈 단위 테스트
 python -m pytest tests/ -v
 
-# systemd 데몬 등록 후 실행
-sudo systemctl start visionguide-device
+# systemd 데몬 등록 (PC에서: make install-service). 등록 후 Pi에서:
+sudo systemctl status visionguide-device
 sudo journalctl -u visionguide-device -f
 ```
 
@@ -112,12 +115,21 @@ make deploy
 # 코드만 변경된 경우 — 파일만 빠르게 재전송
 make sync
 
-# Pi에서 headless 스트리밍 시작
+# Pi에서 headless 스트리밍 시작 (수동 실행/테스트용)
 make run-headless   # 브라우저: http://raspberrypi.local:8080/stream.mjpg
+
+# systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터 완전 자동/headless 구동 (최초 1회)
+make install-service
 
 # Pi 연결 및 환경 확인
 make ping
 ```
+
+**임베디드 headless 운영 흐름**: `make install-service` 이후로는 Pi IP 접속이 최초 ROI/오디오 설정(또는 재설정) 시에만 필요합니다.
+탐지·음성 안내(`visionguide-device.service`)는 네트워크 연결 여부와 무관하게 기기 단독으로 부팅 시 자동 시작되며,
+`roi_editor`(포트 5000, `visionguide-roi-editor.service`)에서 저장한 `rois.json` 변경은 최대 2초 내 재시작 없이 자동 반영됩니다
+(`camera_live_pi.py`가 mtime을 폴링). ROI 에디터를 계속 켜두고 싶지 않으면
+`ssh <user>@<pi> sudo systemctl disable --now visionguide-roi-editor` 로 끌 수 있습니다.
 
 **IP 주소 지정** (Pi IP가 동적으로 바뀌는 경우):
 
@@ -138,10 +150,54 @@ make sync   PI=192.168.0.89
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py` | Pi에 배포할 Python 소스 |
+| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py`, `gpio_controls.py`, `fan_controller.py` | Pi에 배포할 Python 소스 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
+`roi_editor/` 디렉토리는 별도로 `make sync-roi-editor` (deploy에 포함됨)로 전송됩니다.
+
 새 Python 파일을 Pi에 배포해야 할 때는 `Makefile`의 `DEPLOY_PY`에 추가하세요.
+
+---
+
+## 물리 버튼 / LED (GPIO)
+
+| 기능 | GPIO(BCM) | 물리 핀 | 배선 | 구현 위치 |
+|------|-----------|---------|------|-----------|
+| 전원(종료) 버튼 | GPIO4 | 7번 (GND: 9번) | 버튼 양단을 GPIO4–GND에 연결 | 커널 기능, 코드 없음 |
+| Wi-Fi 전환 버튼 | GPIO17 | 11번 (GND: 9번) | 버튼 양단을 GPIO17–GND, 내부 풀업 사용(외부 저항 불필요) | `gpio_controls.py` |
+| Wi-Fi 모드 상태 LED | GPIO24 | 18번 (GND: 아무 GND 핀) | GPIO24 → 저항(220~330Ω) → LED → GND | `gpio_controls.py` |
+| Wi-Fi 전환 부저 | GPIO25 | 22번 (GND: 아무 GND 핀) | GPIO25 → 부저(+), 부저(-) → GND (액티브 부저 가정) | `gpio_controls.py` |
+| 동작 확인 LED | GPIO27 | 13번 (GND: 아무 GND 핀) | GPIO27 → 저항(220~330Ω) → LED → GND | `camera_live_pi.py --status-led 27` |
+| 냉각팬 | GPIO22 | 15번 | GPIO22 → 트랜지스터/MOSFET 베이스·게이트(1kΩ 저항) → 팬(+: 5V, 플라이백 다이오드 필수) | `fan_controller.py` |
+
+**전원 버튼**은 라즈베리파이 OS 공식 기능이라 코드가 필요 없습니다. `/boot/config.txt`(Bookworm 이후는 `/boot/firmware/config.txt`)에
+`dtoverlay=gpio-shutdown,gpio_pin=4` 한 줄을 추가하고 재부팅하면 됩니다 — 기본 GPIO(GPIO3, 물리 5번 핀)는 이
+Pi에서 **PoE 어댑터가 물리 핀 1~6번을 점유**하고 있어 쓸 수 없으므로, `gpio_pin=4` 파라미터로 GPIO4(물리 7번 핀)를
+대신 사용하도록 지정했다. **부팅 설정 파일을 건드리는 작업이라 원격에서 잘못 적용하면 복구가 번거로울 수 있으므로
+Makefile로 자동화하지 않고 수동으로 적용하는 것을 권장합니다.** 짧게 누르면 안전 종료되고, 완전히 꺼진 상태에서
+다시 누르면 재부팅됩니다.
+
+**Wi-Fi 전환 버튼**은 이 Pi의 무선 칩/드라이버가 진짜 동시(AP+STA) 모드를 지원하지 않는 것으로 실측 확인되어
+(홈 Wi-Fi `204_WIFI`와 자체 핫스팟 `VisionGuide-AP`가 wlan0 하나를 두고 경합, 항상 한쪽만 활성화됨) 만든
+기능입니다. 버튼을 누르면 `gpio_controls.py`가 로컬에서 `nmcli connection up`으로 두 프로파일을 번갈아
+전환합니다 — SSH 등 원격에서 같은 작업을 하면 전환 도중 그 연결 자체가 끊길 위험이 있지만, 이 방식은 Pi
+로컬에서 D-Bus로 NetworkManager를 직접 호출하므로 그런 위험이 없습니다. 상태 LED(GPIO24)가 켜지면
+핫스팟, 꺼지면 홈 Wi-Fi 모드이며, 부저(GPIO25)가 전환 시 1회(홈 Wi-Fi)/2회(핫스팟)/3회(실패)로 소리를 냅니다.
+이전에 있던 "SW 재시작 버튼"(5초 홀드로 `visionguide-device` 재시작) 기능은 이 버튼에서 제거되었습니다 —
+물리 버튼으로 SW를 재시작할 방법이 다시 필요하면 별도 GPIO 핀에 추가해야 합니다.
+
+**냉각팬**은 신호선 없는 순수 2선(+/-) DC 모터(에듀이노 스마트홈 키트 팬, 정격 12V이나 5V 구동 확인됨)라
+GPIO에 직접 연결할 수 없어 트랜지스터/MOSFET 스위치로 on/off만 한다. 온도 로직 없이 부팅과 함께 켜져서 상시
+가동되며, `systemctl stop`(종료 시 자동 호출)에서 SIGTERM을 받아 팬을 끄고 종료한다 — 그래서 전원 버튼으로
+종료해도 팬이 같이 꺼진다. 팬을 5V/GND에 직결하면 보드 대기전력 때문에 종료해도 안 꺼지므로 반드시 이 GPIO
+스위칭 방식을 거쳐야 한다.
+
+**동작 확인 LED**는 `camera_live_pi.py`의 탐지 루프가 프레임을 처리할 때마다 토글되는 하트비트입니다. 정상 동작 중엔
+빠르게 깜빡이고, 루프가 멈추면(예: 추론 행/크래시) LED도 같이 멈추므로 모니터 없이도 "탐지 SW가 살아있는지"를
+눈으로 확인할 수 있습니다.
+
+`make install-service` 한 번으로 세 systemd 유닛(`visionguide-device`, `visionguide-roi-editor`, `visionguide-controls`)이
+모두 설치/활성화됩니다.
 
 ---
 

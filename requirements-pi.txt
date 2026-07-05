@@ -14,9 +14,17 @@ ai-edge-litert>=1.0.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
 shapely>=2.0.0
+pillow>=9.0.0          # 한글 오버레이 (PIL)
+
+# ── ROI 웹 에디터 (roi_editor/server.py) ─────────────────────────────────
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
 
 # 오디오 재생 (apt 권장, pip 불필요):
 #   sudo apt install -y mpg123
+
+# 한글 폰트 (apt):
+#   sudo apt install -y fonts-nanum
 
 # ── Python 3.9 (~/.python39) — Coral EdgeTPU 전용 서브프로세스 ────────
 # 설치: make install-edgetpu-py39  (Python 3.9 빌드 후 실행)

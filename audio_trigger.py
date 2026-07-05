@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
+
+
+def _detect_alsa_device() -> str | None:
+    """Pi에서 3.5mm 이어폰 잭(bcm2835 Headphones 카드)을 명시적으로 지정.
+
+    ALSA에 asound.conf 설정이 없으면 카드 번호가 가장 낮은 쪽(보통 HDMI)이 기본
+    출력이 되는데, 헤드리스(모니터 미연결) 운영 시 그쪽으로 나가면 아무 데도
+    안 들린다. /proc/asound/cards에 Headphones 카드가 있을 때만 강제 지정하고,
+    PC(Windows/카드 구성이 다른 환경)에서는 조용히 None을 반환해 기본 동작을 유지한다.
+    """
+    if platform.system() != "Linux":
+        return None
+    try:
+        cards = Path("/proc/asound/cards").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    return "plughw:Headphones,0" if "Headphones" in cards else None
+
+
+_ALSA_DEVICE = _detect_alsa_device()
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +137,12 @@ class AudioPlayer:
 
     def _play_subprocess(self, path: str) -> None:
         if _CLI_PLAYER == "mpg123":
-            cmd = ["mpg123", "-q", path]
+            # -o alsa를 명시하지 않으면 mpg123가 JACK 출력 모듈을 먼저 시도하다
+            # "jack server is not running" 에러로 조용히 실패하는 경우가 있다
+            # (systemd 시스템 서비스는 로그인 세션의 PipeWire/JACK에 붙을 수 없음).
+            cmd = ["mpg123", "-q", "-o", "alsa", path]
+            if _ALSA_DEVICE:
+                cmd = ["mpg123", "-q", "-o", "alsa", "-a", _ALSA_DEVICE, path]
         elif _CLI_PLAYER == "ffplay":
             cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path]
         elif _CLI_PLAYER == "cvlc":

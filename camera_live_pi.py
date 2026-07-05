@@ -35,7 +35,7 @@ import struct
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 import cv2
@@ -47,6 +47,12 @@ try:
     _TRIGGER_AVAILABLE = True
 except ImportError as _e:
     _TRIGGER_AVAILABLE = False
+
+try:
+    from gpiozero import LED as _GPIOLed
+    _GPIO_AVAILABLE = True
+except ImportError:
+    _GPIO_AVAILABLE = False
     print(f"[WARN] ROI/오디오 기능 비활성 (의존성 누락): {_e}")
 
 # ── 경로 / 상수 ────────────────────────────────────────────────────
@@ -183,14 +189,32 @@ class _CoralBackend:
         size = struct.unpack(">I", size_bytes)[0]
         return json.loads(self._proc.stdout.read(size))
 
-    def __del__(self) -> None:
+    def close(self) -> None:
+        """워커를 확실히 종료 — Coral 칩이 세션 종료를 인지하도록 정상 종료를 시도하고,
+        응답이 없으면 SIGKILL로 강제 종료해 USB 핸들이 절대 남아있지 않게 한다.
+        (예전엔 terminate() 후 wait(timeout=2)가 실패해도 그냥 넘어가서 워커가 좀비처럼
+        남아 Coral USB를 계속 점유 — 다음 실행 때 델리게이트 초기화가 실패하고 물리적
+        재연결 전까진 복구가 안 되는 원인이었다.)"""
         proc = getattr(self, "_proc", None)
-        if proc is not None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except Exception:
-                pass
+        if proc is None or proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        proc.kill()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            print("[WARN] EdgeTPU 워커가 SIGKILL 후에도 종료되지 않음")
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class _TFLiteBackend:
@@ -215,6 +239,9 @@ class _TFLiteBackend:
         h, w = frame.shape[:2]
         return _postprocess(_get_output(self._interp), self.conf, w, h)
 
+    def close(self) -> None:
+        pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
+
 
 class _UltralyticsBackend:
     """PyTorch 기반 ultralytics 백엔드 (fallback)."""
@@ -231,6 +258,9 @@ class _UltralyticsBackend:
 
     def predict(self, frame: np.ndarray) -> list[dict]:
         return self._det.predict(frame)
+
+    def close(self) -> None:
+        pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
 
 
 def build_backend(conf: float) -> _CoralBackend | _TFLiteBackend | _UltralyticsBackend:
@@ -347,7 +377,7 @@ class MJPEGServer:
         self._port  = port
         self._jpeg: bytes = b""
         self._lock  = threading.Lock()
-        self._httpd: HTTPServer | None = None
+        self._httpd: ThreadingHTTPServer | None = None
 
     def push(self, frame: np.ndarray) -> None:
         """메인 루프에서 매 프레임마다 호출."""
@@ -376,9 +406,12 @@ class MJPEGServer:
                             data = srv._jpeg
                         if data:
                             self.wfile.write(
-                                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                                b"--frame\r\n"
+                                b"Content-Type: image/jpeg\r\n"
+                                + f"Content-Length: {len(data)}\r\n\r\n".encode()
                                 + data + b"\r\n"
                             )
+                            self.wfile.flush()
                         time.sleep(0.033)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # 클라이언트가 연결을 끊은 경우
@@ -389,7 +422,11 @@ class MJPEGServer:
         return _Handler
 
     def start(self) -> None:
-        self._httpd = HTTPServer(("", self._port), self._handler_class())
+        # 일반 HTTPServer는 싱글 스레드라 요청 하나(스트림은 무한 루프로 붙어있음)가
+        # 스레드를 계속 물고 있으면 다른 뷰어(핫스팟 쪽 접속 등)가 영원히 대기하게 된다.
+        # ThreadingHTTPServer로 접속마다 별도 스레드를 띄워 동시 접속을 지원한다.
+        self._httpd = ThreadingHTTPServer(("", self._port), self._handler_class())
+        self._httpd.daemon_threads = True
         t = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         t.start()
         print(f"[INFO] MJPEG 스트리밍 주소: http://0.0.0.0:{self._port}/stream.mjpg")
@@ -481,7 +518,7 @@ class SimpleTracker:
 # ── ROI 로드 / 그리기 ──────────────────────────────────────────────
 
 def _load_rois(path: str) -> tuple:
-    """JSON 설정 파일에서 ROIManager, debounce, cooldown 을 로드."""
+    """JSON 설정 파일에서 ROIManager, debounce, cooldown, conf(신뢰도 임계값)를 로드."""
     with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
     mgr = ROIManager()
@@ -494,7 +531,7 @@ def _load_rois(path: str) -> tuple:
             audio_file=r.get("audio_file", ""),
         )
     print(f"[INFO] ROI {len(mgr.rois)}개 로드: {[r.name for r in mgr.rois]}")
-    return mgr, cfg.get("debounce", 0.5), cfg.get("cooldown", 10.0)
+    return mgr, cfg.get("debounce", 0.5), cfg.get("cooldown", 10.0), cfg.get("conf")
 
 
 def _draw_rois(frame: np.ndarray, roi_manager: "ROIManager",
@@ -566,7 +603,30 @@ def _parse_args() -> argparse.Namespace:
                    help="MJPEG 서버 포트 (기본값: 8080, --headless 시 사용)")
     p.add_argument("--roi-config", default=None, metavar="PATH",
                    help="ROI 설정 JSON 경로 (없으면 ROI/오디오 기능 비활성)")
+    p.add_argument("--status-led", type=int, default=None, metavar="GPIO_PIN",
+                   help="탐지 루프 동작 확인용 LED GPIO 핀 (기본값: 비활성)")
+    p.add_argument("--led-stall-sec", type=float, default=3.0, metavar="SEC",
+                   help="이 시간 동안 프레임 처리가 없으면 문제로 간주해 LED 깜빡임 (기본값: 3.0)")
     return p.parse_args()
+
+
+def _led_watchdog(led: "_GPIOLed", heartbeat: dict, stop_flag: threading.Event,
+                   stall_after: float, poll: float = 0.3) -> None:
+    """평소엔 고정 점등, heartbeat 갱신이 stall_after 초 이상 끊기면 깜빡임으로 전환.
+
+    메인 루프와 별도 스레드에서 돌기 때문에, 루프 자체가 멈춰도(추론 행 등)
+    이 스레드는 계속 살아서 "문제 발생"을 LED로 표시할 수 있다.
+    """
+    blinking = False
+    while not stop_flag.is_set():
+        stale = (time.time() - heartbeat["t"]) > stall_after
+        if stale and not blinking:
+            led.blink(on_time=0.15, off_time=0.15)
+            blinking = True
+        elif not stale and blinking:
+            led.on()
+            blinking = False
+        stop_flag.wait(poll)
 
 
 # ── 메인 루프 ──────────────────────────────────────────────────────
@@ -587,9 +647,12 @@ def main() -> None:
             print("[WARN] --roi-config 지정됐으나 ROI 모듈 로드 실패 — 무시")
         else:
             try:
-                roi_manager, debounce, cooldown = _load_rois(args.roi_config)
+                roi_manager, debounce, cooldown, conf = _load_rois(args.roi_config)
                 dispatcher  = StandaloneDispatcher(debounce, cooldown)
                 audio_player = AudioPlayer()
+                if conf is not None:
+                    backend.conf = conf
+                    print(f"[INFO] 신뢰도 임계값: {conf} (rois.json 설정값 적용)")
             except Exception as exc:
                 print(f"[WARN] ROI 설정 로드 실패: {exc} — ROI 기능 비활성")
                 roi_manager = None
@@ -601,6 +664,42 @@ def main() -> None:
     else:
         print("[INFO] 실시간 탐지 시작 — 'q' 키로 종료")
 
+    # 동작 확인 LED — 평소엔 고정 점등, 탐지 루프가 멈추면(행/크래시) 워치독
+    # 스레드가 감지해서 깜빡임으로 전환한다.
+    status_led = None
+    led_heartbeat = None
+    led_watchdog_stop = None
+    led_watchdog_thread = None
+    if args.status_led is not None:
+        if not _GPIO_AVAILABLE:
+            print("[WARN] --status-led 지정됐으나 gpiozero 없음 — 무시")
+        else:
+            status_led = _GPIOLed(args.status_led)
+            status_led.on()
+            led_heartbeat = {"t": time.time()}
+            led_watchdog_stop = threading.Event()
+            led_watchdog_thread = threading.Thread(
+                target=_led_watchdog,
+                args=(status_led, led_heartbeat, led_watchdog_stop, args.led_stall_sec),
+                daemon=True,
+            )
+            led_watchdog_thread.start()
+
+    # roi_editor(같은 기기, 포트 5000)가 rois.json을 수정하면 재시작 없이 반영되도록
+    # mtime을 주기적으로 확인 — 완전 로컬 동작이라 네트워크 폴링 없이 파일만 검사한다.
+    # roi_manager 유무와 무관하게 항상 감시한다 — 시작 시점엔 rois.json이 없어서
+    # ROI 기능이 비활성으로 시작했더라도, 이후 roi_editor에서 파일이 새로 생성되면
+    # 재시작 없이 바로 활성화되어야 하기 때문이다 (예전엔 roi_manager is not None을
+    # 조건에 걸어놔서, 시작 시 파일이 없으면 이후 생겨도 영영 인식하지 못했다).
+    roi_mtime = 0.0
+    if args.roi_config:
+        try:
+            roi_mtime = Path(args.roi_config).stat().st_mtime
+        except OSError:
+            roi_mtime = 0.0
+    last_roi_check = time.time()
+    ROI_CHECK_INTERVAL = 2.0
+
     stop_event = threading.Event()
 
     def _on_sigint(sig, frame):
@@ -608,6 +707,11 @@ def main() -> None:
         stop_event.set()
 
     signal.signal(signal.SIGINT, _on_sigint)
+    # systemctl stop/restart는 SIGTERM을 보낸다 (SIGINT 아님) — 이걸 처리하지 않으면
+    # 아래 finally 블록(backend.close() 포함)이 실행되지 않고 프로세스가 즉시 죽는다.
+    # Coral 워커 서브프로세스가 정상 종료 기회를 못 받아 USB 핸들을 계속 쥐고 있게 되고,
+    # 다음 실행 때 EdgeTPU 델리게이트 초기화가 실패하는 원인이었다.
+    signal.signal(signal.SIGTERM, _on_sigint)
 
     prev_t = time.time()
     try:
@@ -629,6 +733,33 @@ def main() -> None:
             now    = time.time()
             fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
             prev_t = now
+
+            if led_heartbeat is not None:
+                led_heartbeat["t"] = now
+
+            # ROI 설정 변경/신규 생성 감지 (roi_editor 저장 → 재시작 없이 자동 반영)
+            if args.roi_config and _TRIGGER_AVAILABLE and now - last_roi_check >= ROI_CHECK_INTERVAL:
+                last_roi_check = now
+                try:
+                    mtime = Path(args.roi_config).stat().st_mtime
+                except FileNotFoundError:
+                    mtime = None  # roi_editor에서 아직 저장 전 — 정상 상태, 경고 아님
+                except OSError as exc:
+                    print(f"[WARN] ROI 설정 확인 실패: {exc}")
+                    mtime = roi_mtime
+
+                if mtime is not None and mtime != roi_mtime:
+                    roi_mtime = mtime
+                    try:
+                        roi_manager, debounce, cooldown, conf = _load_rois(args.roi_config)
+                        dispatcher = StandaloneDispatcher(debounce, cooldown)
+                        if audio_player is None:
+                            audio_player = AudioPlayer()
+                        if conf is not None:
+                            backend.conf = conf
+                        print(f"[INFO] ROI 설정 변경 감지 — 자동 반영 완료 (conf={conf if conf is not None else args.conf})")
+                    except (json.JSONDecodeError, KeyError) as exc:
+                        print(f"[WARN] ROI 설정 재로드 실패: {exc}")
 
             # ROI 판별 + 트리거 + 오디오
             if roi_manager is not None:
@@ -662,8 +793,16 @@ def main() -> None:
 
     finally:
         camera.release()
+        backend.close()
         if mjpeg:
             mjpeg.stop()
+        if status_led is not None:
+            if led_watchdog_stop is not None:
+                led_watchdog_stop.set()
+            if led_watchdog_thread is not None:
+                led_watchdog_thread.join(timeout=1.0)
+            status_led.off()
+            status_led.close()
         if not args.headless:
             cv2.destroyAllWindows()
         print("[INFO] 종료 완료")
