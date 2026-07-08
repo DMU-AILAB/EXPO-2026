@@ -28,8 +28,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="runs/white_cane_v1-2/weights/best.pt",
-        help="가중치 파일 경로 (기본값: runs/white_cane_v1-2/weights/best.pt)",
+        default="runs/white_cane_v2/weights/best.pt",
+        help="가중치 파일 경로 (기본값: runs/white_cane_v2/weights/best.pt)",
     )
     parser.add_argument("--conf", type=float, default=0.25, help="신뢰도 임계값 (기본값: 0.25)")
     parser.add_argument(

@@ -30,10 +30,13 @@ DEPLOY_PY = \
 	edgetpu_infer.py \
 	audio_trigger.py \
 	gpio_controls.py \
-	fan_controller.py
+	fan_controller.py \
+	yolo_postprocess.py \
+	cane_person_assoc.py \
+	foot_traffic_counter.py
 
 # Pi에 배포할 모델 파일
-DEPLOY_MODEL = runs/white_cane_v1-2/weights/best_int8.tflite
+DEPLOY_MODEL = runs/white_cane_v2/weights/best_int8.tflite
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
         install-edgetpu-py39 setup-pi-python310 install-service \
@@ -65,9 +68,9 @@ deploy: sync sync-roi-editor deps deps-roi-editor
 ## Pi로 카메라 앱 파일만 전송
 sync:
 	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
-	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/runs/white_cane_v1-2/weights"
+	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/runs/white_cane_v2/weights"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
-	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v1-2/weights/
+	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v2/weights/
 
 ## Pi로 ROI 에디터 파일만 전송
 sync-roi-editor:
