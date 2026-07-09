@@ -3,6 +3,9 @@
 # YOLO cache files
 *.cache
 
+# 유동인구 집계 sqlite (기기/세션별 로컬 데이터, 커밋 대상 아님)
+*.db
+
 # Roboflow 원본 다운로드 (person 라벨 병합용 소스 — merge_person_dataset.py 참고,
 # 병합 결과만 datasets/train|val|test 에 커밋하고 원본 다운로드는 커밋하지 않음)
 datasets/Human Dataset v2-experiment-yolov8/

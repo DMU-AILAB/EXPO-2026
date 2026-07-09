@@ -1,8 +1,12 @@
+import os
+
 import numpy as np
 from ultralytics import YOLO
 import streamlit as st
 
-DEFAULT_MODEL_PATH = "runs/white_cane_v1-2/weights/best.pt"
+DEFAULT_MODEL_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "runs/white_cane_v2/weights/best.pt"
+)
 
 
 @st.cache_resource
@@ -21,9 +25,11 @@ class Detector:
         for r in results:
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                cls_id = int(box.cls[0])
                 detections.append({
                     "bbox": [x1, y1, x2, y2],
                     "conf": float(box.conf[0]),
-                    "class_id": int(box.cls[0]),
+                    "class": cls_id,
+                    "label": r.names[cls_id],
                 })
         return detections

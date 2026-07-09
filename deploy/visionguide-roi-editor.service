@@ -8,7 +8,7 @@ Type=simple
 User=__USER__
 Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/home/__USER__/visionguide
-ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/roi_editor/server.py --rois /home/__USER__/visionguide/rois.json --audio-dir /home/__USER__/visionguide/audio --port 5000
+ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/roi_editor/server.py --rois /home/__USER__/visionguide/rois.json --audio-dir /home/__USER__/visionguide/audio --traffic-db /home/__USER__/visionguide/foot_traffic.db --port 5000
 Restart=on-failure
 RestartSec=3
 

@@ -32,6 +32,7 @@ DEPLOY_PY = \
 	gpio_controls.py \
 	fan_controller.py \
 	yolo_postprocess.py \
+	simple_tracker.py \
 	cane_person_assoc.py \
 	foot_traffic_counter.py
 
@@ -73,6 +74,8 @@ sync:
 	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v2/weights/
 
 ## Pi로 ROI 에디터 파일만 전송
+## 주의: roi_editor/server.py가 foot_traffic_counter.py(sync 타겟으로 배포됨)를
+## import하므로, 최초 배포는 이 타겟만 단독 실행하지 말고 반드시 make deploy로 함께 배포할 것.
 sync-roi-editor:
 	@echo "[SYNC] ROI 에디터 파일 전송..."
 	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/roi_editor/static"

@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -20,13 +21,21 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# roi_editor/server.py는 roi_editor/ 서브디렉토리에서 실행되는 스크립트라
+# sys.path[0]이 그 디렉토리가 된다 — 저장소 루트의 foot_traffic_counter.py를
+# import하려면 루트를 sys.path에 직접 넣어줘야 한다.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from foot_traffic_counter import read_daily_totals  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Paths (overridden by CLI args at startup)
 # ---------------------------------------------------------------------------
 _DEFAULT_ROIS = Path(__file__).parent.parent / "rois.json"
 _DEFAULT_AUDIO_DIR = Path(__file__).parent.parent / "audio"
+_DEFAULT_TRAFFIC_DB = Path(__file__).parent.parent / "foot_traffic.db"
 rois_path: Path = _DEFAULT_ROIS
 audio_dir: Path = _DEFAULT_AUDIO_DIR
+traffic_db_path: Path = _DEFAULT_TRAFFIC_DB
 STATIC_DIR = Path(__file__).parent / "static"
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -81,6 +90,11 @@ async def index():
 @app.get("/api/rois")
 async def get_rois():
     return _load()
+
+
+@app.get("/api/stats")
+async def get_stats():
+    return read_daily_totals(traffic_db_path)
 
 
 class RoisPayload(BaseModel):
@@ -138,14 +152,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="VisionGuide ROI Web Editor")
     parser.add_argument("--rois", default=str(_DEFAULT_ROIS), help="rois.json 경로")
     parser.add_argument("--audio-dir", default=str(_DEFAULT_AUDIO_DIR), help="업로드된 오디오 저장 경로")
+    parser.add_argument("--traffic-db", default=str(_DEFAULT_TRAFFIC_DB),
+                         help="유동인구 집계 sqlite 경로 (camera_live_pi.py --traffic-db와 동일해야 함)")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
 
     rois_path = Path(args.rois).resolve()
     audio_dir = Path(args.audio_dir).resolve()
+    traffic_db_path = Path(args.traffic_db).resolve()
     print(f"[ROI Editor] rois.json: {rois_path}")
     print(f"[ROI Editor] audio_dir: {audio_dir}")
+    print(f"[ROI Editor] traffic_db: {traffic_db_path}")
     print(f"[ROI Editor] 브라우저: http://<Pi-IP>:{args.port}")
 
     uvicorn.run(

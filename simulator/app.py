@@ -32,6 +32,9 @@ from simulator.detector import Detector, DEFAULT_MODEL_PATH
 from simulator.roi_manager import ROIManager
 from simulator.trigger_dispatcher import TriggerDispatcher
 from audio_trigger import AudioPlayer
+from simple_tracker import SimpleTracker
+from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate
+from foot_traffic_counter import FootTrafficCounter, read_daily_totals
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -44,6 +47,8 @@ st.set_page_config(
 
 CANVAS_W = 640
 ROI_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "rois.json")
+FOOT_TRAFFIC_DB_PATH = os.path.join(os.path.dirname(__file__), "foot_traffic_sim.db")
+STATS_POLL_INTERVAL = 2.0
 
 # ---------------------------------------------------------------------------
 # Session state initialization
@@ -68,6 +73,10 @@ def _init():
         "detector": None,
         "current_model_path": None,
         "canvas_key": 0,  # 저장 후 캔버스 리셋용
+        "tracker": None,
+        "foot_counter": FootTrafficCounter(FOOT_TRAFFIC_DB_PATH, commit_interval_sec=5.0),
+        "traffic_stats": {"date": "", "total_count": 0, "cane_user_count": 0},
+        "traffic_stats_read_at": 0.0,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -186,6 +195,7 @@ with st.sidebar:
                     st.session_state.cap = cap
                     st.session_state.running = True
                     st.session_state.edit_mode = False
+                    st.session_state.tracker = SimpleTracker()
                     st.rerun()
                 else:
                     st.error("카메라/파일을 열 수 없습니다.")
@@ -195,6 +205,9 @@ with st.sidebar:
             if st.session_state.cap:
                 st.session_state.cap.release()
                 st.session_state.cap = None
+            if st.session_state.foot_counter is not None:
+                st.session_state.foot_counter.finalize_all()
+                st.session_state.foot_counter.flush()
             st.rerun()
 
 # ---------------------------------------------------------------------------
@@ -209,6 +222,8 @@ with main_col:
 with status_col:
     st.subheader("상태")
     status_ph = st.empty()
+    st.subheader("유동인구 통계")
+    stats_ph = st.empty()
     st.subheader("이벤트 로그")
     log_ph = st.empty()
 
@@ -249,7 +264,7 @@ def _put_text(pil_draw: ImageDraw.ImageDraw, text: str, pos: tuple,
 # ---------------------------------------------------------------------------
 # Helper: draw overlays on frame
 # ---------------------------------------------------------------------------
-def draw_overlays(frame, detections, rois, dispatcher, now):
+def draw_overlays(frame, tracks, cane_person_map, rois, dispatcher, now):
     h, w = frame.shape[:2]
     text_items = []  # collect (pos, text, color_bgr, size) for PIL pass
 
@@ -275,14 +290,25 @@ def draw_overlays(frame, detections, rois, dispatcher, now):
             label += f" ({remaining:.1f}s)"
         text_items.append((max(cx - 40, 0), max(cy - 10, 0), label, color, 18))
 
-    for det in detections:
-        x1, y1, x2, y2 = det["bbox"]
-        conf = det["conf"]
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
-        # 하단 10% 인식 구간 표시
-        strip_y = int(y2 - (y2 - y1) * 0.10)
-        cv2.rectangle(frame, (x1, strip_y), (x2, y2), (0, 255, 255), 2)
-        text_items.append((x1, max(y1 - 20, 0), f"white_cane {conf:.2f}", (0, 165, 255), 15))
+    for trk in tracks:
+        x1, y1, x2, y2 = trk["bbox"]
+        track_id = trk.get("track_id", "")
+        label_name = trk.get("label", str(trk.get("class", "")))
+
+        if trk["class"] == CANE_CLASS_ID:
+            color = (0, 165, 255)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            # 하단 10% 인식 구간 표시
+            strip_y = int(y2 - (y2 - y1) * 0.10)
+            cv2.rectangle(frame, (x1, strip_y), (x2, y2), (0, 255, 255), 2)
+            text = f"{label_name} #{track_id} {trk['conf']:.2f}"
+        else:
+            accompanied = cane_person_map.get(track_id, False)
+            color = (255, 0, 0) if accompanied else (160, 160, 160)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            text = f"{label_name} #{track_id}" + (" 지팡이 동반" if accompanied else "")
+
+        text_items.append((x1, max(y1 - 20, 0), text, color, 15))
 
     # PIL pass: render all text (Korean-safe)
     pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
@@ -296,11 +322,11 @@ def draw_overlays(frame, detections, rois, dispatcher, now):
 # ---------------------------------------------------------------------------
 # Helper: render status panel
 # ---------------------------------------------------------------------------
-def render_status(detections, active_roi_names, now):
+def render_status(tracks, active_roi_names, now):
     with status_ph.container():
         if st.session_state.running:
-            if detections:
-                st.success(f"탐지 중 — {len(detections)}개 객체")
+            if tracks:
+                st.success(f"탐지 중 — {len(tracks)}개 객체")
             else:
                 st.info("탐지 없음")
         elif st.session_state.edit_mode:
@@ -323,6 +349,16 @@ def render_status(detections, active_roi_names, now):
         if time.time() - st.session_state.last_announcement_time < 3.0:
             st.divider()
             st.info(f"🔊 {st.session_state.last_announcement}")
+
+# ---------------------------------------------------------------------------
+# Helper: render foot-traffic stats panel
+# ---------------------------------------------------------------------------
+def render_traffic_stats():
+    with stats_ph.container():
+        stats = st.session_state.traffic_stats
+        c1, c2 = st.columns(2)
+        c1.metric("오늘 유동인구", stats.get("total_count", 0))
+        c2.metric("지팡이 사용자", stats.get("cane_user_count", 0))
 
 # ---------------------------------------------------------------------------
 # Helper: render event log
@@ -480,6 +516,7 @@ if st.session_state.edit_mode:
             st.info("편집 모드: ▶ 시작을 눌러 영상을 시작한 뒤 편집 모드를 켜세요.")
 
     render_status([], set(), time.time())
+    render_traffic_stats()
     render_log()
 
 # ---------------------------------------------------------------------------
@@ -516,10 +553,20 @@ def _video_loop():
         detector = st.session_state.detector
 
     detections = detector.detect(frame, conf_threshold)
+    tracks = st.session_state.tracker.update(detections)
+    cane_tracks   = [t for t in tracks if t["class"] == CANE_CLASS_ID]
+    person_tracks = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
+
+    cane_person_map = associate(tracks)
+    st.session_state.foot_counter.update(person_tracks, cane_person_map, now)
+
+    if now - st.session_state.traffic_stats_read_at >= STATS_POLL_INTERVAL:
+        st.session_state.traffic_stats = read_daily_totals(FOOT_TRAFFIC_DB_PATH)
+        st.session_state.traffic_stats_read_at = now
 
     active_roi_names: set[str] = set()
-    for det in detections:
-        x1, y1, x2, y2 = det["bbox"]
+    for trk in cane_tracks:
+        x1, y1, x2, y2 = trk["bbox"]
         # 바운딩 박스 하단 10% 구간으로 ROI 교차 판정
         strip_h = (y2 - y1) * 0.10
         roi = st.session_state.roi_manager.check_region(
@@ -544,9 +591,10 @@ def _video_loop():
         if roi.name not in active_roi_names:
             disp.on_not_detected(roi.name)
 
-    frame = draw_overlays(frame, detections, st.session_state.roi_manager.rois, disp, now)
+    frame = draw_overlays(frame, tracks, cane_person_map, st.session_state.roi_manager.rois, disp, now)
     frame_ph.image(frame, channels="BGR", width="stretch")
-    render_status(detections, active_roi_names, now)
+    render_status(tracks, active_roi_names, now)
+    render_traffic_stats()
     render_log()
 
 
@@ -562,6 +610,7 @@ else:
         display = draw_overlays(
             frozen.copy(),
             [],
+            {},
             st.session_state.roi_manager.rois,
             st.session_state.dispatcher,
             time.time(),
@@ -572,4 +621,5 @@ else:
             st.info("▶ 시작 버튼을 눌러 영상을 시작하세요.")
 
     render_status([], set(), time.time())
+    render_traffic_stats()
     render_log()
