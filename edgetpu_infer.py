@@ -22,9 +22,10 @@ import struct
 import sys
 from pathlib import Path
 
-import cv2
 import numpy as np
 import tflite_runtime.interpreter as tflite
+
+from yolo_postprocess import postprocess_multiclass, set_input, get_output
 
 
 def _on_sigterm(signum, frame):
@@ -40,84 +41,8 @@ def _on_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _on_sigterm)
 
-_WEIGHTS       = Path(__file__).parent / "runs/white_cane_v1-2/weights"
+_WEIGHTS       = Path(__file__).parent / "runs/white_cane_v2/weights"
 _EDGETPU_MODEL = _WEIGHTS / "best_int8_edgetpu.tflite"
-_INPUT_SIZE    = 640
-_NMS_IOU       = 0.45
-
-
-def _set_input(interpreter, frame: np.ndarray) -> None:
-    """BGR 프레임을 YOLOv8 TFLite 입력 텐서에 맞게 전처리."""
-    inp   = interpreter.get_input_details()[0]
-    dtype = inp["dtype"]
-
-    resized = cv2.resize(frame, (_INPUT_SIZE, _INPUT_SIZE))
-    rgb     = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    blob    = rgb[np.newaxis]  # [1, 640, 640, 3]
-
-    if dtype == np.float32:
-        blob = blob.astype(np.float32) / 255.0
-    elif dtype == np.int8:
-        scale, zp = inp["quantization"]
-        blob = np.clip(blob.astype(np.float32) / 255.0 / scale + zp,
-                       -128, 127).astype(np.int8)
-    # uint8 (0-255): 그대로 사용
-
-    interpreter.set_tensor(inp["index"], blob)
-
-
-def _get_output(interpreter) -> np.ndarray:
-    """출력 텐서를 float32로 반환 (INT8/UINT8 역양자화 자동 처리)."""
-    out  = interpreter.get_output_details()[0]
-    data = interpreter.get_tensor(out["index"])
-    if out["dtype"] in (np.int8, np.uint8):
-        scale, zp = out["quantization"]
-        data = (data.astype(np.float32) - zp) * scale
-    return data.astype(np.float32)
-
-
-def _postprocess(output: np.ndarray, conf_thr: float,
-                 img_w: int, img_h: int) -> list:
-    """YOLOv8 출력 [1,5,8400] or [1,8400,5] → 탐지 결과 리스트."""
-    pred = output[0]
-    if pred.shape[0] < pred.shape[1]:   # [5, 8400] → [8400, 5]
-        pred = pred.T
-
-    scores = pred[:, 4]
-    mask   = scores > conf_thr
-    if not mask.any():
-        return []
-
-    pred, scores = pred[mask], scores[mask]
-    cx, cy, w, h = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
-
-    bx = (cx - w / 2) * img_w
-    by = (cy - h / 2) * img_h
-    bw = w * img_w
-    bh = h * img_h
-
-    boxes = np.stack([bx, by, bw, bh], axis=1).tolist()
-    confs = scores.tolist()
-    idxs  = cv2.dnn.NMSBoxes(boxes, confs, conf_thr, _NMS_IOU)
-
-    if not len(idxs):
-        return []
-    idxs = np.asarray(idxs).flatten()
-
-    return [
-        {
-            "bbox":  [
-                round(boxes[i][0]),
-                round(boxes[i][1]),
-                round(boxes[i][0] + boxes[i][2]),
-                round(boxes[i][1] + boxes[i][3]),
-            ],
-            "conf":  round(confs[i], 4),
-            "class": 0,
-            "label": "white_cane",
-        }
-        for i in idxs
-    ]
 
 
 def main() -> None:
@@ -149,9 +74,9 @@ def main() -> None:
 
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(img_h, img_w, 3)
 
-        _set_input(interp, frame)
+        set_input(interp, frame)
         interp.invoke()
-        dets = _postprocess(_get_output(interp), conf, img_w, img_h)
+        dets = postprocess_multiclass(get_output(interp), conf, img_w, img_h)
 
         data = json.dumps(dets).encode()
         stdout.write(struct.pack(">I", len(data)) + data)

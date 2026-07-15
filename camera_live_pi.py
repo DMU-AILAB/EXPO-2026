@@ -15,7 +15,7 @@ camera_live_pi.py — Raspberry Pi + Google Coral 실시간 탐지 뷰어
   --headless: http://0.0.0.0:<PORT>/stream.mjpg  MJPEG HTTP 스트리밍
 
 Coral 모델 컴파일 (아직 안 했다면):
-  edgetpu_compiler runs/white_cane_v1-2/weights/best_int8.tflite
+  edgetpu_compiler runs/white_cane_v2/weights/best_int8.tflite
   → best_int8_edgetpu.tflite 생성 후 같은 폴더에 배치
 
 사용법:
@@ -41,109 +41,42 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from yolo_postprocess import postprocess_multiclass, set_input, get_output
+
 try:
     from simulator.roi_manager import ROIManager
     from audio_trigger import StandaloneDispatcher, AudioPlayer
     _TRIGGER_AVAILABLE = True
 except ImportError as _e:
     _TRIGGER_AVAILABLE = False
+    print(f"[WARN] ROI/오디오 기능 비활성 (의존성 누락): {_e}")
+
+try:
+    from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate
+    from foot_traffic_counter import FootTrafficCounter
+    _TRAFFIC_AVAILABLE = True
+except ImportError:
+    CANE_CLASS_ID, PERSON_CLASS_ID = 0, 1
+    _TRAFFIC_AVAILABLE = False
 
 try:
     from gpiozero import LED as _GPIOLed
     _GPIO_AVAILABLE = True
-except ImportError:
+except ImportError as _e:
     _GPIO_AVAILABLE = False
-    print(f"[WARN] ROI/오디오 기능 비활성 (의존성 누락): {_e}")
+    print(f"[WARN] GPIO(gpiozero) 기능 비활성 (의존성 누락): {_e}")
 
 # ── 경로 / 상수 ────────────────────────────────────────────────────
-_WEIGHTS       = Path(__file__).parent / "runs/white_cane_v1-2/weights"
+_WEIGHTS       = Path(__file__).parent / "runs/white_cane_v2/weights"
 _EDGETPU_MODEL = _WEIGHTS / "best_int8_edgetpu.tflite"
 _TFLITE_MODEL  = _WEIGHTS / "best_int8.tflite"
 _PT_MODEL      = _WEIGHTS / "best.pt"
-_INPUT_SIZE    = 640
-_NMS_IOU       = 0.45
 
 _EDGETPU_LIB = {
     "Linux":   "libedgetpu.so.1",
     "Darwin":  "libedgetpu.1.dylib",
     "Windows": "edgetpu.dll",
 }
-
-
-# ── TFLite 공통 입출력 헬퍼 ────────────────────────────────────────
-
-def _set_input(interpreter, frame: np.ndarray) -> None:
-    """BGR 프레임을 YOLOv8 TFLite 입력 텐서에 맞게 전처리."""
-    inp   = interpreter.get_input_details()[0]
-    dtype = inp["dtype"]
-
-    resized = cv2.resize(frame, (_INPUT_SIZE, _INPUT_SIZE))
-    rgb     = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    blob    = rgb[np.newaxis]  # [1, 640, 640, 3]
-
-    if dtype == np.float32:
-        blob = blob.astype(np.float32) / 255.0
-    elif dtype == np.int8:
-        scale, zp = inp["quantization"]
-        blob = np.clip(blob.astype(np.float32) / 255.0 / scale + zp,
-                       -128, 127).astype(np.int8)
-    # uint8 (0–255): 그대로 사용
-
-    interpreter.set_tensor(inp["index"], blob)
-
-
-def _get_output(interpreter) -> np.ndarray:
-    """출력 텐서를 float32로 반환 (INT8/UINT8 역양자화 자동 처리)."""
-    out  = interpreter.get_output_details()[0]
-    data = interpreter.get_tensor(out["index"])
-    if out["dtype"] in (np.int8, np.uint8):
-        scale, zp = out["quantization"]
-        data = (data.astype(np.float32) - zp) * scale
-    return data.astype(np.float32)
-
-
-def _postprocess(output: np.ndarray, conf_thr: float,
-                 img_w: int, img_h: int) -> list[dict]:
-    """YOLOv8 출력 [1,5,8400] or [1,8400,5] → 탐지 결과 리스트."""
-    pred = output[0]
-    if pred.shape[0] < pred.shape[1]:   # [5, 8400] → [8400, 5]
-        pred = pred.T
-
-    scores = pred[:, 4]
-    mask   = scores > conf_thr
-    if not mask.any():
-        return []
-
-    pred, scores = pred[mask], scores[mask]
-    cx, cy, w, h = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
-
-    bx = (cx - w / 2) * img_w
-    by = (cy - h / 2) * img_h
-    bw = w * img_w
-    bh = h * img_h
-
-    boxes = np.stack([bx, by, bw, bh], axis=1).tolist()
-    confs = scores.tolist()
-    idxs  = cv2.dnn.NMSBoxes(boxes, confs, conf_thr, _NMS_IOU)
-
-    if not len(idxs):
-        return []
-    idxs = np.asarray(idxs).flatten()
-
-    return [
-        {
-            "bbox":  [
-                round(boxes[i][0]),
-                round(boxes[i][1]),
-                round(boxes[i][0] + boxes[i][2]),
-                round(boxes[i][1] + boxes[i][3]),
-            ],
-            "conf":  round(confs[i], 4),
-            "class": 0,
-            "label": "white_cane",
-        }
-        for i in idxs
-    ]
 
 
 # ── 추론 백엔드 ────────────────────────────────────────────────────
@@ -234,10 +167,10 @@ class _TFLiteBackend:
         self._interp.allocate_tensors()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
-        _set_input(self._interp, frame)
+        set_input(self._interp, frame)
         self._interp.invoke()
         h, w = frame.shape[:2]
-        return _postprocess(_get_output(self._interp), self.conf, w, h)
+        return postprocess_multiclass(get_output(self._interp), self.conf, w, h)
 
     def close(self) -> None:
         pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
@@ -477,7 +410,7 @@ class SimpleTracker:
                 if ti in matched_trk:
                     continue
                 iou = self._iou(det["bbox"], trk["bbox"])
-                if iou > best_iou:
+                if iou > best_iou and det["class"] == trk["class"]:
                     best_iou, best_ti = iou, ti
             if best_ti >= 0:
                 matched_det.add(di)
@@ -607,6 +540,10 @@ def _parse_args() -> argparse.Namespace:
                    help="탐지 루프 동작 확인용 LED GPIO 핀 (기본값: 비활성)")
     p.add_argument("--led-stall-sec", type=float, default=3.0, metavar="SEC",
                    help="이 시간 동안 프레임 처리가 없으면 문제로 간주해 LED 깜빡임 (기본값: 3.0)")
+    p.add_argument("--traffic-db", default="foot_traffic.db", metavar="PATH",
+                   help="유동인구 집계 sqlite 경로 (기본값: foot_traffic.db)")
+    p.add_argument("--disable-traffic-count", action="store_true",
+                   help="유동인구(사람 트래킹) 집계 비활성화")
     return p.parse_args()
 
 
@@ -637,6 +574,10 @@ def main() -> None:
     backend = build_backend(args.conf)
     camera  = build_camera(args.source)
     tracker = SimpleTracker()
+
+    foot_counter = None
+    if _TRAFFIC_AVAILABLE and not args.disable_traffic_count:
+        foot_counter = FootTrafficCounter(args.traffic_db)
 
     # ROI + 오디오 초기화 (--roi-config 미지정 시 None)
     roi_manager = None
@@ -737,6 +678,14 @@ def main() -> None:
             if led_heartbeat is not None:
                 led_heartbeat["t"] = now
 
+            # 클래스별 분리 — ROI/오디오 트리거는 지팡이 트랙만, 유동인구
+            # 집계는 사람 트랙만 대상으로 한다 (2-class 모델 기준).
+            cane_tracks = [t for t in tracks if t["class"] == CANE_CLASS_ID]
+            if foot_counter is not None:
+                person_tracks   = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
+                cane_person_map = associate(tracks)
+                foot_counter.update(person_tracks, cane_person_map, now)
+
             # ROI 설정 변경/신규 생성 감지 (roi_editor 저장 → 재시작 없이 자동 반영)
             if args.roi_config and _TRIGGER_AVAILABLE and now - last_roi_check >= ROI_CHECK_INTERVAL:
                 last_roi_check = now
@@ -765,7 +714,7 @@ def main() -> None:
             if roi_manager is not None:
                 fh, fw = frame.shape[:2]
                 active: set[str] = set()
-                for trk in tracks:
+                for trk in cane_tracks:
                     x1, y1, x2, y2 = trk["bbox"]
                     cx_n = ((x1 + x2) / 2) / fw
                     cy_n = ((y1 + y2) / 2) / fh
@@ -794,6 +743,8 @@ def main() -> None:
     finally:
         camera.release()
         backend.close()
+        if foot_counter is not None:
+            foot_counter.close()
         if mjpeg:
             mjpeg.stop()
         if status_led is not None:

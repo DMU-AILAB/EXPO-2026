@@ -3,6 +3,11 @@
 # YOLO cache files
 *.cache
 
+# Roboflow 원본 다운로드 (person 라벨 병합용 소스 — merge_person_dataset.py 참고,
+# 병합 결과만 datasets/train|val|test 에 커밋하고 원본 다운로드는 커밋하지 않음)
+datasets/Human Dataset v2-experiment-yolov8/
+datasets/Pedestrian Detection CCTV yolov8/
+
 # 환경 변수 / 시크릿
 .env
 .env.*
