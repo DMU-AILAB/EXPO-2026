@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 
 @dataclass
@@ -94,6 +94,10 @@ class FootTrafficCounter:
         self._flush()
         self._conn.close()
 
+    def flush(self) -> None:
+        """대기 중인 시간대별 집계를 즉시 커밋한다 (연결은 유지, close()와 다름)."""
+        self._flush()
+
     # ------------------------------------------------------------------ #
 
     def _finalize(self, track_id: int) -> None:
@@ -125,3 +129,33 @@ class FootTrafficCounter:
         )
         self._conn.commit()
         self._pending.clear()
+
+
+def read_daily_totals(db_path: Union[str, Path], date: Optional[str] = None) -> dict:
+    """`foot_traffic_hourly`에서 지정한 날짜(YYYY-MM-DD, 기본 오늘)의 합계를 읽는다.
+
+    같은 프로세스의 `FootTrafficCounter`든, 별도 프로세스(예: roi_editor)든
+    이 함수 하나로 통계를 조회한다. WAL 모드 덕분에 다른 프로세스가 쓰는
+    중에도 읽기 전용 연결로 안전하게 조회 가능하다. db 파일이 아직 없으면
+    (카메라 앱 미기동) 0을 반환한다.
+    """
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {"date": date, "total_count": 0, "cane_user_count": 0}
+
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(total_count),0), COALESCE(SUM(cane_user_count),0) "
+            "FROM foot_traffic_hourly WHERE hour_start LIKE ?",
+            (f"{date}%",),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = (0, 0)
+    finally:
+        conn.close()
+
+    return {"date": date, "total_count": row[0], "cane_user_count": row[1]}
