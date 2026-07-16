@@ -80,6 +80,36 @@ main {
   width: 100%; height: 100%;
   cursor: crosshair;
 }
+#dualViewWrap {
+  display: none;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  gap: 12px;
+  overflow: auto;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.dual-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.dual-cell .dual-label {
+  color: #eee;
+  font-size: 12px;
+  font-weight: bold;
+  background: #16213e;
+  padding: 4px 8px;
+  border-radius: 4px 4px 0 0;
+}
+.dual-cell img {
+  max-width: 46vw;
+  max-height: 70vh;
+  display: block;
+  border: 1px solid #0f3460;
+}
 #no-stream {
   color: #555;
   font-size: 13px;
@@ -110,6 +140,71 @@ main {
 }
 #conf-section input[type="range"] {
   width: 100%;
+}
+#camera-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid #0f3460;
+  flex-shrink: 0;
+}
+.scan-result-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #0f3460;
+  border-radius: 5px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.scan-result-item .model { color: #eee; }
+.scan-result-item .already { color: #666; font-size: 10px; }
+#camera-section label {
+  font-size: 11px;
+  color: #99a;
+  display: block;
+  margin-bottom: 4px;
+}
+#camera-section select,
+#camera-section input[type="text"],
+#camera-section input[type="number"] {
+  width: 100%;
+  padding: 5px 8px;
+  background: #0f3460;
+  border: 1px solid #2a3a60;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+#camera-section .cam-row {
+  display: flex;
+  gap: 6px;
+}
+#camera-section .cam-row > * { flex: 1; }
+#camera-section .cam-enabled-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #99a;
+  margin-bottom: 6px;
+}
+#camForm { display: none; margin-top: 6px; }
+.zone-type-toggle {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: #ccc;
+}
+.zone-type-toggle label { display: flex; align-items: center; gap: 4px; margin-bottom: 0; }
+.badge-exclude {
+  display: inline-block;
+  font-size: 10px;
+  color: #fff;
+  background: #c0392b;
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 5px;
 }
 #stats-section {
   padding: 10px 12px;
@@ -211,6 +306,7 @@ main {
 <header>
   <h1>🦯 VisionGuide ROI Editor</h1>
   <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+  <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
   <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
 </header>
 
@@ -220,6 +316,7 @@ main {
       <img id="stream" alt="">
       <canvas id="canvas"></canvas>
     </div>
+    <div id="dualViewWrap"></div>
     <div id="no-stream" style="display:none">
       카메라 스트림에 연결할 수 없습니다.<br>
       <code>camera_live_pi.py --headless</code> 가 실행 중인지 확인하세요.
@@ -227,6 +324,65 @@ main {
   </div>
 
   <div id="panel">
+    <div id="camera-section">
+      <div id="cameraSelectWrap" style="display:none">
+        <label for="cameraSelect">카메라</label>
+        <select id="cameraSelect"></select>
+        <button class="btn btn-prim btn-sm" id="btnToggleCamForm" style="width:100%">카메라 설정 편집</button>
+        <div id="camForm">
+          <label>이름표</label>
+          <input type="text" id="camLabel" placeholder="예: 정문 CSI 카메라">
+          <div class="cam-enabled-row">
+            <input type="checkbox" id="camEnabled"> <span>활성화</span>
+          </div>
+          <div class="cam-row">
+            <div>
+              <label>연결 방식</label>
+              <select id="camBackend">
+                <option value="auto">자동</option>
+                <option value="picamera2">picamera2 (CSI/UVC)</option>
+                <option value="opencv">OpenCV (USB)</option>
+              </select>
+            </div>
+            <div>
+              <label>source</label>
+              <input type="text" id="camSource" placeholder="0">
+            </div>
+          </div>
+          <div class="cam-row">
+            <div>
+              <label>회전</label>
+              <select id="camRotation">
+                <option value="0">0°</option>
+                <option value="90">90°</option>
+                <option value="180">180°</option>
+                <option value="270">270°</option>
+              </select>
+            </div>
+            <div>
+              <label>추론 백엔드</label>
+              <select id="camInference">
+                <option value="auto">자동</option>
+                <option value="edgetpu">Coral EdgeTPU</option>
+                <option value="tflite">TFLite (CPU)</option>
+                <option value="pytorch">PyTorch</option>
+              </select>
+            </div>
+          </div>
+          <label>MJPEG 포트</label>
+          <input type="number" id="camPort" value="8080">
+          <div class="cam-enabled-row">
+            <input type="checkbox" id="camSwapRb"> <span>RGB/BGR 반전 (화면 색이 뒤바뀌어 보이면 체크)</span>
+          </div>
+          <div class="form-btns">
+            <button class="btn btn-save" id="btnSaveCamera">저장</button>
+            <button class="btn btn-danger" id="btnDeleteCamera">삭제</button>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-prim btn-sm" id="btnScanCameras" style="width:100%">🔍 카메라 검색</button>
+      <div id="camScanResults"></div>
+    </div>
     <div id="conf-section">
       <label for="fConf">신뢰도 임계값: <span id="confValue">0.55</span></label>
       <input type="range" id="fConf" min="0.1" max="0.95" step="0.05" value="0.55">
@@ -245,19 +401,26 @@ main {
     <div id="form-section" style="display:none">
       <h3>➕ 새 ROI 정보 입력</h3>
       <div class="fg">
+        <label>구역 유형</label>
+        <div class="zone-type-toggle">
+          <label><input type="radio" name="fZoneType" value="trigger" checked> 🔔 트리거(음성 안내)</label>
+          <label><input type="radio" name="fZoneType" value="exclude"> 🚫 제외(감지 안 함)</label>
+        </div>
+      </div>
+      <div class="fg">
         <label>이름 *</label>
         <input id="fName" placeholder="예: 횡단보도">
       </div>
-      <div class="fg">
+      <div class="fg" id="fTextGroup">
         <label>안내 텍스트 *</label>
         <input id="fText" placeholder="예: 횡단보도 앞입니다">
       </div>
-      <div class="fg">
+      <div class="fg" id="fAudioGroup">
         <label>오디오 파일 (선택 — PC/폰에서 mp3 선택 시 Pi로 자동 업로드)</label>
         <input type="file" id="fAudioPick" accept="audio/*">
         <div id="audioStatus" class="roi-meta" style="margin-top:4px"></div>
       </div>
-      <div class="fg">
+      <div class="fg" id="fPriorityGroup">
         <label>우선순위 (낮을수록 높음)</label>
         <input id="fPriority" type="number" value="1" min="1">
       </div>
@@ -278,13 +441,15 @@ main {
 ================================================================ */
 const COLORS = ['#00dc00','#ff8c00','#00c8ff','#ff00c8','#00ffc8'];
 
-let rois        = [];   // [{name, points, priority, announcement_text, audio_file}]
+let rois        = [];   // [{name, points, priority, announcement_text, audio_file, zone_type}]
 let drawing     = [];   // 현재 그리는 중인 꼭짓점 [[nx,ny], ...]
 let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
 let mousePos    = null; // canvas 픽셀 좌표 [x, y]
 let pendingAudioPath = ''; // 새 ROI 폼에서 업로드된 오디오의 Pi 경로
 let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
 let confThreshold = 0.55; // 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영
+let cameras       = [];   // GET /api/cameras 결과 — 비어있으면 기존 단일 카메라 UI 그대로
+let activeCameraId = null; // 현재 선택된 카메라 id (null = 카메라 프로필 없는 레거시 모드)
 
 /* ================================================================
    DOM refs
@@ -306,8 +471,13 @@ const confValueEl = document.getElementById('confValue');
 /* ================================================================
    Stream setup
 ================================================================ */
-const STREAM_URL = `http://${location.hostname}:8080/stream.mjpg`;
-stream.src = STREAM_URL;
+function streamUrlFor(port) { return `http://${location.hostname}:${port}/stream.mjpg`; }
+
+function setStream(port) {
+  stream.src = streamUrlFor(port);
+}
+
+setStream(8080); // 카메라 프로필이 없는 레거시 단일 카메라 기본값 — loadCameras()가 있으면 덮어씀
 
 stream.onload = syncSize;
 stream.onerror = () => {
@@ -334,6 +504,253 @@ function syncSize() {
 }
 
 /* ================================================================
+   Camera profiles (다중 카메라 — camera_config.json이 있을 때만 표시)
+================================================================ */
+const cameraSelectWrap = document.getElementById('cameraSelectWrap');
+const cameraSelect   = document.getElementById('cameraSelect');
+const camForm        = document.getElementById('camForm');
+const camScanResults = document.getElementById('camScanResults');
+
+async function loadCameras() {
+  try {
+    const res = await fetch('/api/cameras');
+    const data = await res.json();
+    cameras = data.cameras || [];
+  } catch (e) {
+    cameras = [];
+  }
+  renderCameraSelector();
+  if (cameras.length > 0) {
+    const preferred = cameras.find(c => c.id === activeCameraId) || cameras.find(c => c.enabled) || cameras[0];
+    switchCamera(preferred.id);
+  } else {
+    setStream(8080);  // 카메라 프로필이 없으면 레거시 단일 카메라 기본 포트로
+  }
+}
+
+function renderCameraSelector() {
+  if (cameras.length === 0) {
+    cameraSelectWrap.style.display = 'none';
+    return;
+  }
+  cameraSelectWrap.style.display = 'block';
+  cameraSelect.innerHTML = cameras.map(c => `
+    <option value="${escAttr(c.id)}">${escHtml(c.label || c.id)}${c.enabled ? '' : ' (비활성)'}</option>
+  `).join('');
+  if (activeCameraId) cameraSelect.value = activeCameraId;
+  fillCameraForm();
+}
+
+/* ── 카메라 검색: libcamera가 인식하는 CSI/UVC 카메라를 스캔해 목록으로 보여주고,
+   등록 안 된 카메라는 클릭 한 번으로 프로필을 만들어 저장한다. ── */
+document.getElementById('btnScanCameras').addEventListener('click', async () => {
+  camScanResults.innerHTML = '<div class="roi-meta" style="padding:4px">검색 중...</div>';
+  try {
+    const res = await fetch('/api/cameras/scan');
+    const data = await res.json();
+    if (data.error) {
+      camScanResults.innerHTML = `<div class="roi-meta" style="padding:4px">검색 실패: ${escHtml(data.error)}</div>`;
+      return;
+    }
+    if (!data.cameras.length) {
+      camScanResults.innerHTML = '<div class="roi-meta" style="padding:4px">인식된 카메라 없음</div>';
+      return;
+    }
+    camScanResults.innerHTML = data.cameras.map(cam => `
+      <div class="scan-result-item">
+        <span class="model">#${cam.num} ${escHtml(cam.model)}</span>
+        ${cam.already_registered
+          ? '<span class="already">등록됨</span>'
+          : `<button class="btn btn-prim btn-sm" onclick="addCameraFromScan(${cam.num}, '${escAttr(cam.model)}')">+ 추가</button>`}
+      </div>
+    `).join('');
+  } catch (e) {
+    camScanResults.innerHTML = `<div class="roi-meta" style="padding:4px">검색 실패: ${escHtml(e.message)}</div>`;
+  }
+});
+
+async function addCameraFromScan(num, model) {
+  const usedIds = new Set(cameras.map(c => c.id));
+  let n = 0;
+  while (usedIds.has(`cam${n}`)) n++;
+  const newId = `cam${n}`;
+
+  const usedPorts = new Set(cameras.map(c => c.port));
+  let port = 8080;
+  while (usedPorts.has(port) || port === 5000) port++;
+
+  // 물리 Coral 액셀러레이터는 1개뿐 — 이미 활성화된 다른 카메라가 edgetpu를 쓰거나
+  // (auto는 Coral을 먼저 시도하므로 auto도 포함) 아직 하나도 없다면 이 새 카메라는
+  // Coral을 먼저 시도해도 안전하다. 이미 있다면 충돌을 피해 CPU(tflite)로 기본값을 낮춘다.
+  const coralInUse = cameras.some(c => c.enabled && (c.inference_backend === 'edgetpu' || c.inference_backend === 'auto'));
+  const inferenceBackend = coralInUse ? 'tflite' : 'auto';
+
+  const newCam = {
+    id: newId,
+    enabled: true,
+    label: model,
+    backend: 'picamera2',   // libcamera가 UVC 카메라도 이 경로로 잡아주므로 CSI/USB 공통
+    source: String(num),
+    rotation: 0,
+    inference_backend: inferenceBackend,
+    roi_config: `rois_${newId}.json`,
+    port: port,
+    traffic_db: `foot_traffic_${newId}.db`,
+    swap_rb: false,
+  };
+
+  const updated = [...cameras, newCam];
+  try {
+    const res = await fetch('/api/cameras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cameras: updated }),
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(Array.isArray(body.detail) ? body.detail.join('; ') : String(body.detail));
+    }
+    const backendNote = coralInUse ? ' (Coral은 다른 카메라가 이미 사용 중이라 CPU(TFLite)로 지정됨)' : '';
+    setStatus(`✅ '${model}' 카메라 추가 완료${backendNote} — 회전/포트 등을 확인 후 필요시 조정하세요`, 'ok');
+    await loadCameras();
+    switchCamera(newId);
+    camForm.style.display = 'block';
+  } catch (e) {
+    setStatus(`❌ 카메라 추가 실패: ${e.message}`, 'err');
+  }
+}
+
+async function deleteCurrentCamera() {
+  const cam = cameras.find(c => c.id === activeCameraId);
+  if (!cam) return;
+  if (!confirm(`'${cam.label || cam.id}' 카메라를 삭제하시겠습니까? (ROI 설정은 파일로 남아있습니다)`)) return;
+
+  const updated = cameras.filter(c => c.id !== activeCameraId);
+  try {
+    const res = await fetch('/api/cameras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cameras: updated }),
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(Array.isArray(body.detail) ? body.detail.join('; ') : String(body.detail));
+    }
+    setStatus('✅ 카메라 삭제 완료', 'ok');
+    activeCameraId = null;
+    await loadCameras();
+  } catch (e) {
+    setStatus(`❌ 카메라 삭제 실패: ${e.message}`, 'err');
+  }
+}
+
+/* ================================================================
+   듀얼 뷰 — ROI 편집 없이 등록된 카메라 스트림을 한 화면에 나란히 보여준다.
+================================================================ */
+let dualViewActive = false;
+const dualViewWrap = document.getElementById('dualViewWrap');
+const btnDualView  = document.getElementById('btnDualView');
+
+function renderDualView() {
+  const list = cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }];
+  dualViewWrap.innerHTML = list.map(c => `
+    <div class="dual-cell">
+      <div class="dual-label">${escHtml(c.label || c.id)}${c.enabled === false ? ' (비활성)' : ''}</div>
+      <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}">
+    </div>
+  `).join('');
+}
+
+btnDualView.addEventListener('click', () => {
+  dualViewActive = !dualViewActive;
+  if (dualViewActive) {
+    renderDualView();
+    canvasWrap.style.display = 'none';
+    noStream.style.display = 'none';
+    dualViewWrap.style.display = 'flex';
+    btnDualView.textContent = '◀ 편집 화면으로';
+  } else {
+    dualViewWrap.style.display = 'none';
+    canvasWrap.style.display = 'inline-block';
+    btnDualView.textContent = '🖥 두 카메라 보기';
+    syncSize();
+  }
+});
+
+function switchCamera(id) {
+  activeCameraId = id;
+  cameraSelect.value = id;
+  const cam = cameras.find(c => c.id === id);
+  if (!cam) return;
+  setStream(cam.port);
+  fillCameraForm();
+  cancelDrawing();
+  loadFromServer();
+  loadStats();
+}
+
+function fillCameraForm() {
+  const cam = cameras.find(c => c.id === activeCameraId);
+  if (!cam) return;
+  document.getElementById('camLabel').value = cam.label || '';
+  document.getElementById('camEnabled').checked = cam.enabled;
+  document.getElementById('camBackend').value = cam.backend;
+  document.getElementById('camSource').value = cam.source;
+  document.getElementById('camRotation').value = String(cam.rotation);
+  document.getElementById('camInference').value = cam.inference_backend;
+  document.getElementById('camPort').value = cam.port;
+  document.getElementById('camSwapRb').checked = !!cam.swap_rb;
+}
+
+cameraSelect.addEventListener('change', e => switchCamera(e.target.value));
+
+document.getElementById('btnToggleCamForm').addEventListener('click', () => {
+  camForm.style.display = camForm.style.display === 'block' ? 'none' : 'block';
+});
+
+document.getElementById('btnDeleteCamera').addEventListener('click', deleteCurrentCamera);
+
+document.getElementById('btnSaveCamera').addEventListener('click', async () => {
+  const cam = cameras.find(c => c.id === activeCameraId);
+  if (!cam) return;
+
+  const newRotation = parseInt(document.getElementById('camRotation').value, 10);
+  if (newRotation !== cam.rotation) {
+    const proceed = confirm(
+      '⚠️ 카메라 회전값을 변경했습니다.\n' +
+      '이 카메라에 이미 그려진 ROI/제외구역이 새 회전 기준으로 맞지 않을 수 있습니다.\n' +
+      '구역을 다시 확인하고 필요시 재그려주세요.\n\n계속하시겠습니까?'
+    );
+    if (!proceed) return;
+  }
+
+  cam.label             = document.getElementById('camLabel').value;
+  cam.enabled            = document.getElementById('camEnabled').checked;
+  cam.backend            = document.getElementById('camBackend').value;
+  cam.source             = document.getElementById('camSource').value;
+  cam.rotation           = newRotation;
+  cam.inference_backend  = document.getElementById('camInference').value;
+  cam.port               = parseInt(document.getElementById('camPort').value, 10) || cam.port;
+  cam.swap_rb             = document.getElementById('camSwapRb').checked;
+
+  try {
+    const res = await fetch('/api/cameras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cameras }),
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(Array.isArray(body.detail) ? body.detail.join('; ') : String(body.detail));
+    }
+    setStatus('✅ 카메라 설정 저장 완료 — 기기가 2초 이내 자동 반영합니다', 'ok');
+    await loadCameras();
+  } catch (e) {
+    setStatus(`❌ 카메라 설정 저장 실패: ${e.message}`, 'err');
+  }
+});
+
+/* ================================================================
    Coordinate helpers
 ================================================================ */
 function toPx(nx, ny)  { return [nx * canvas.width,  ny * canvas.height]; }
@@ -352,8 +769,10 @@ function redraw() {
 
   // 저장된 ROIs
   rois.forEach((roi, i) => {
-    const color = COLORS[i % COLORS.length];
-    drawPoly(roi.points, color, 0.20, roi.name, true);
+    const isExclude = (roi.zone_type || 'trigger') === 'exclude';
+    const color = isExclude ? '#ff3030' : COLORS[i % COLORS.length];
+    const label = (isExclude ? '🚫 ' : '') + roi.name;
+    drawPoly(roi.points, color, isExclude ? 0.15 : 0.20, label, true, isExclude);
   });
 
   // 폼 대기 중인 폴리곤
@@ -365,7 +784,7 @@ function redraw() {
   drawInProgress();
 }
 
-function drawPoly(points, color, alpha, label, closed) {
+function drawPoly(points, color, alpha, label, closed, dashed = false) {
   if (points.length < 2) return;
 
   ctx.beginPath();
@@ -381,11 +800,12 @@ function drawPoly(points, color, alpha, label, closed) {
   ctx.fillStyle = color + Math.round(alpha * 255).toString(16).padStart(2, '0');
   ctx.fill();
 
-  // stroke
+  // stroke — 제외구역은 점선으로 트리거 구역과 구분
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
-  ctx.setLineDash([]);
+  ctx.setLineDash(dashed ? [8, 5] : []);
   ctx.stroke();
+  ctx.setLineDash([]);
 
   // vertex dots
   for (const p of points) {
@@ -484,10 +904,28 @@ canvas.addEventListener('dblclick', e => {
   pendingPoly = drawing.slice();
   drawing = [];
   formSec.style.display = 'block';
+  updateZoneTypeFieldsVisibility();
   document.getElementById('fName').focus();
   document.getElementById('fPriority').value = rois.length + 1;
   setStatus('ROI 정보를 입력하고 [ROI 추가]를 누르세요', 'warn');
   redraw();
+});
+
+/* ================================================================
+   Zone-type field visibility — 제외구역은 음성 안내가 없으니 안내
+   텍스트/오디오 입력칸 자체를 감춰서 "넣어야 하나?" 혼동을 없앤다.
+================================================================ */
+function updateZoneTypeFieldsVisibility() {
+  const isExclude = document.querySelector('input[name="fZoneType"]:checked').value === 'exclude';
+  document.getElementById('fTextGroup').style.display = isExclude ? 'none' : 'block';
+  document.getElementById('fAudioGroup').style.display = isExclude ? 'none' : 'block';
+  // 우선순위는 트리거 구역끼리 겹칠 때만 의미가 있다 — 제외구역은 걸리면 무조건
+  // 제외라 우선순위를 아예 안 보므로(is_excluded()) 폼에서도 숨긴다.
+  document.getElementById('fPriorityGroup').style.display = isExclude ? 'none' : 'block';
+}
+
+document.querySelectorAll('input[name="fZoneType"]').forEach(radio => {
+  radio.addEventListener('change', updateZoneTypeFieldsVisibility);
 });
 
 document.addEventListener('keydown', e => {
@@ -502,6 +940,8 @@ function cancelDrawing() {
   pendingPoly = null;
   formSec.style.display = 'none';
   resetAudioPick();
+  document.querySelector('input[name="fZoneType"][value="trigger"]').checked = true;
+  updateZoneTypeFieldsVisibility();
   setStatus('취소됨 — 캔버스를 클릭해 다시 그리세요', 'ok');
   redraw();
 }
@@ -509,11 +949,13 @@ function cancelDrawing() {
 document.getElementById('btnCancel').addEventListener('click', cancelDrawing);
 
 document.getElementById('btnAddRoi').addEventListener('click', () => {
-  const name  = document.getElementById('fName').value.trim();
-  const text  = document.getElementById('fText').value.trim();
-  const prio  = parseInt(document.getElementById('fPriority').value) || 1;
+  const name     = document.getElementById('fName').value.trim();
+  const text     = document.getElementById('fText').value.trim();
+  const prio     = parseInt(document.getElementById('fPriority').value) || 1;
+  const zoneType = document.querySelector('input[name="fZoneType"]:checked').value;
 
-  if (!name || !text) { setStatus('이름과 안내 텍스트는 필수입니다', 'err'); return; }
+  if (!name) { setStatus('이름은 필수입니다', 'err'); return; }
+  if (zoneType === 'trigger' && !text) { setStatus('트리거 구역은 안내 텍스트가 필수입니다', 'err'); return; }
   if (rois.find(r => r.name === name)) { setStatus(`'${name}' 이름이 이미 존재합니다`, 'err'); return; }
 
   rois.push({
@@ -521,12 +963,15 @@ document.getElementById('btnAddRoi').addEventListener('click', () => {
     points: pendingPoly,
     priority: prio,
     announcement_text: text,
-    audio_file: pendingAudioPath,
+    audio_file: zoneType === 'exclude' ? '' : pendingAudioPath,
+    zone_type: zoneType,
   });
 
   pendingPoly = null;
   formSec.style.display = 'none';
   ['fName','fText'].forEach(id => document.getElementById(id).value = '');
+  document.querySelector('input[name="fZoneType"][value="trigger"]').checked = true;
+  updateZoneTypeFieldsVisibility();
   resetAudioPick();
 
   renderList();
@@ -602,23 +1047,28 @@ function renderList() {
     return;
   }
 
-  roiListEl.innerHTML = rois.map((roi, i) => `
+  roiListEl.innerHTML = rois.map((roi, i) => {
+    const isExclude = (roi.zone_type || 'trigger') === 'exclude';
+    return `
     <div class="roi-item">
       <div class="roi-item-hd">
         <span>
-          <span class="color-dot" style="background:${COLORS[i % COLORS.length]}"></span>
+          <span class="color-dot" style="background:${isExclude ? '#ff3030' : COLORS[i % COLORS.length]}"></span>
           <span class="roi-name">${escHtml(roi.name)}</span>
+          ${isExclude ? '<span class="badge-exclude">🚫 제외구역</span>' : ''}
         </span>
         <button class="btn btn-danger btn-sm" onclick="deleteRoi('${escAttr(roi.name)}')">삭제</button>
       </div>
-      <div class="roi-meta">${escHtml(roi.announcement_text)}</div>
+      ${roi.announcement_text ? `<div class="roi-meta">${escHtml(roi.announcement_text)}</div>` : ''}
       ${roi.audio_file ? `<div class="roi-meta">🎵 ${escHtml(roi.audio_file.split(/[\\/]/).pop())}</div>` : ''}
       <div class="roi-meta">우선순위 ${roi.priority} | 꼭짓점 ${roi.points.length}개</div>
+      ${isExclude ? '' : `
       <div class="form-btns" style="margin-top:6px">
         <button class="btn btn-prim btn-sm" onclick="pickAudioFor(${i})">🎵 오디오 ${roi.audio_file ? '변경' : '추가'}</button>
-      </div>
+      </div>`}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function deleteRoi(name) {
@@ -643,14 +1093,21 @@ document.getElementById('btnClearAll').addEventListener('click', () => {
 ================================================================ */
 document.getElementById('btnSaveAll').addEventListener('click', saveToServer);
 
+function _apiUrl(path) {
+  return activeCameraId ? `${path}?camera=${encodeURIComponent(activeCameraId)}` : path;
+}
+
 async function saveToServer() {
   try {
-    const res = await fetch('/api/rois', {
+    const res = await fetch(_apiUrl('/api/rois'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rois, conf: confThreshold }),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(Array.isArray(body.detail) ? body.detail.join('; ') : (body.detail || await res.text()));
+    }
     setStatus(`✅ ${rois.length}개 ROI 저장 완료 — 기기가 2초 이내 자동 반영합니다`, 'ok');
   } catch (e) {
     setStatus(`❌ 저장 실패: ${e.message}`, 'err');
@@ -659,7 +1116,7 @@ async function saveToServer() {
 
 async function loadFromServer() {
   try {
-    const res  = await fetch('/api/rois');
+    const res  = await fetch(_apiUrl('/api/rois'));
     const data = await res.json();
     rois = data.rois || [];
     if (typeof data.conf === 'number') {
@@ -689,7 +1146,7 @@ confInput.addEventListener('change', () => {
 ================================================================ */
 async function loadStats() {
   try {
-    const res  = await fetch('/api/stats');
+    const res  = await fetch(_apiUrl('/api/stats'));
     const data = await res.json();
     document.getElementById('statTotal').textContent = data.total_count;
     document.getElementById('statCane').textContent  = data.cane_user_count;
@@ -716,9 +1173,15 @@ function escAttr(s) {
 /* ================================================================
    Boot
 ================================================================ */
-loadFromServer();
+// loadCameras()가 카메라 프로필을 찾으면 switchCamera() 내부에서 loadFromServer()/loadStats()를
+// 이미 호출하므로, 프로필이 없는 레거시 단일 카메라 모드에서만 직접 호출한다.
+loadCameras().then(() => {
+  if (cameras.length === 0) {
+    loadFromServer();
+    loadStats();
+  }
+});
 syncSize();
-loadStats();
 setInterval(loadStats, 5000);
 </script>
 </body>

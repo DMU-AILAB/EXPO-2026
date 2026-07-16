@@ -23,6 +23,7 @@ class ROI:
     announcement_text: str
     color: tuple = field(default_factory=lambda: _COLORS[0])
     audio_file: str = ""  # MP3 경로 (없으면 빈 문자열)
+    zone_type: str = "trigger"  # "trigger" | "exclude" (제외구역 — 오디오 트리거 대상에서 제외)
 
     def to_dict(self) -> dict:
         return {
@@ -31,6 +32,7 @@ class ROI:
             "priority": self.priority,
             "announcement_text": self.announcement_text,
             "audio_file": self.audio_file,
+            "zone_type": self.zone_type,
         }
 
 
@@ -39,7 +41,7 @@ class ROIManager:
         self.rois: list[ROI] = []
 
     def add_roi(self, name: str, points: list, priority: int,
-                announcement_text: str, audio_file: str = ""):
+                announcement_text: str, audio_file: str = "", zone_type: str = "trigger"):
         color = _COLORS[len(self.rois) % len(_COLORS)]
         self.rois.append(ROI(
             name=name,
@@ -48,26 +50,35 @@ class ROIManager:
             announcement_text=announcement_text,
             color=color,
             audio_file=audio_file,
+            zone_type=zone_type,
         ))
 
     def check(self, cx_norm: float, cy_norm: float) -> Optional[ROI]:
-        """Return highest-priority ROI containing the point, or None."""
+        """Return highest-priority trigger-type ROI containing the point, or None."""
         point = Point(cx_norm, cy_norm)
         matched = [
             r for r in self.rois
-            if len(r.points) >= 3 and Polygon(r.points).contains(point)
+            if r.zone_type != "exclude" and len(r.points) >= 3 and Polygon(r.points).contains(point)
         ]
         return min(matched, key=lambda r: r.priority) if matched else None
 
     def check_region(self, x1n: float, y1n: float, x2n: float, y2n: float) -> Optional[ROI]:
-        """Return highest-priority ROI that intersects the normalized rectangle, or None."""
+        """Return highest-priority trigger-type ROI that intersects the normalized rectangle, or None."""
         from shapely.geometry import box as shapely_box
         region = shapely_box(x1n, y1n, x2n, y2n)
         matched = [
             r for r in self.rois
-            if len(r.points) >= 3 and Polygon(r.points).intersects(region)
+            if r.zone_type != "exclude" and len(r.points) >= 3 and Polygon(r.points).intersects(region)
         ]
         return min(matched, key=lambda r: r.priority) if matched else None
+
+    def is_excluded(self, cx_norm: float, cy_norm: float) -> bool:
+        """지형지물 오탐지 방지용 제외구역 안에 점이 있는지 여부."""
+        point = Point(cx_norm, cy_norm)
+        return any(
+            r.zone_type == "exclude" and len(r.points) >= 3 and Polygon(r.points).contains(point)
+            for r in self.rois
+        )
 
     def remove(self, name: str):
         self.rois = [r for r in self.rois if r.name != name]
@@ -95,6 +106,7 @@ class ROIManager:
                     announcement_text=item["announcement_text"],
                     color=color,
                     audio_file=item.get("audio_file", ""),
+                    zone_type=item.get("zone_type", "trigger"),
                 ))
         except (FileNotFoundError, KeyError, json.JSONDecodeError):
             pass

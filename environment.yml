@@ -16,3 +16,4 @@ dependencies:
     - pygame>=2.0.0
     - streamlit>=1.28
     - streamlit-drawable-canvas
+    - pytest>=7.0.0

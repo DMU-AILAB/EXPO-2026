@@ -21,17 +21,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 파일/디렉토리 | 설명 |
 |------|------|
-| `camera_live_pi.py` | Pi 전용 추론 뷰어 — Coral EdgeTPU / TFLite INT8 / PyTorch 자동 선택, MJPEG 스트리밍 |
-| `camera_live.py` | PC용 추론 뷰어 (PyTorch) |
+| `camera_live_pi.py` | Pi 전용 추론 뷰어 — `CameraPipeline`(카메라별 독립 파이프라인) + 슈퍼바이저 `main()`. Coral EdgeTPU / TFLite INT8 / PyTorch 자동 선택, 카메라 회전, 감지 제외구역 필터링, MJPEG 스트리밍. `--camera-config` 미지정 시 기존 단일 카메라(`--source`/`--roi-config`/`--port`) 동작 그대로 |
+| `camera_live.py` | PC용 추론 뷰어 (PyTorch) — 회전(`--rotation`)만 반영, ROI/듀얼카메라 파이프라인 없음 |
 | `detect.py` | `WhiteCaneDetector` 클래스 |
 | `edgetpu_infer.py` | Coral Edge TPU Python 3.9 서브프로세스 워커 |
-| `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (논블로킹 MP3 재생, mpg123/pygame) |
+| `camera_config.py` | `CameraProfile` 다중 카메라 프로필 (`camera_config.json`) — load/save/validate. 표준 라이브러리만 사용 |
+| `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (큐+워커스레드 기반 순차 재생 — 여러 카메라가 공유해도 겹쳐 재생되지 않고 대기열에 쌓였다가 순서대로 나옴, mpg123/pygame) |
 | `simulator/app.py` | Streamlit PC 시뮬레이터 — ROI 폴리곤 편집, 실시간 탐지, 오디오 트리거 |
 | `simulator/detector.py` | 시뮬레이터용 탐지기 |
-| `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file 포함) |
+| `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
 | `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
-| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD + 오디오 파일 업로드(`/api/audio/upload`), `rois.json` atomic write |
-| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
+| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`) + 오디오 파일 업로드(`/api/audio/upload`), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
+| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고(트리거/제외구역 선택), 카메라 여러 대면 선택 드롭다운으로 전환, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v1-2/weights/` | 학습된 가중치 (`best.pt`, `best_int8.tflite`) |
@@ -49,10 +50,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 핵심 파일 관계
 
-`camera_live_pi.py` (Pi 메인) ←→ `audio_trigger.py` + `simulator/roi_manager.py`  
+`camera_live_pi.py` (Pi 메인) ←→ `audio_trigger.py` + `simulator/roi_manager.py` + `camera_config.py`
 `simulator/app.py` (PC 시뮬레이터) ←→ `audio_trigger.py` + `simulator/roi_manager.py` + `simulator/trigger_dispatcher.py`
+`roi_editor/server.py` (ROI/카메라 웹 에디터) ←→ `simulator/roi_manager.py`(간접, JSON 스키마 공유) + `camera_config.py` + `foot_traffic_counter.py`
 
 새 기능을 추가할 때: `simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유하므로 변경 시 양쪽 동작을 확인하세요.
+`camera_config.py`는 `camera_live_pi.py`(런타임 로더)와 `roi_editor/server.py`(웹 UI 저장/검증) 양쪽이
+동일 모듈을 import하므로, 검증 규칙(포트 중복, Coral 동글 1개 제약 등)은 한 곳(`validate_camera_config`)에만 있다.
+
+## 카메라 프로필 / 회전 / 감지 제외구역 (설계 결정)
+
+- **다중 카메라**: `camera_config.json`(루트, `rois.json`과 동일 원칙으로 Pi 로컬 전용·rsync 배포 안 함)이
+  있으면 `camera_live_pi.py`가 카메라마다 독립된 `CameraPipeline`(자체 스레드, 자체 추론 백엔드/트래커/
+  ROI매니저/MJPEG서버)을 동시에 구동한다. 파일이 없으면 기존 CLI 인자 기반 단일 카메라 동작 그대로.
+- **동시성은 스레드** — 멀티프로세싱이 아니다. TFLite/EdgeTPU 호출이 네이티브 코드라 GIL을 상당 부분
+  해제해 실질 병렬 처리되고, 오디오/GPIO LED 하트비트를 프로세스 내에서 손쉽게 공유할 수 있어서다.
+  트레이드오프: 한 카메라 스레드의 네이티브 크래시가 프로세스 전체를 내릴 수 있음(Pi 실기기에서 재현되면
+  멀티프로세싱으로 격상 검토).
+- **Coral 동글은 물리적으로 1개** — `validate_camera_config()`가 `inference_backend="edgetpu"`를 활성
+  카메라 2개 이상에 지정하는 걸 설정 저장 단계에서 차단한다.
+- **회전**은 카메라 read() 직후, 추론 이전 단 한 곳(`_apply_rotation()`)에 적용 — 이후 모든 소비 지점이
+  매 프레임 `frame.shape`를 다시 읽으므로 90/270도 가로세로 반전도 별도 수정 없이 전파된다. **회전값을
+  바꾸면 그 카메라에 이미 그려진 ROI/제외구역 폴리곤 좌표계가 안 맞을 수 있다** — 자동 재배치는 하지
+  않고 `roi_editor` UI가 경고 후 수동 재작도를 유도한다(90/270도는 가로세로비까지 바뀌어 단순 이동이
+  아니라서 자동 변환의 버그 위험이 큼).
+- **감지 제외구역**(`ROI.zone_type="exclude"`)은 지형지물(손잡이/점자블록/기둥 등) 오탐지 대응용. 트래킹
+  이후가 아니라 **raw detection 단계**(`backend.predict()` 직후, `tracker.update()` 이전)에서 지팡이+사람
+  전체 클래스에 필터링한다 — 트래킹 이후 필터링은 EMA 스무딩/coasting 때문에 구역 경계에서 트랙이
+  깜빡이는 문제가 있다. 기존 `rois.json`에 `zone_type` 필드가 없으면 `"trigger"`로 기본 처리되어 하위호환.
+- **오디오는 큐 기반 순차 재생**(`audio_trigger.AudioPlayer`) — 카메라 여러 대가 하나의 `AudioPlayer`
+  인스턴스를 공유해, 거의 동시에 트리거해도 겹쳐 재생(음성 뭉개짐)되지 않고 대기열에 쌓였다가 순서대로
+  나온다. 이전 버전은 재생 중 새 요청을 무시(drop)했으나, 여러 카메라 동시 트리거 시 안내가 누락되지
+  않도록 큐 방식으로 변경했다.
 
 ---
 
@@ -81,6 +110,9 @@ python camera_live_pi.py --source 0 --headless
 
 # Pi 전용 카메라 뷰어 (ROI + MP3 음성 안내)
 python camera_live_pi.py --roi-config rois.json --headless
+
+# Pi 전용 카메라 뷰어 (다중 카메라 — camera_config.json에 정의된 카메라들을 동시 구동)
+python camera_live_pi.py --camera-config camera_config.json --headless
 
 # YOLOv8 학습 (PC/GPU 환경)
 yolo train data=data.yaml model=yolov8n.pt epochs=100 imgsz=640
@@ -150,8 +182,13 @@ make sync   PI=192.168.0.89
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py`, `gpio_controls.py`, `fan_controller.py` | Pi에 배포할 Python 소스 |
+| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py`, `gpio_controls.py`, `fan_controller.py`, `yolo_postprocess.py`, `simple_tracker.py`, `cane_person_assoc.py`, `foot_traffic_counter.py`, `camera_config.py` | Pi에 배포할 Python 소스 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
+
+`camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
+Pi 로컬에서 `roi_editor` 웹 UI로 생성/수정하는 런타임 설정 파일이기 때문이다. 새 Pi는
+`camera_config.json`이 없으면 기존처럼 `--source`/`--roi-config`/`--port` 단일 카메라 모드로
+동작한다 (마이그레이션 불필요).
 
 `roi_editor/` 디렉토리는 별도로 `make sync-roi-editor` (deploy에 포함됨)로 전송됩니다.
 
@@ -302,8 +339,9 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 
 | 파일 | 역할 | 상태 |
 |------|------|------|
-| `camera_live_pi.py` | Pi Camera/OpenCV 추상화 + 추론 + 추적 + MJPEG 송출 | ✅ 구현됨 |
-| `audio_trigger.py` | `StandaloneDispatcher` (디바운싱/쿨다운) + `AudioPlayer` (MP3) | ✅ 구현됨 |
+| `camera_live_pi.py` | Pi Camera/OpenCV 추상화 + 추론 + 추적 + MJPEG 송출 (`CameraPipeline` 다중 카메라 지원) | ✅ 구현됨 |
+| `camera_config.py` | 다중 카메라 프로필 로드/저장/검증 (`camera_config.json`) | ✅ 구현됨 |
+| `audio_trigger.py` | `StandaloneDispatcher` (디바운싱/쿨다운) + `AudioPlayer` (큐 기반 순차 재생 MP3) | ✅ 구현됨 |
 | `simulator/roi_manager.py` | Shapely 기반 ROI Point-in-Polygon 판별 | ✅ 구현됨 |
 | `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운싱/쿨다운 (시뮬레이터용) | ✅ 구현됨 |
 | `preprocess.py` | Letterbox 리사이즈 + CLAHE 야간 보정 | 미구현 (예정) |

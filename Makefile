@@ -34,7 +34,8 @@ DEPLOY_PY = \
 	yolo_postprocess.py \
 	simple_tracker.py \
 	cane_person_assoc.py \
-	foot_traffic_counter.py
+	foot_traffic_counter.py \
+	camera_config.py
 
 # Pi에 배포할 모델 파일
 DEPLOY_MODEL = runs/white_cane_v2/weights/best_int8.tflite

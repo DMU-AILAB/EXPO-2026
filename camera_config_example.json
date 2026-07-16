@@ -1,0 +1,28 @@
+{
+  "cameras": [
+    {
+      "id": "cam0",
+      "enabled": true,
+      "label": "정문 CSI 카메라",
+      "backend": "picamera2",
+      "source": "0",
+      "rotation": 0,
+      "inference_backend": "edgetpu",
+      "roi_config": "rois_cam0.json",
+      "port": 8080,
+      "traffic_db": "foot_traffic_cam0.db"
+    },
+    {
+      "id": "cam1",
+      "enabled": true,
+      "label": "측면 USB 웹캠",
+      "backend": "opencv",
+      "source": "0",
+      "rotation": 90,
+      "inference_backend": "tflite",
+      "roi_config": "rois_cam1.json",
+      "port": 8081,
+      "traffic_db": "foot_traffic_cam1.db"
+    }
+  ]
+}
