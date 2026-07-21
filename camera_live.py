@@ -37,7 +37,19 @@ def _parse_args() -> argparse.Namespace:
         default="auto",
         help="추론 장치: auto, cuda, cpu (기본값: auto — CUDA 사용 가능 시 자동 선택)",
     )
+    parser.add_argument(
+        "--rotation", type=int, default=0, choices=(0, 90, 180, 270),
+        help="카메라 장착 각도 보정 (기본값: 0)",
+    )
     return parser.parse_args()
+
+
+_ROTATE_MAP = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+
+
+def _apply_rotation(frame, degrees: int):
+    flag = _ROTATE_MAP.get(degrees % 360)
+    return cv2.rotate(frame, flag) if flag is not None else frame
 
 
 def _resolve_device(device: str) -> str:
@@ -75,6 +87,7 @@ def main() -> None:
             print("[INFO] 영상 종료 또는 카메라 연결 끊김")
             break
 
+        frame = _apply_rotation(frame, args.rotation)
         annotated = detector.annotate(frame)
 
         now = time.time()

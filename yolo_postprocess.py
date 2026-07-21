@@ -39,8 +39,16 @@ def set_input(interpreter, frame: np.ndarray, input_size: int = INPUT_SIZE) -> N
         blob = blob.astype(np.float32) / 255.0
     elif dtype == np.int8:
         scale, zp = inp["quantization"]
-        blob = np.clip(blob.astype(np.float32) / 255.0 / scale + zp,
-                       -128, 127).astype(np.int8)
+        # 실측(Pi 4, EdgeTPU 컴파일 모델): scale≈1/255, zero_point=-128인 경우가 흔한데,
+        # 이건 정규화([0,1]) 입력을 그대로 양자화한 것과 수학적으로 동일해서
+        # uint8 값에서 128만 빼면 끝난다 — float32 변환/나눗셈 2회/clip을 전부
+        # 건너뛸 수 있다 (프로파일링 결과 이 경로가 프레임당 ~30ms → ~수ms로 단축).
+        # uint8 입력은 항상 [0,255]라 -128을 빼도 int8 범위를 벗어날 수 없어 clip도 불필요.
+        if abs(scale - 1.0 / 255.0) < 1e-6 and zp == -128:
+            blob = (blob.astype(np.int16) - 128).astype(np.int8)
+        else:
+            blob = np.clip(blob.astype(np.float32) / 255.0 / scale + zp,
+                           -128, 127).astype(np.int8)
     # uint8 (0–255): 그대로 사용
 
     interpreter.set_tensor(inp["index"], blob)

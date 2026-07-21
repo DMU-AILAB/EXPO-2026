@@ -50,6 +50,31 @@ ROI_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "rois.json")
 FOOT_TRAFFIC_DB_PATH = os.path.join(os.path.dirname(__file__), "foot_traffic_sim.db")
 STATS_POLL_INTERVAL = 2.0
 
+# 지팡이 트랙이 이만큼 연속으로 거의 안 움직이면(SimpleTracker.static_frames) 배경
+# 오탐지(케이블/문틀 경계선 등)로 간주해 ROI 트리거 대상에서 제외한다.
+STATIC_CANE_SUPPRESS_FRAMES = 24
+
+_ROTATE_MAP = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+
+
+def apply_rotation(frame, degrees: int):
+    """camera_live_pi.py의 _apply_rotation()과 동일 원칙 — read() 직후, 추론 이전에 적용."""
+    flag = _ROTATE_MAP.get(degrees % 360)
+    return cv2.rotate(frame, flag) if flag is not None else frame
+
+
+def filter_excluded(detections: list, roi_manager: "ROIManager", frame) -> list:
+    """제외구역(zone_type="exclude") 안에 bbox 중심이 있는 detection을 트래킹 이전에 걸러낸다
+    (camera_live_pi.py의 _filter_excluded()와 동일 로직)."""
+    h, w = frame.shape[:2]
+    return [
+        d for d in detections
+        if not roi_manager.is_excluded(
+            ((d["bbox"][0] + d["bbox"][2]) / 2) / w,
+            ((d["bbox"][1] + d["bbox"][3]) / 2) / h,
+        )
+    ]
+
 # ---------------------------------------------------------------------------
 # Session state initialization
 # ---------------------------------------------------------------------------
@@ -139,6 +164,8 @@ with st.sidebar:
                 st.session_state.temp_video_path = tmp.name
             video_source = st.session_state.temp_video_path
 
+    rotation = st.selectbox("회전", [0, 90, 180, 270], index=0, help="카메라 장착 각도 보정")
+
     # --- Model ---
     st.subheader("모델")
     model_path = st.text_input("가중치 경로", value=DEFAULT_MODEL_PATH)
@@ -174,7 +201,8 @@ with st.sidebar:
         st.caption(f"등록된 ROI ({len(rois)}개)")
         for roi in rois:
             r_col1, r_col2 = st.columns([4, 1])
-            r_col1.caption(f"**{roi.name}**: {roi.announcement_text}")
+            badge = "🚫 제외구역" if getattr(roi, "zone_type", "trigger") == "exclude" else roi.announcement_text
+            r_col1.caption(f"**{roi.name}**: {badge}")
             if r_col2.button("삭제", key=f"del_{roi.name}"):
                 st.session_state.roi_manager.remove(roi.name)
                 st.session_state.dispatcher.on_not_detected(roi.name)
@@ -275,18 +303,19 @@ def draw_overlays(frame, tracks, cane_person_map, rois, dispatcher, now):
         )
         if len(pts) < 3:
             continue
+        is_exclude = getattr(roi, "zone_type", "trigger") == "exclude"
         remaining = dispatcher.cooldown_remaining(roi.name, now)
-        color = (0, 0, 200) if remaining > 0 else roi.color
+        color = (0, 0, 255) if is_exclude else ((0, 0, 200) if remaining > 0 else roi.color)
 
         overlay = frame.copy()
         cv2.fillPoly(overlay, [pts], color)
-        cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+        cv2.addWeighted(overlay, 0.15 if is_exclude else 0.2, frame, 0.85 if is_exclude else 0.8, 0, frame)
         cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=2)
 
         cx = int(np.mean(pts[:, 0]))
         cy = int(np.mean(pts[:, 1]))
-        label = roi.name
-        if remaining > 0:
+        label = ("🚫 " if is_exclude else "") + roi.name
+        if remaining > 0 and not is_exclude:
             label += f" ({remaining:.1f}s)"
         text_items.append((max(cx - 40, 0), max(cy - 10, 0), label, color, 18))
 
@@ -462,46 +491,52 @@ if st.session_state.edit_mode:
                 st.divider()
                 st.caption(f"**{len(all_pts)}개 폴리곤** — 각 ROI 정보를 입력하세요")
                 ck = st.session_state.canvas_key
-                roi_inputs = {}  # {i: (name, text, audio)} 저장용
+                roi_inputs = {}  # {i: (name, text, audio, zone_type)} 저장용
                 for i in range(len(all_pts)):
-                    c1, c2, c3, c4 = st.columns([2, 3, 3, 1])
-                    name_val  = c1.text_input(
+                    c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
+                    zone_type_val = c1.selectbox(
+                        "구역 유형", ["trigger", "exclude"],
+                        format_func=lambda v: "🔔 트리거" if v == "trigger" else "🚫 제외",
+                        key=f"roi_zone_type_{ck}_{i}",
+                    )
+                    name_val  = c2.text_input(
                         "이름", placeholder="예: 횡단보도",
                         key=f"roi_name_{ck}_{i}",
                     )
-                    text_val  = c2.text_input(
-                        "안내 텍스트", placeholder="예: 횡단보도 앞입니다",
+                    text_val  = c3.text_input(
+                        "안내 텍스트" + ("" if zone_type_val == "trigger" else " (선택)"),
+                        placeholder="예: 횡단보도 앞입니다",
                         key=f"roi_text_{ck}_{i}",
                     )
                     # 오디오 경로는 버퍼 키로 관리 (위젯 key와 분리해 프로그래매틱 수정 허용)
                     audio_buf_key = f"roi_audio_buf_{ck}_{i}"
-                    audio_val = c3.text_input(
+                    audio_val = c4.text_input(
                         "MP3 경로 (선택)",
                         value=st.session_state.get(audio_buf_key, ""),
                         placeholder="audio/crosswalk.mp3",
                     )
                     st.session_state[audio_buf_key] = audio_val  # 타이핑 반영
-                    c4.write("")  # label 높이 맞춤
-                    if c4.button("📂", key=f"roi_browse_{ck}_{i}", help="파일 탐색기로 MP3 선택"):
+                    c5.write("")  # label 높이 맞춤
+                    if c5.button("📂", key=f"roi_browse_{ck}_{i}", help="파일 탐색기로 MP3 선택"):
                         selected = browse_audio_file()
                         if selected:
                             st.session_state[audio_buf_key] = selected
                             st.rerun()
-                    roi_inputs[i] = (name_val, text_val, audio_val)
+                    roi_inputs[i] = (name_val, text_val, audio_val, zone_type_val)
 
                 if st.button("✅ ROI 저장", type="primary", use_container_width=True):
                     saved, errors = 0, []
                     for i, pts in enumerate(all_pts):
-                        name, text, audio = roi_inputs[i]
+                        name, text, audio, zone_type = roi_inputs[i]
                         name  = name.strip()
                         text  = text.strip()
                         audio = st.session_state.get(f"roi_audio_buf_{ck}_{i}", audio).strip()
-                        if not name or not text:
+                        if not name or (zone_type == "trigger" and not text):
                             errors.append(f"폴리곤 {i + 1}: 이름과 안내 텍스트를 입력하세요.")
                             continue
                         priority = len(st.session_state.roi_manager.rois) + 1
                         st.session_state.roi_manager.add_roi(
-                            name, pts, priority, text, audio_file=audio
+                            name, pts, priority, text, audio_file=audio, zone_type=zone_type
                         )
                         saved += 1
                     if saved:
@@ -543,6 +578,7 @@ def _video_loop():
             st.rerun()
             return
 
+    frame = apply_rotation(frame, rotation)
     st.session_state.frozen_frame = frame.copy()
     h, w = frame.shape[:2]
     now = time.time()
@@ -553,8 +589,15 @@ def _video_loop():
         detector = st.session_state.detector
 
     detections = detector.detect(frame, conf_threshold)
+    # 지형지물 오탐지 방지용 제외구역 — 트래킹 이전에 raw detection 단계에서 걸러낸다.
+    detections = filter_excluded(detections, st.session_state.roi_manager, frame)
     tracks = st.session_state.tracker.update(detections)
-    cane_tracks   = [t for t in tracks if t["class"] == CANE_CLASS_ID]
+    # 배경의 케이블/문틀 경계선 같은 고정 오탐지 대상은 지팡이와 달리 절대 움직이지
+    # 않는다 — static_frames가 임계값을 넘은 트랙은 ROI 트리거 대상에서 제외한다.
+    cane_tracks = [
+        t for t in tracks
+        if t["class"] == CANE_CLASS_ID and t.get("static_frames", 0) < STATIC_CANE_SUPPRESS_FRAMES
+    ]
     person_tracks = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
 
     cane_person_map = associate(tracks)
