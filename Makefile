@@ -37,8 +37,12 @@ DEPLOY_PY = \
 	foot_traffic_counter.py \
 	camera_config.py
 
-# Pi에 배포할 모델 파일
-DEPLOY_MODEL = runs/white_cane_v2/weights/best_int8.tflite
+# Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.
+# 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.
+# (best.pt는 PyTorch fallback용이라 Pi엔 torch/ultralytics 자체를 설치하지 않으므로 배포 대상 아님)
+DEPLOY_MODEL_DIRS = \
+	runs/white_cane_v2/weights \
+	runs/white_cane_v3_320/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
         install-edgetpu-py39 setup-pi-python310 install-service \
@@ -70,9 +74,11 @@ deploy: sync sync-roi-editor deps deps-roi-editor
 ## Pi로 카메라 앱 파일만 전송
 sync:
 	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
-	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/runs/white_cane_v2/weights"
+	ssh $(USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
-	rsync -avz --progress $(DEPLOY_MODEL) $(DEST)/runs/white_cane_v2/weights/
+	for d in $(DEPLOY_MODEL_DIRS); do \
+		rsync -avz --progress $$d/best_int8.tflite $$d/best_int8_edgetpu.tflite $(DEST)/$$d/; \
+	done
 
 ## Pi로 ROI 에디터 파일만 전송
 ## 주의: roi_editor/server.py가 foot_traffic_counter.py(sync 타겟으로 배포됨)를

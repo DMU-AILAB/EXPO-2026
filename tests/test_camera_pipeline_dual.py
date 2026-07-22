@@ -56,7 +56,7 @@ def test_two_camera_pipelines_run_concurrently_and_shut_down_cleanly(monkeypatch
         fake_cameras[source] = cam
         return cam
 
-    def fake_build_backend(conf, prefer="auto"):
+    def fake_build_backend(conf, prefer="auto", weights_dir=None, input_size=640):
         backend = _FakeBackend(conf)
         fake_backends[prefer] = backend
         return backend
@@ -115,7 +115,7 @@ def test_pipeline_restart_on_same_port_does_not_leak_socket(monkeypatch):
     함께 죽는다 (카메라 프로필 변경 시 _reconcile_pipelines가 겪었던 실제 버그).
     """
     monkeypatch.setattr(m, "build_camera", lambda source, backend="auto": _InfiniteFakeCamera())
-    monkeypatch.setattr(m, "build_backend", lambda conf, prefer="auto": _FakeBackend(conf))
+    monkeypatch.setattr(m, "build_backend", lambda conf, prefer="auto", weights_dir=None, input_size=640: _FakeBackend(conf))
 
     shared = m.SharedResources(
         audio_player=None,

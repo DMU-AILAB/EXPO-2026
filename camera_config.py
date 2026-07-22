@@ -19,6 +19,24 @@ _VALID_INFERENCE_BACKENDS = {"auto", "edgetpu", "tflite", "pytorch"}
 _VALID_ROTATIONS = {0, 90, 180, 270}
 _RESERVED_PORTS = {5000}  # roi_editor 웹 UI 포트
 
+# 카메라별로 다른 학습/해상도 조합의 모델을 고를 수 있게 하는 매핑 — weights 폴더
+# 경로 하나와 입력 해상도 하나를 한 번에 고르게 해서, 둘이 어긋나는(예: v3_320
+# 가중치인데 input_size=640) 설정 실수를 원천 차단한다. 새 모델을 추가하려면
+# 이 dict에 항목만 추가하면 CameraProfile.model_variant로 바로 선택 가능해진다.
+MODEL_VARIANTS = {
+    "v2_640": {
+        "weights_dir": "runs/white_cane_v2/weights",
+        "input_size": 640,
+        "label": "white_cane_v2 (640, 정확도 우선)",
+    },
+    "v3_320": {
+        "weights_dir": "runs/white_cane_v3_320/weights",
+        "input_size": 320,
+        "label": "white_cane_v3_320 (320, 속도 우선)",
+    },
+}
+_DEFAULT_MODEL_VARIANT = "v2_640"
+
 
 @dataclass
 class CameraProfile:
@@ -36,6 +54,8 @@ class CameraProfile:
     # (실측: picamera2 "RGB888" 포맷이 CSI 센서에서는 이미 BGR 순서로 나와 그대로 써도
     # 되지만, libcamera의 uvcvideo(USB UVC) 경로를 타는 카메라는 그렇지 않을 수 있음 —
     # 카메라 하드웨어/드라이버 조합에 따라 달라 자동 판별 대신 카메라별 토글로 둔다.)
+    model_variant: str = _DEFAULT_MODEL_VARIANT  # MODEL_VARIANTS의 키 — 카메라별로 다른
+    # 모델(해상도/정확도-속도 트레이드오프)을 고를 수 있게 한다.
 
 
 def load_camera_config(path: str | Path) -> list[CameraProfile]:
@@ -60,6 +80,7 @@ def load_camera_config(path: str | Path) -> list[CameraProfile]:
                 port=int(item.get("port", 8080)),
                 traffic_db=item.get("traffic_db", "foot_traffic.db"),
                 swap_rb=bool(item.get("swap_rb", False)),
+                model_variant=item.get("model_variant", _DEFAULT_MODEL_VARIANT),
             ))
         except (KeyError, TypeError, ValueError):
             continue
@@ -99,6 +120,9 @@ def validate_camera_config(profiles: list[CameraProfile]) -> list[str]:
             errors.append(f"'{p.id}': backend 값이 잘못됨 ({p.backend})")
         if p.inference_backend not in _VALID_INFERENCE_BACKENDS:
             errors.append(f"'{p.id}': inference_backend 값이 잘못됨 ({p.inference_backend})")
+        if p.model_variant not in MODEL_VARIANTS:
+            errors.append(f"'{p.id}': model_variant 값이 잘못됨 ({p.model_variant}) — "
+                          f"{list(MODEL_VARIANTS)} 중 하나여야 함")
 
         ids_seen[p.id] = ids_seen.get(p.id, 0) + 1
 

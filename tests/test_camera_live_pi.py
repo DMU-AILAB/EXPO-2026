@@ -96,13 +96,18 @@ def test_build_camera_backend_picamera2_forced(monkeypatch):
     assert calls == [("picamera2", 1)]
 
 
-def test_build_backend_tflite_requires_model_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(m, "_TFLITE_MODEL", tmp_path / "missing.tflite")
+def test_build_backend_tflite_requires_model_file(tmp_path):
     with pytest.raises(RuntimeError):
-        m.build_backend(0.5, prefer="tflite")
+        m.build_backend(0.5, prefer="tflite", weights_dir=str(tmp_path / "missing_weights"))
 
 
-def test_build_backend_pytorch_requires_model_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(m, "_PT_MODEL", tmp_path / "missing.pt")
+def test_build_backend_pytorch_requires_model_file(tmp_path):
     with pytest.raises(RuntimeError):
-        m.build_backend(0.5, prefer="pytorch")
+        m.build_backend(0.5, prefer="pytorch", weights_dir=str(tmp_path / "missing_weights"))
+
+
+def test_model_paths_resolves_expected_filenames():
+    paths = m._model_paths("runs/white_cane_v2/weights")
+    assert paths["edgetpu"].name == "best_int8_edgetpu.tflite"
+    assert paths["tflite"].name == "best_int8.tflite"
+    assert paths["pytorch"].name == "best.pt"

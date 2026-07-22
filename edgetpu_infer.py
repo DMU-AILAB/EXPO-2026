@@ -11,7 +11,10 @@ stdin/stdout 바이너리 프로토콜:
   출력:   4바이트 크기 (struct ">I") + JSON bytes  (탐지 결과 list[dict])
 
 실행:
-  ~/.python39/bin/python3.9 edgetpu_infer.py [conf_threshold]
+  ~/.python39/bin/python3.9 edgetpu_infer.py [conf_threshold] [model_path] [input_size]
+  model_path/input_size 생략 시 white_cane_v2/640 기본값 사용 (camera_config.MODEL_VARIANTS
+  참고 — camera_live_pi.py의 _CoralBackend가 카메라 프로필의 model_variant에 따라 실제로는
+  항상 명시적으로 넘겨준다).
 """
 
 from __future__ import annotations
@@ -41,16 +44,18 @@ def _on_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _on_sigterm)
 
-_WEIGHTS       = Path(__file__).parent / "runs/white_cane_v2/weights"
-_EDGETPU_MODEL = _WEIGHTS / "best_int8_edgetpu.tflite"
+_DEFAULT_MODEL = Path(__file__).parent / "runs/white_cane_v2/weights" / "best_int8_edgetpu.tflite"
+_DEFAULT_INPUT_SIZE = 640
 
 
 def main() -> None:
-    conf = float(sys.argv[1]) if len(sys.argv) > 1 else 0.25
+    conf        = float(sys.argv[1]) if len(sys.argv) > 1 else 0.25
+    model_path  = Path(sys.argv[2]) if len(sys.argv) > 2 else _DEFAULT_MODEL
+    input_size  = int(sys.argv[3]) if len(sys.argv) > 3 else _DEFAULT_INPUT_SIZE
 
     delegate = tflite.load_delegate("libedgetpu.so.1")
     interp   = tflite.Interpreter(
-        model_path=str(_EDGETPU_MODEL),
+        model_path=str(model_path),
         experimental_delegates=[delegate],
     )
     interp.allocate_tensors()
@@ -74,7 +79,7 @@ def main() -> None:
 
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(img_h, img_w, 3)
 
-        set_input(interp, frame)
+        set_input(interp, frame, input_size=input_size)
         interp.invoke()
         dets = postprocess_multiclass(get_output(interp), conf, img_w, img_h)
 

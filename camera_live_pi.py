@@ -42,7 +42,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from camera_config import CameraProfile, load_camera_config, validate_camera_config
+from camera_config import CameraProfile, MODEL_VARIANTS, load_camera_config, validate_camera_config
 from yolo_postprocess import postprocess_multiclass, set_input, get_output
 from simple_tracker import SimpleTracker
 
@@ -70,16 +70,24 @@ except ImportError as _e:
     print(f"[WARN] GPIO(gpiozero) 기능 비활성 (의존성 누락): {_e}")
 
 # ── 경로 / 상수 ────────────────────────────────────────────────────
-_WEIGHTS       = Path(__file__).parent / "runs/white_cane_v2/weights"
-_EDGETPU_MODEL = _WEIGHTS / "best_int8_edgetpu.tflite"
-_TFLITE_MODEL  = _WEIGHTS / "best_int8.tflite"
-_PT_MODEL      = _WEIGHTS / "best.pt"
-
 _EDGETPU_LIB = {
     "Linux":   "libedgetpu.so.1",
     "Darwin":  "libedgetpu.1.dylib",
     "Windows": "edgetpu.dll",
 }
+
+
+def _model_paths(weights_dir: str) -> dict[str, Path]:
+    """카메라 프로필의 model_variant(camera_config.MODEL_VARIANTS)가 가리키는 weights
+    폴더를 실제 모델 파일 경로들로 변환한다 — 카메라마다 다른 모델(예: 정확도 우선
+    white_cane_v2/640 vs 속도 우선 white_cane_v3_320/320)을 쓸 수 있게 한다.
+    """
+    base = Path(__file__).parent / weights_dir
+    return {
+        "edgetpu": base / "best_int8_edgetpu.tflite",
+        "tflite":  base / "best_int8.tflite",
+        "pytorch": base / "best.pt",
+    }
 
 
 # ── 추론 백엔드 ────────────────────────────────────────────────────
@@ -96,16 +104,17 @@ class _CoralBackend:
     _PY39   = Path.home() / ".python39" / "bin" / "python3.9"
     _WORKER = Path(__file__).parent / "edgetpu_infer.py"
 
-    def __init__(self, conf: float) -> None:
+    def __init__(self, conf: float, weights_dir: str, input_size: int) -> None:
         if not self._PY39.exists():
             raise FileNotFoundError(
                 "~/.python39 없음 — make install-edgetpu-py39 실행 필요"
             )
         if not self._WORKER.exists():
             raise FileNotFoundError(f"워커 스크립트 없음: {self._WORKER}")
+        model_path = _model_paths(weights_dir)["edgetpu"]
         self.conf = conf
         self._proc = subprocess.Popen(
-            [str(self._PY39), str(self._WORKER), str(conf)],
+            [str(self._PY39), str(self._WORKER), str(conf), str(model_path), str(input_size)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             bufsize=0,
@@ -156,8 +165,9 @@ class _CoralBackend:
 class _TFLiteBackend:
     """TFLite INT8 CPU 백엔드."""
 
-    def __init__(self, conf: float) -> None:
+    def __init__(self, conf: float, weights_dir: str, input_size: int) -> None:
         self.conf = conf
+        self.input_size = input_size
         try:
             import tflite_runtime.interpreter as tflite
         except ImportError:
@@ -166,11 +176,12 @@ class _TFLiteBackend:
             except ImportError:
                 import tensorflow.lite as tflite  # type: ignore[no-redef]
 
-        self._interp = tflite.Interpreter(model_path=str(_TFLITE_MODEL), num_threads=4)
+        model_path = _model_paths(weights_dir)["tflite"]
+        self._interp = tflite.Interpreter(model_path=str(model_path), num_threads=4)
         self._interp.allocate_tensors()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
-        set_input(self._interp, frame)
+        set_input(self._interp, frame, input_size=self.input_size)
         self._interp.invoke()
         h, w = frame.shape[:2]
         return postprocess_multiclass(get_output(self._interp), self.conf, w, h)
@@ -182,7 +193,7 @@ class _TFLiteBackend:
 class _UltralyticsBackend:
     """PyTorch 기반 ultralytics 백엔드 (fallback)."""
 
-    def __init__(self, conf: float) -> None:
+    def __init__(self, conf: float, weights_dir: str) -> None:
         self.conf = conf
         from detect import WhiteCaneDetector  # noqa: PLC0415
         try:
@@ -190,7 +201,8 @@ class _UltralyticsBackend:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             device = "cpu"
-        self._det = WhiteCaneDetector(model_path=_PT_MODEL, conf=conf, device=device)
+        model_path = _model_paths(weights_dir)["pytorch"]
+        self._det = WhiteCaneDetector(model_path=model_path, conf=conf, device=device)
 
     def predict(self, frame: np.ndarray) -> list[dict]:
         return self._det.predict(frame)
@@ -199,7 +211,10 @@ class _UltralyticsBackend:
         pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
 
 
-def build_backend(conf: float, prefer: str = "auto") -> _CoralBackend | _TFLiteBackend | _UltralyticsBackend:
+def build_backend(
+    conf: float, prefer: str = "auto",
+    weights_dir: str = "runs/white_cane_v2/weights", input_size: int = 640,
+) -> _CoralBackend | _TFLiteBackend | _UltralyticsBackend:
     """추론 백엔드를 선택하여 반환.
 
     prefer="auto"(기본값)는 기존 Coral→TFLite→PyTorch 캐스케이드 그대로 동작한다.
@@ -208,62 +223,67 @@ def build_backend(conf: float, prefer: str = "auto") -> _CoralBackend | _TFLiteB
     고정 배정하기 위함이다. "edgetpu"를 지정해도 초기화 실패 시엔 기존처럼 하위 티어로
     폴백한다 (하드 실패보다 저하된 성능으로라도 동작하는 게 안전 기능 특성상 낫다는
     기존 설계 원칙 유지).
+
+    weights_dir/input_size는 camera_config.MODEL_VARIANTS에서 카메라 프로필별로
+    골라 넘겨받는다 — 카메라마다 다른 해상도/정확도 트레이드오프의 모델을 쓸 수 있다.
     """
+    paths = _model_paths(weights_dir)
+
     if prefer == "tflite":
-        if not _TFLITE_MODEL.exists():
-            raise RuntimeError(f"TFLite 모델 없음: {_TFLITE_MODEL}")
-        backend = _TFLiteBackend(conf)
-        print("[INFO] 백엔드: TFLite INT8 (CPU) (지정됨)")
+        if not paths["tflite"].exists():
+            raise RuntimeError(f"TFLite 모델 없음: {paths['tflite']}")
+        backend = _TFLiteBackend(conf, weights_dir, input_size)
+        print(f"[INFO] 백엔드: TFLite INT8 (CPU) (지정됨, {weights_dir})")
         return backend
 
     if prefer == "pytorch":
-        if not _PT_MODEL.exists():
-            raise RuntimeError(f"PyTorch 모델 없음: {_PT_MODEL}")
-        backend = _UltralyticsBackend(conf)
-        print("[INFO] 백엔드: PyTorch/ultralytics (지정됨)")
+        if not paths["pytorch"].exists():
+            raise RuntimeError(f"PyTorch 모델 없음: {paths['pytorch']}")
+        backend = _UltralyticsBackend(conf, weights_dir)
+        print(f"[INFO] 백엔드: PyTorch/ultralytics (지정됨, {weights_dir})")
         return backend
 
     # "auto" 또는 "edgetpu" — 기존 캐스케이드 그대로 (edgetpu 지정 시에도 실패하면 폴백)
 
     # 1. Coral Edge TPU
-    if _EDGETPU_MODEL.exists():
+    if paths["edgetpu"].exists():
         try:
-            backend = _CoralBackend(conf)
-            print("[INFO] 백엔드: Google Coral Edge TPU")
+            backend = _CoralBackend(conf, weights_dir, input_size)
+            print(f"[INFO] 백엔드: Google Coral Edge TPU ({weights_dir})")
             return backend
         except Exception as e:
             print(f"[WARN] Coral 초기화 실패: {e}")
             print("[WARN] TFLite CPU 백엔드로 대체합니다.")
     else:
         print(
-            f"[WARN] Edge TPU 모델 없음: {_EDGETPU_MODEL}\n"
+            f"[WARN] Edge TPU 모델 없음: {paths['edgetpu']}\n"
             "       edgetpu_compiler 로 컴파일 후 같은 폴더에 배치하세요."
         )
 
     # 2. TFLite INT8 CPU
-    if _TFLITE_MODEL.exists():
+    if paths["tflite"].exists():
         try:
-            backend = _TFLiteBackend(conf)
-            print("[INFO] 백엔드: TFLite INT8 (CPU)")
+            backend = _TFLiteBackend(conf, weights_dir, input_size)
+            print(f"[INFO] 백엔드: TFLite INT8 (CPU) ({weights_dir})")
             return backend
         except Exception as e:
             print(f"[WARN] TFLite 초기화 실패: {e}")
             print("[WARN] PyTorch 백엔드로 대체합니다.")
     else:
-        print(f"[WARN] TFLite 모델 없음: {_TFLITE_MODEL}")
+        print(f"[WARN] TFLite 모델 없음: {paths['tflite']}")
 
     # 3. PyTorch fallback
-    if _PT_MODEL.exists():
+    if paths["pytorch"].exists():
         try:
-            backend = _UltralyticsBackend(conf)
-            print("[INFO] 백엔드: PyTorch/ultralytics (fallback)")
+            backend = _UltralyticsBackend(conf, weights_dir)
+            print(f"[INFO] 백엔드: PyTorch/ultralytics (fallback, {weights_dir})")
             return backend
         except Exception as e:
             raise RuntimeError(f"PyTorch 백엔드 초기화 실패: {e}") from e
 
     raise RuntimeError(
         "사용 가능한 모델 파일을 찾을 수 없습니다.\n"
-        f"  확인 경로: {_WEIGHTS}"
+        f"  확인 경로: {Path(__file__).parent / weights_dir}"
     )
 
 
@@ -667,9 +687,12 @@ class CameraPipeline:
         mjpeg: MJPEGServer | None = None
         foot_counter = None
 
+        variant = MODEL_VARIANTS.get(profile.model_variant, MODEL_VARIANTS["v2_640"])
+
         try:
             try:
-                backend = build_backend(self.base_conf, prefer=profile.inference_backend)
+                backend = build_backend(self.base_conf, prefer=profile.inference_backend,
+                                         weights_dir=variant["weights_dir"], input_size=variant["input_size"])
             except Exception as e:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
                 return

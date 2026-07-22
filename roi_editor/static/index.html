@@ -371,6 +371,8 @@ main {
           </div>
           <label>MJPEG 포트</label>
           <input type="number" id="camPort" value="8080">
+          <label>탐지 모델</label>
+          <select id="camModelVariant"></select>
           <div class="cam-enabled-row">
             <input type="checkbox" id="camSwapRb"> <span>RGB/BGR 반전 (화면 색이 뒤바뀌어 보이면 체크)</span>
           </div>
@@ -450,6 +452,7 @@ let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
 let confThreshold = 0.55; // 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영
 let cameras       = [];   // GET /api/cameras 결과 — 비어있으면 기존 단일 카메라 UI 그대로
 let activeCameraId = null; // 현재 선택된 카메라 id (null = 카메라 프로필 없는 레거시 모드)
+let modelVariants = [];   // GET /api/model-variants 결과 — camera_config.MODEL_VARIANTS와 동기화
 
 /* ================================================================
    DOM refs
@@ -510,6 +513,20 @@ const cameraSelectWrap = document.getElementById('cameraSelectWrap');
 const cameraSelect   = document.getElementById('cameraSelect');
 const camForm        = document.getElementById('camForm');
 const camScanResults = document.getElementById('camScanResults');
+
+async function loadModelVariants() {
+  try {
+    const res = await fetch('/api/model-variants');
+    const data = await res.json();
+    modelVariants = data.variants || [];
+  } catch (e) {
+    modelVariants = [];
+  }
+  const sel = document.getElementById('camModelVariant');
+  sel.innerHTML = modelVariants.map(v => `
+    <option value="${escAttr(v.key)}">${escHtml(v.label)}</option>
+  `).join('');
+}
 
 async function loadCameras() {
   try {
@@ -597,6 +614,7 @@ async function addCameraFromScan(num, model) {
     port: port,
     traffic_db: `foot_traffic_${newId}.db`,
     swap_rb: false,
+    model_variant: 'v2_640',
   };
 
   const updated = [...cameras, newCam];
@@ -700,6 +718,7 @@ function fillCameraForm() {
   document.getElementById('camInference').value = cam.inference_backend;
   document.getElementById('camPort').value = cam.port;
   document.getElementById('camSwapRb').checked = !!cam.swap_rb;
+  document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
 }
 
 cameraSelect.addEventListener('change', e => switchCamera(e.target.value));
@@ -732,6 +751,7 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
   cam.inference_backend  = document.getElementById('camInference').value;
   cam.port               = parseInt(document.getElementById('camPort').value, 10) || cam.port;
   cam.swap_rb             = document.getElementById('camSwapRb').checked;
+  cam.model_variant       = document.getElementById('camModelVariant').value;
 
   try {
     const res = await fetch('/api/cameras', {
@@ -1175,7 +1195,7 @@ function escAttr(s) {
 ================================================================ */
 // loadCameras()가 카메라 프로필을 찾으면 switchCamera() 내부에서 loadFromServer()/loadStats()를
 // 이미 호출하므로, 프로필이 없는 레거시 단일 카메라 모드에서만 직접 호출한다.
-loadCameras().then(() => {
+loadModelVariants().then(loadCameras).then(() => {
   if (cameras.length === 0) {
     loadFromServer();
     loadStats();

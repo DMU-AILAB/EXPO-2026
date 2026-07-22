@@ -29,7 +29,7 @@ from shapely.geometry import Polygon
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from foot_traffic_counter import read_daily_totals  # noqa: E402
 from camera_config import (  # noqa: E402
-    CameraProfile, load_camera_config, save_camera_config, validate_camera_config,
+    MODEL_VARIANTS, CameraProfile, load_camera_config, save_camera_config, validate_camera_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -169,6 +169,7 @@ class CameraProfilePayload(BaseModel):
     port: int = 8080
     traffic_db: str = "foot_traffic.db"
     swap_rb: bool = False
+    model_variant: str = "v2_640"
 
 
 class CamerasPayload(BaseModel):
@@ -179,6 +180,14 @@ class CamerasPayload(BaseModel):
 async def get_cameras():
     profiles = load_camera_config(camera_config_path)
     return {"cameras": [asdict(p) for p in profiles]}
+
+
+@app.get("/api/model-variants")
+async def get_model_variants():
+    """카메라 편집 UI가 드롭다운을 채울 때 쓰는 모델 목록 — camera_config.MODEL_VARIANTS가
+    유일한 출처라서 UI에 라벨을 하드코딩해도 드리프트가 안 나지만, API로 노출해두면
+    새 모델을 추가할 때 index.html을 건드릴 필요가 없다."""
+    return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()]}
 
 
 @app.get("/api/cameras/scan")
