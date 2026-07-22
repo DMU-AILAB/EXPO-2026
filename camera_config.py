@@ -34,6 +34,11 @@ MODEL_VARIANTS = {
         "input_size": 320,
         "label": "white_cane_v3_320 (320, 속도 우선)",
     },
+    "v4_320": {
+        "weights_dir": "runs/white_cane_v4_320/weights",
+        "input_size": 320,
+        "label": "white_cane_v4_320 (320, 사람 라벨 보완 재학습)",
+    },
 }
 _DEFAULT_MODEL_VARIANT = "v2_640"
 

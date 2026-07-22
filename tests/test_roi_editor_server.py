@@ -112,7 +112,7 @@ def test_get_model_variants_lists_known_keys(client):
     res = client.get("/api/model-variants")
     assert res.status_code == 200
     keys = {v["key"] for v in res.json()["variants"]}
-    assert keys == {"v2_640", "v3_320"}
+    assert keys == {"v2_640", "v3_320", "v4_320"}
 
 
 def test_get_device_status_returns_expected_keys(client):

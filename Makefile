@@ -42,7 +42,8 @@ DEPLOY_PY = \
 # (best.pt는 PyTorch fallback용이라 Pi엔 torch/ultralytics 자체를 설치하지 않으므로 배포 대상 아님)
 DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v2/weights \
-	runs/white_cane_v3_320/weights
+	runs/white_cane_v3_320/weights \
+	runs/white_cane_v4_320/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
         install-edgetpu-py39 setup-pi-python310 install-service \
