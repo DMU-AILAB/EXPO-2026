@@ -104,6 +104,45 @@ def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
     raise HTTPException(status_code=404, detail=f"camera '{camera}' not found")
 
 
+def _read_device_status() -> dict:
+    """Pi 상태(가동시간/CPU온도/부하/메모리)를 표준 라이브러리 /proc, /sys 파일만으로 읽는다.
+    psutil 등 신규 의존성을 추가하지 않기 위해서다 (Pi에는 무거운 패키지를 최소화하는 방침).
+    Pi가 아닌 환경(개발 PC 등)에서 실행되면 해당 항목만 조용히 null로 빠진다."""
+    status: dict = {"uptime_seconds": None, "cpu_temp_c": None, "load_avg": None,
+                     "mem_used_mb": None, "mem_total_mb": None}
+
+    try:
+        with open("/proc/uptime") as f:
+            status["uptime_seconds"] = float(f.read().split()[0])
+    except OSError:
+        pass
+
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            status["cpu_temp_c"] = round(int(f.read().strip()) / 1000.0, 1)
+    except (OSError, ValueError):
+        pass
+
+    try:
+        status["load_avg"] = list(os.getloadavg())
+    except (OSError, AttributeError):
+        pass
+
+    try:
+        meminfo = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                meminfo[key] = int(rest.strip().split()[0])  # kB
+        if "MemTotal" in meminfo and "MemAvailable" in meminfo:
+            status["mem_total_mb"] = round(meminfo["MemTotal"] / 1024, 1)
+            status["mem_used_mb"] = round((meminfo["MemTotal"] - meminfo["MemAvailable"]) / 1024, 1)
+    except OSError:
+        pass
+
+    return status
+
+
 def _validate_rois(rois: list) -> list[str]:
     """폴리곤 유효성(Shapely) + zone_type 값을 검사해 에러 메시지 목록을 반환."""
     errors: list[str] = []
@@ -188,6 +227,11 @@ async def get_model_variants():
     유일한 출처라서 UI에 라벨을 하드코딩해도 드리프트가 안 나지만, API로 노출해두면
     새 모델을 추가할 때 index.html을 건드릴 필요가 없다."""
     return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()]}
+
+
+@app.get("/api/device/status")
+async def get_device_status():
+    return _read_device_status()
 
 
 @app.get("/api/cameras/scan")

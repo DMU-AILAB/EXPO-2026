@@ -306,6 +306,7 @@ main {
 <header>
   <h1>🦯 VisionGuide ROI Editor</h1>
   <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+  <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-right:12px"></span>
   <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
   <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
 </header>
@@ -1191,6 +1192,39 @@ function escAttr(s) {
 }
 
 /* ================================================================
+   Device status — Pi 가동시간/CPU온도/부하/메모리 (헤더에 표시, 10초 주기 갱신)
+================================================================ */
+function formatUptime(sec) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}일 ${h}시간`;
+  if (h > 0) return `${h}시간 ${m}분`;
+  return `${m}분`;
+}
+
+async function loadDeviceStatus() {
+  const el = document.getElementById('deviceStatusBar');
+  try {
+    const res = await fetch('/api/device/status');
+    const s = await res.json();
+    const parts = [];
+    if (s.uptime_seconds != null) parts.push(`가동 ${formatUptime(s.uptime_seconds)}`);
+    if (s.cpu_temp_c != null) {
+      const cls = s.cpu_temp_c >= 80 ? 's-err' : s.cpu_temp_c >= 70 ? 's-warn' : 's-ok';
+      parts.push(`<span class="${cls}">${s.cpu_temp_c}°C</span>`);
+    }
+    if (s.load_avg) parts.push(`부하 ${s.load_avg.map(v => v.toFixed(1)).join('/')}`);
+    if (s.mem_used_mb != null && s.mem_total_mb != null) {
+      parts.push(`메모리 ${Math.round(s.mem_used_mb)}/${Math.round(s.mem_total_mb)}MB`);
+    }
+    el.innerHTML = parts.length ? parts.join(' &nbsp;|&nbsp; ') : '';
+  } catch (e) {
+    el.textContent = '';
+  }
+}
+
+/* ================================================================
    Boot
 ================================================================ */
 // loadCameras()가 카메라 프로필을 찾으면 switchCamera() 내부에서 loadFromServer()/loadStats()를
@@ -1203,6 +1237,8 @@ loadModelVariants().then(loadCameras).then(() => {
 });
 syncSize();
 setInterval(loadStats, 5000);
+loadDeviceStatus();
+setInterval(loadDeviceStatus, 10000);
 </script>
 </body>
 </html>
