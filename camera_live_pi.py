@@ -43,7 +43,7 @@ import cv2
 import numpy as np
 
 from camera_config import CameraProfile, MODEL_VARIANTS, load_camera_config, validate_camera_config
-from yolo_postprocess import postprocess_multiclass, set_input, get_output
+from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 from simple_tracker import SimpleTracker
 
 try:
@@ -92,6 +92,17 @@ def _model_paths(weights_dir: str) -> dict[str, Path]:
 
 # ── 추론 백엔드 ────────────────────────────────────────────────────
 
+def _normalize_conf(conf: float | dict[str, float]) -> dict[str, float]:
+    """스칼라(모든 클래스 동일) 또는 {class_name: threshold}를 항상 완전한
+    클래스별 딕셔너리로 정규화한다 — 이후 모든 백엔드/후처리가 dict 하나만
+    다루면 되게 하기 위함. 사람은 배경 오탐이 잦아 지팡이보다 높은 임계값이
+    필요한 경우가 흔해서 클래스별로 따로 조정할 수 있게 했다."""
+    if isinstance(conf, dict):
+        return {name: float(conf[name]) for name in CLASS_NAMES}
+    return {name: float(conf) for name in CLASS_NAMES}
+
+
+
 class _CoralBackend:
     """Google Coral Edge TPU 백엔드 (Python 3.9 서브프로세스).
 
@@ -104,26 +115,41 @@ class _CoralBackend:
     _PY39   = Path.home() / ".python39" / "bin" / "python3.9"
     _WORKER = Path(__file__).parent / "edgetpu_infer.py"
 
-    def __init__(self, conf: float, weights_dir: str, input_size: int) -> None:
+    def __init__(self, conf: float | dict[str, float], weights_dir: str, input_size: int) -> None:
         if not self._PY39.exists():
             raise FileNotFoundError(
                 "~/.python39 없음 — make install-edgetpu-py39 실행 필요"
             )
         if not self._WORKER.exists():
             raise FileNotFoundError(f"워커 스크립트 없음: {self._WORKER}")
-        model_path = _model_paths(weights_dir)["edgetpu"]
-        self.conf = conf
+        self._model_path = _model_paths(weights_dir)["edgetpu"]
+        self._input_size = input_size
+        self.conf = _normalize_conf(conf)
+        self._spawn()
+
+    def _spawn(self) -> None:
+        """워커 서브프로세스를 (재)기동한다. EdgeTPU 워커는 stdin이 이미지 프레임
+        전용 채널이라 기동 후 신뢰도 임계값을 갱신할 방법이 없다 — 클래스별
+        신뢰도가 바뀌면 update_conf()가 이 메서드로 워커를 통째로 재시작한다."""
+        argv = [str(self._PY39), str(self._WORKER),
+                str(self.conf[CLASS_NAMES[0]]), str(self.conf[CLASS_NAMES[1]]),
+                str(self._model_path), str(self._input_size)]
         self._proc = subprocess.Popen(
-            [str(self._PY39), str(self._WORKER), str(conf), str(model_path), str(input_size)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            bufsize=0,
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
         )
         ready = self._proc.stdout.readline()
         if ready.strip() != b"READY":
             self._proc.terminate()
             self._proc.wait()
             raise RuntimeError(f"EdgeTPU 워커 초기화 실패: {ready!r}")
+
+    def update_conf(self, conf: float | dict[str, float]) -> None:
+        new_conf = _normalize_conf(conf)
+        if new_conf == self.conf:
+            return
+        self.conf = new_conf
+        self.close()
+        self._spawn()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
         h, w = frame.shape[:2]
@@ -165,8 +191,8 @@ class _CoralBackend:
 class _TFLiteBackend:
     """TFLite INT8 CPU 백엔드."""
 
-    def __init__(self, conf: float, weights_dir: str, input_size: int) -> None:
-        self.conf = conf
+    def __init__(self, conf: float | dict[str, float], weights_dir: str, input_size: int) -> None:
+        self.conf = _normalize_conf(conf)
         self.input_size = input_size
         try:
             import tflite_runtime.interpreter as tflite
@@ -177,7 +203,13 @@ class _TFLiteBackend:
                 import tensorflow.lite as tflite  # type: ignore[no-redef]
 
         model_path = _model_paths(weights_dir)["tflite"]
-        self._interp = tflite.Interpreter(model_path=str(model_path), num_threads=4)
+        # Pi 4는 코어가 4개뿐이라 num_threads=4는 이 인터프리터 하나가 매 프레임마다
+        # 코어를 전부 요구한다는 뜻 — 카메라가 1대뿐이면 문제없지만, 두 번째 카메라
+        # 스레드(+EdgeTPU 서브프로세스의 CPU 쪽 전/후처리)와 코어를 두고 경합해 양쪽
+        # 다 FPS가 무너지는 원인이었다(실측: 격리 상태에서 num_threads=2와 4는
+        # 82~85ms/프레임로 사실상 동일 — 4개를 다 쓰는 이득이 거의 없이 나머지
+        # 시스템의 코어만 굶기고 있었다). 2로 낮춰 자기 속도는 유지하면서 코어를 돌려준다.
+        self._interp = tflite.Interpreter(model_path=str(model_path), num_threads=2)
         self._interp.allocate_tensors()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
@@ -186,6 +218,11 @@ class _TFLiteBackend:
         h, w = frame.shape[:2]
         return postprocess_multiclass(get_output(self._interp), self.conf, w, h)
 
+    def update_conf(self, conf: float | dict[str, float]) -> None:
+        """다음 predict() 호출부터 바로 반영된다 — 별도 프로세스가 아니라
+        재시작 없이 속성만 바꾸면 된다."""
+        self.conf = _normalize_conf(conf)
+
     def close(self) -> None:
         pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
 
@@ -193,8 +230,8 @@ class _TFLiteBackend:
 class _UltralyticsBackend:
     """PyTorch 기반 ultralytics 백엔드 (fallback)."""
 
-    def __init__(self, conf: float, weights_dir: str) -> None:
-        self.conf = conf
+    def __init__(self, conf: float | dict[str, float], weights_dir: str) -> None:
+        self.conf = _normalize_conf(conf)
         from detect import WhiteCaneDetector  # noqa: PLC0415
         try:
             import torch
@@ -202,17 +239,26 @@ class _UltralyticsBackend:
         except ImportError:
             device = "cpu"
         model_path = _model_paths(weights_dir)["pytorch"]
-        self._det = WhiteCaneDetector(model_path=model_path, conf=conf, device=device)
+        # WhiteCaneDetector 자체는 클래스별 임계값 개념이 없는 단일 스칼라 API라
+        # (detect.py의 독립 공개 API/CLI 계약을 건드리지 않기 위해 그대로 둠),
+        # 가장 낮은 임계값으로 느슨하게 호출해 아무것도 놓치지 않게 한 뒤
+        # predict()에서 클래스별로 다시 걸러낸다.
+        self._det = WhiteCaneDetector(model_path=model_path, conf=min(self.conf.values()), device=device)
 
     def predict(self, frame: np.ndarray) -> list[dict]:
-        return self._det.predict(frame)
+        dets = self._det.predict(frame)
+        return [d for d in dets if d["conf"] >= self.conf.get(d["label"], 0.0)]
+
+    def update_conf(self, conf: float | dict[str, float]) -> None:
+        self.conf = _normalize_conf(conf)
+        self._det.conf = min(self.conf.values())
 
     def close(self) -> None:
         pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
 
 
 def build_backend(
-    conf: float, prefer: str = "auto",
+    conf: float | dict[str, float], prefer: str = "auto",
     weights_dir: str = "runs/white_cane_v2/weights", input_size: int = 640,
 ) -> _CoralBackend | _TFLiteBackend | _UltralyticsBackend:
     """추론 백엔드를 선택하여 반환.
@@ -464,7 +510,11 @@ class MJPEGServer:
 # ── ROI 로드 / 그리기 ──────────────────────────────────────────────
 
 def _load_rois(path: str) -> tuple:
-    """JSON 설정 파일에서 ROIManager, debounce, cooldown, conf(신뢰도 임계값)를 로드."""
+    """JSON 설정 파일에서 ROIManager, debounce, cooldown, conf(신뢰도 임계값)를 로드.
+
+    conf는 스칼라(예: 0.55, 모든 클래스 동일)이거나 {"white_cane": 0.6, "person": 0.4}
+    형태의 클래스별 딕셔너리일 수 있다 — 둘 다 그대로 반환하고, 실제 정규화는
+    호출부에서 backend.update_conf()를 통해 _normalize_conf()가 처리한다."""
     with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
     mgr = ROIManager()
@@ -569,7 +619,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--source",   default="0",
                    help="웹캠 인덱스 또는 영상 파일 경로 (기본값: 0, --camera-config 미지정 시에만 사용)")
     p.add_argument("--conf",     type=float, default=0.55,
-                   help="신뢰도 임계값 0~1 (기본값: 0.55)")
+                   help="지팡이 신뢰도 임계값 0~1 (기본값: 0.55) — --conf-person 미지정 시 두 클래스 모두 이 값 사용")
+    p.add_argument("--conf-person", type=float, default=None,
+                   help="사람 신뢰도 임계값 0~1 (기본값: --conf와 동일). 지정하면 지팡이/사람 임계값을 따로 둘 수 있음")
     p.add_argument("--headless", action="store_true",
                    help="MJPEG 서버 모드로 실행 (모니터 없이 네트워크 스트리밍)")
     p.add_argument("--port",     type=int, default=8080,
@@ -651,7 +703,7 @@ class CameraPipeline:
     실기기 테스트에서 이게 실제로 재현되면 멀티프로세싱으로 격상을 검토해야 한다.
     """
 
-    def __init__(self, profile: CameraProfile, shared: SharedResources, base_conf: float,
+    def __init__(self, profile: CameraProfile, shared: SharedResources, base_conf: float | dict[str, float],
                  headless: bool, disable_traffic_count: bool) -> None:
         self.profile = profile
         self.shared = shared
@@ -718,8 +770,8 @@ class CameraPipeline:
                         roi_manager, debounce, cooldown, conf = _load_rois(profile.roi_config)
                         dispatcher = StandaloneDispatcher(debounce, cooldown)
                         if conf is not None:
-                            backend.conf = conf
-                            print(f"[INFO][{tag}] 신뢰도 임계값: {conf} (rois.json 설정값 적용)")
+                            backend.update_conf(conf)
+                            print(f"[INFO][{tag}] 신뢰도 임계값: {backend.conf} (rois.json 설정값 적용)")
                     except Exception as exc:
                         print(f"[WARN][{tag}] ROI 설정 로드 실패: {exc} — ROI 기능 비활성")
                         roi_manager = None
@@ -805,9 +857,9 @@ class CameraPipeline:
                             roi_manager, debounce, cooldown, conf = _load_rois(profile.roi_config)
                             dispatcher = StandaloneDispatcher(debounce, cooldown)
                             if conf is not None:
-                                backend.conf = conf
+                                backend.update_conf(conf)
                             print(f"[INFO][{tag}] ROI 설정 변경 감지 — 자동 반영 완료 "
-                                  f"(conf={conf if conf is not None else self.base_conf})")
+                                  f"(conf={backend.conf})")
                         except (json.JSONDecodeError, KeyError) as exc:
                             print(f"[WARN][{tag}] ROI 설정 재로드 실패: {exc}")
 
@@ -866,7 +918,7 @@ class CameraPipeline:
 
 
 def _reconcile_pipelines(pipelines: dict[str, CameraPipeline], new_profiles: list[CameraProfile],
-                          shared: SharedResources, base_conf: float, headless: bool,
+                          shared: SharedResources, base_conf: float | dict[str, float], headless: bool,
                           disable_traffic_count: bool) -> None:
     """camera_config.json 변경 감지 시 호출 — enabled=false/삭제된 카메라는 정지하고,
     새로 추가되거나 구조적 필드(backend/source/rotation/inference_backend/roi_config/port 등)가
@@ -902,6 +954,10 @@ def _reconcile_pipelines(pipelines: dict[str, CameraPipeline], new_profiles: lis
 
 def main() -> None:
     args = _parse_args()
+    base_conf: float | dict[str, float] = (
+        args.conf if args.conf_person is None
+        else {"white_cane": args.conf, "person": args.conf_person}
+    )
 
     audio_player = AudioPlayer() if _TRIGGER_AVAILABLE else None
 
@@ -961,7 +1017,7 @@ def main() -> None:
     for profile in profiles:
         if not profile.enabled:
             continue
-        pipeline = CameraPipeline(profile, shared, args.conf, args.headless, args.disable_traffic_count)
+        pipeline = CameraPipeline(profile, shared, base_conf, args.headless, args.disable_traffic_count)
         pipeline.start()
         pipelines[profile.id] = pipeline
 
@@ -993,7 +1049,7 @@ def main() -> None:
                         for e in errors:
                             print(f"[WARN] camera_config 갱신 무시 — 유효성 오류: {e}")
                     else:
-                        _reconcile_pipelines(pipelines, new_profiles, shared, args.conf,
+                        _reconcile_pipelines(pipelines, new_profiles, shared, base_conf,
                                               args.headless, args.disable_traffic_count)
 
             # 예기치 않게 죽은 파이프라인 자동 재시작 — camera_config.json 변경으로
@@ -1010,7 +1066,7 @@ def main() -> None:
                     continue
                 print(f"[WARN][{cam_id}] 파이프라인이 예기치 않게 종료됨 — 재시작 시도")
                 last_restart[cam_id] = now
-                new_pipeline = CameraPipeline(pipeline.profile, shared, args.conf,
+                new_pipeline = CameraPipeline(pipeline.profile, shared, base_conf,
                                                args.headless, args.disable_traffic_count)
                 new_pipeline.start()
                 pipelines[cam_id] = new_pipeline

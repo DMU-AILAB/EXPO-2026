@@ -66,7 +66,7 @@ def get_output(interpreter) -> np.ndarray:
 
 def postprocess_multiclass(
     output: np.ndarray,
-    conf_thr: float,
+    conf_thr: float | dict[str, float],
     img_w: int,
     img_h: int,
     class_names: tuple[str, ...] = CLASS_NAMES,
@@ -77,17 +77,26 @@ def postprocess_multiclass(
     nc=1인 현재 배포 모델(white_cane 전용)에도 그대로 동작한다 — 이 경우
     4번 컬럼 하나만 클래스 점수로 취급되어 기존 단일 클래스 로직과 동일하게
     작동한다.
+
+    conf_thr는 스칼라(모든 클래스 동일) 또는 {class_name: threshold} 딕셔너리
+    (클래스별 개별 임계값)를 받는다 — 예: 사람은 배경 오탐이 잦아 지팡이보다
+    높은 임계값이 필요한 경우가 흔해서 클래스별로 다르게 튜닝할 수 있게 했다.
     """
     pred = output[0]
     if pred.shape[0] < pred.shape[1]:   # [4+nc, 8400] → [8400, 4+nc]
         pred = pred.T
 
     nc = len(class_names)
+    if isinstance(conf_thr, dict):
+        conf_arr = np.array([conf_thr[name] for name in class_names], dtype=np.float32)
+    else:
+        conf_arr = np.full(nc, conf_thr, dtype=np.float32)
+
     cls_scores = pred[:, 4:4 + nc]
     best_cls   = cls_scores.argmax(axis=1)
     best_score = cls_scores.max(axis=1)
 
-    mask = best_score > conf_thr
+    mask = best_score > conf_arr[best_cls]
     if not mask.any():
         return []
 
@@ -111,7 +120,7 @@ def postprocess_multiclass(
             continue
         sub_boxes = [boxes[i] for i in cls_idx]
         sub_confs = [confs[i] for i in cls_idx]
-        nms_keep = cv2.dnn.NMSBoxes(sub_boxes, sub_confs, conf_thr, nms_iou)
+        nms_keep = cv2.dnn.NMSBoxes(sub_boxes, sub_confs, float(conf_arr[c]), nms_iou)
         if len(nms_keep):
             keep_idx.extend(int(cls_idx[k]) for k in np.asarray(nms_keep).flatten())
 

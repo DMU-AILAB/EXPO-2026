@@ -46,6 +46,39 @@ def test_post_rois_valid_polygon_succeeds(client):
     assert res.json() == {"ok": True, "count": 1}
 
 
+def test_post_rois_accepts_per_class_conf_dict(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": {"white_cane": 0.6, "person": 0.4},
+    })
+    assert res.status_code == 200
+    assert client.get("/api/rois").json()["conf"] == {"white_cane": 0.6, "person": 0.4}
+
+
+def test_post_rois_rejects_per_class_conf_missing_a_class(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": {"white_cane": 0.6},
+    })
+    assert res.status_code == 400
+
+
+def test_post_rois_rejects_per_class_conf_out_of_range(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": {"white_cane": 0.6, "person": 1.5},
+    })
+    assert res.status_code == 400
+
+
+def test_post_rois_rejects_scalar_conf_out_of_range(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": 1.5,
+    })
+    assert res.status_code == 400
+
+
 def test_post_rois_rejects_invalid_zone_type(client):
     res = client.post("/api/rois", json={
         "rois": [{"name": "b", "points": VALID_POLY, "priority": 1, "announcement_text": "t", "zone_type": "bogus"}],

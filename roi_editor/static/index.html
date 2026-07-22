@@ -387,8 +387,10 @@ main {
       <div id="camScanResults"></div>
     </div>
     <div id="conf-section">
-      <label for="fConf">신뢰도 임계값: <span id="confValue">0.55</span></label>
-      <input type="range" id="fConf" min="0.1" max="0.95" step="0.05" value="0.55">
+      <label for="fConfCane">지팡이 신뢰도: <span id="confCaneValue">0.55</span></label>
+      <input type="range" id="fConfCane" min="0.1" max="0.95" step="0.05" value="0.55">
+      <label for="fConfPerson">사람 신뢰도: <span id="confPersonValue">0.55</span></label>
+      <input type="range" id="fConfPerson" min="0.1" max="0.95" step="0.05" value="0.55">
     </div>
     <div id="stats-section">
       <div class="stats-row"><span>오늘 유동인구</span><b id="statTotal">-</b></div>
@@ -450,7 +452,11 @@ let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
 let mousePos    = null; // canvas 픽셀 좌표 [x, y]
 let pendingAudioPath = ''; // 새 ROI 폼에서 업로드된 오디오의 Pi 경로
 let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
-let confThreshold = 0.55; // 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영
+// 클래스별 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영 (rois.json의
+// conf 필드에 {white_cane, person} 객체로 저장됨. 예전 파일처럼 숫자 하나였던 경우도
+// loadFromServer()에서 두 값에 그대로 채워 넣어 하위호환한다.)
+let confCane = 0.55;
+let confPerson = 0.55;
 let cameras       = [];   // GET /api/cameras 결과 — 비어있으면 기존 단일 카메라 UI 그대로
 let activeCameraId = null; // 현재 선택된 카메라 id (null = 카메라 프로필 없는 레거시 모드)
 let modelVariants = [];   // GET /api/model-variants 결과 — camera_config.MODEL_VARIANTS와 동기화
@@ -469,8 +475,10 @@ const canvasWrap = document.getElementById('canvas-wrap');
 const audioPick  = document.getElementById('fAudioPick');
 const audioStatusEl = document.getElementById('audioStatus');
 const existingAudioPick = document.getElementById('fAudioPickExisting');
-const confInput  = document.getElementById('fConf');
-const confValueEl = document.getElementById('confValue');
+const confCaneInput  = document.getElementById('fConfCane');
+const confCaneValueEl = document.getElementById('confCaneValue');
+const confPersonInput  = document.getElementById('fConfPerson');
+const confPersonValueEl = document.getElementById('confPersonValue');
 
 /* ================================================================
    Stream setup
@@ -1123,7 +1131,7 @@ async function saveToServer() {
     const res = await fetch(_apiUrl('/api/rois'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rois, conf: confThreshold }),
+      body: JSON.stringify({ rois, conf: { white_cane: confCane, person: confPerson } }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -1140,11 +1148,18 @@ async function loadFromServer() {
     const res  = await fetch(_apiUrl('/api/rois'));
     const data = await res.json();
     rois = data.rois || [];
+    // 예전 파일은 conf가 숫자 하나(모든 클래스 동일)였다 — 두 슬라이더에 그대로 채워
+    // 넣어 하위호환한다. 새 파일은 {white_cane, person} 객체.
     if (typeof data.conf === 'number') {
-      confThreshold = data.conf;
-      confInput.value = confThreshold;
-      confValueEl.textContent = confThreshold.toFixed(2);
+      confCane = confPerson = data.conf;
+    } else if (data.conf && typeof data.conf === 'object') {
+      confCane = data.conf.white_cane ?? confCane;
+      confPerson = data.conf.person ?? confPerson;
     }
+    confCaneInput.value = confCane;
+    confCaneValueEl.textContent = confCane.toFixed(2);
+    confPersonInput.value = confPerson;
+    confPersonValueEl.textContent = confPerson.toFixed(2);
     renderList();
     redraw();
     setStatus(`${rois.length}개 ROI 불러옴`, 'ok');
@@ -1153,14 +1168,17 @@ async function loadFromServer() {
   }
 }
 
-confInput.addEventListener('input', () => {
-  confThreshold = parseFloat(confInput.value);
-  confValueEl.textContent = confThreshold.toFixed(2);
+confCaneInput.addEventListener('input', () => {
+  confCane = parseFloat(confCaneInput.value);
+  confCaneValueEl.textContent = confCane.toFixed(2);
 });
+confCaneInput.addEventListener('change', saveToServer);
 
-confInput.addEventListener('change', () => {
-  saveToServer();
+confPersonInput.addEventListener('input', () => {
+  confPerson = parseFloat(confPersonInput.value);
+  confPersonValueEl.textContent = confPerson.toFixed(2);
 });
+confPersonInput.addEventListener('change', saveToServer);
 
 /* ================================================================
    Foot-traffic stats

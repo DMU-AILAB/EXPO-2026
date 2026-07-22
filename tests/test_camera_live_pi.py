@@ -111,3 +111,17 @@ def test_model_paths_resolves_expected_filenames():
     assert paths["edgetpu"].name == "best_int8_edgetpu.tflite"
     assert paths["tflite"].name == "best_int8.tflite"
     assert paths["pytorch"].name == "best.pt"
+
+
+def test_normalize_conf_expands_scalar_to_all_classes():
+    assert m._normalize_conf(0.5) == {"white_cane": 0.5, "person": 0.5}
+
+
+def test_normalize_conf_keeps_per_class_dict():
+    conf = {"white_cane": 0.6, "person": 0.4}
+    assert m._normalize_conf(conf) == conf
+
+
+def test_normalize_conf_rejects_dict_missing_a_class():
+    with pytest.raises(KeyError):
+        m._normalize_conf({"white_cane": 0.6})

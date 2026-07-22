@@ -31,6 +31,7 @@ from foot_traffic_counter import read_daily_totals  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CameraProfile, load_camera_config, save_camera_config, validate_camera_config,
 )
+from yolo_postprocess import CLASS_NAMES  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths (overridden by CLI args at startup)
@@ -157,6 +158,34 @@ def _validate_rois(rois: list) -> list[str]:
     return errors
 
 
+def _validate_conf(conf: float | dict | None) -> list[str]:
+    """conf는 스칼라(모든 클래스 동일) 또는 {"white_cane": .., "person": ..} 클래스별
+    딕셔너리일 수 있다 — 둘 다 0~1 범위인지 검사. 지금까지는 conf에 대한 검증이 전혀
+    없었다(소수점이 밀려 55가 들어가도 그대로 저장됨) — 클래스별 필드를 새로 추가하는
+    김에 같이 채워 넣는다."""
+    if conf is None:
+        return []
+
+    def _in_range(name: str, v) -> list[str]:
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not (0.0 <= v <= 1.0):
+            return [f"{name}: 0~1 사이 값이어야 함 ({v!r})"]
+        return []
+
+    if isinstance(conf, dict):
+        errors: list[str] = []
+        for name in CLASS_NAMES:
+            if name not in conf:
+                errors.append(f"conf: '{name}' 임계값이 없습니다")
+            else:
+                errors.extend(_in_range(f"conf.{name}", conf[name]))
+        extra = sorted(set(conf) - set(CLASS_NAMES))
+        if extra:
+            errors.append(f"conf: 알 수 없는 클래스 {extra}")
+        return errors
+
+    return _in_range("conf", conf)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -179,13 +208,13 @@ async def get_stats(camera: str | None = None):
 
 class RoisPayload(BaseModel):
     rois: list
-    conf: float | None = None
+    conf: float | dict[str, float] | None = None
 
 
 @app.post("/api/rois")
 async def post_rois(payload: RoisPayload, camera: str | None = None):
     path = _resolve_camera_path(camera, "roi_config", rois_path)
-    errors = _validate_rois(payload.rois)
+    errors = _validate_rois(payload.rois) + _validate_conf(payload.conf)
     if errors:
         raise HTTPException(status_code=400, detail=errors)
     data = {"rois": payload.rois}
