@@ -96,13 +96,32 @@ def test_build_camera_backend_picamera2_forced(monkeypatch):
     assert calls == [("picamera2", 1)]
 
 
-def test_build_backend_tflite_requires_model_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(m, "_TFLITE_MODEL", tmp_path / "missing.tflite")
+def test_build_backend_tflite_requires_model_file(tmp_path):
     with pytest.raises(RuntimeError):
-        m.build_backend(0.5, prefer="tflite")
+        m.build_backend(0.5, prefer="tflite", weights_dir=str(tmp_path / "missing_weights"))
 
 
-def test_build_backend_pytorch_requires_model_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(m, "_PT_MODEL", tmp_path / "missing.pt")
+def test_build_backend_pytorch_requires_model_file(tmp_path):
     with pytest.raises(RuntimeError):
-        m.build_backend(0.5, prefer="pytorch")
+        m.build_backend(0.5, prefer="pytorch", weights_dir=str(tmp_path / "missing_weights"))
+
+
+def test_model_paths_resolves_expected_filenames():
+    paths = m._model_paths("runs/white_cane_v2/weights")
+    assert paths["edgetpu"].name == "best_int8_edgetpu.tflite"
+    assert paths["tflite"].name == "best_int8.tflite"
+    assert paths["pytorch"].name == "best.pt"
+
+
+def test_normalize_conf_expands_scalar_to_all_classes():
+    assert m._normalize_conf(0.5) == {"white_cane": 0.5, "person": 0.5}
+
+
+def test_normalize_conf_keeps_per_class_dict():
+    conf = {"white_cane": 0.6, "person": 0.4}
+    assert m._normalize_conf(conf) == conf
+
+
+def test_normalize_conf_rejects_dict_missing_a_class():
+    with pytest.raises(KeyError):
+        m._normalize_conf({"white_cane": 0.6})

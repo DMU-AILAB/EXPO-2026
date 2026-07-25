@@ -46,6 +46,39 @@ def test_post_rois_valid_polygon_succeeds(client):
     assert res.json() == {"ok": True, "count": 1}
 
 
+def test_post_rois_accepts_per_class_conf_dict(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": {"white_cane": 0.6, "person": 0.4},
+    })
+    assert res.status_code == 200
+    assert client.get("/api/rois").json()["conf"] == {"white_cane": 0.6, "person": 0.4}
+
+
+def test_post_rois_rejects_per_class_conf_missing_a_class(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": {"white_cane": 0.6},
+    })
+    assert res.status_code == 400
+
+
+def test_post_rois_rejects_per_class_conf_out_of_range(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": {"white_cane": 0.6, "person": 1.5},
+    })
+    assert res.status_code == 400
+
+
+def test_post_rois_rejects_scalar_conf_out_of_range(client):
+    res = client.post("/api/rois", json={
+        "rois": [{"name": "a", "points": VALID_POLY, "priority": 1, "announcement_text": "t"}],
+        "conf": 1.5,
+    })
+    assert res.status_code == 400
+
+
 def test_post_rois_rejects_invalid_zone_type(client):
     res = client.post("/api/rois", json={
         "rois": [{"name": "b", "points": VALID_POLY, "priority": 1, "announcement_text": "t", "zone_type": "bogus"}],
@@ -96,6 +129,30 @@ def test_post_cameras_rejects_duplicate_edgetpu(client):
         {"id": "cam1", "port": 8081, "inference_backend": "edgetpu"},
     ]})
     assert res.status_code == 400
+
+
+def test_post_cameras_defaults_model_variant(client):
+    """model_variant를 안 보내면 CameraProfile 기본값(v2_640)이 그대로 저장돼야 한다."""
+    res = client.post("/api/cameras", json={"cameras": [
+        {"id": "cam0", "port": 8080, "inference_backend": "tflite"},
+    ]})
+    assert res.status_code == 200
+    body = client.get("/api/cameras").json()
+    assert body["cameras"][0]["model_variant"] == "v2_640"
+
+
+def test_get_model_variants_lists_known_keys(client):
+    res = client.get("/api/model-variants")
+    assert res.status_code == 200
+    keys = {v["key"] for v in res.json()["variants"]}
+    assert keys == {"v2_640", "v3_320", "v4_320"}
+
+
+def test_get_device_status_returns_expected_keys(client):
+    res = client.get("/api/device/status")
+    assert res.status_code == 200
+    body = res.json()
+    assert set(body) == {"uptime_seconds", "cpu_temp_c", "load_avg", "mem_used_mb", "mem_total_mb"}
 
 
 def test_camera_scoped_rois_are_isolated(client):

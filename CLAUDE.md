@@ -31,11 +31,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `simulator/detector.py` | 시뮬레이터용 탐지기 |
 | `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
 | `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
-| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`) + 오디오 파일 업로드(`/api/audio/upload`), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
-| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고(트리거/제외구역 선택), 카메라 여러 대면 선택 드롭다운으로 전환, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
+| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
+| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고(트리거/제외구역 선택), 카메라 여러 대면 선택 드롭다운으로 전환, 카메라별 탐지 모델(v2_640/v3_320) 선택, 헤더에 Pi 기기 상태 표시줄, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
-| `runs/white_cane_v1-2/weights/` | 학습된 가중치 (`best.pt`, `best_int8.tflite`) |
+| `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고) |
+| `label_tool/server.py` + `label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
 
 ### 미구현 (계획)
 
@@ -87,8 +88,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 데이터셋
 
-- 위치: `datasets/images/` (JPG), `datasets/labels/` (YOLO format txt)
-- 라벨 형식: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이
+- 학습에 실제로 쓰이는 건 `datasets/{train,val,test}/{images,labels}` (`data.yaml`이 참조하는 경로).
+  `datasets/images/`, `datasets/labels/`는 지팡이 전용 원본 풀(스플릿 전)로, `train/val/test`의
+  cane_only 이미지 합계와 장수가 일치한다.
+- 라벨 형식: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이, class 1 = 사람
+- **지팡이 데이터셋과 사람 데이터셋은 서로 다른 소스에서 각각 라벨링된 뒤 합쳐졌다**
+  (`merge_person_dataset.py` 참고) — 그래서 한 이미지에 지팡이+사람이 동시에 라벨링된 경우가
+  전혀 없다(cane_only 이미지에 사람이 찍혀 있어도 사람 라벨 없음, 반대도 마찬가지). 이 누락은
+  YOLO 학습 시 라벨 안 된 사람 영역을 "배경(사람 아님)"으로 잘못 가르치는 문제를 일으킨다.
+  `label_tool/`(아래 표)로 지팡이 데이터셋(cane_only)에 누락된 사람 라벨을 보완 중.
 - `*.Zone.Identifier` 파일은 Windows에서 복사된 부산물이며 무시하면 됩니다 (`.gitignore`에 등록됨)
 
 ---
@@ -211,8 +219,13 @@ Pi 로컬에서 `roi_editor` 웹 UI로 생성/수정하는 런타임 설정 파�
 `dtoverlay=gpio-shutdown,gpio_pin=4` 한 줄을 추가하고 재부팅하면 됩니다 — 기본 GPIO(GPIO3, 물리 5번 핀)는 이
 Pi에서 **PoE 어댑터가 물리 핀 1~6번을 점유**하고 있어 쓸 수 없으므로, `gpio_pin=4` 파라미터로 GPIO4(물리 7번 핀)를
 대신 사용하도록 지정했다. **부팅 설정 파일을 건드리는 작업이라 원격에서 잘못 적용하면 복구가 번거로울 수 있으므로
-Makefile로 자동화하지 않고 수동으로 적용하는 것을 권장합니다.** 짧게 누르면 안전 종료되고, 완전히 꺼진 상태에서
-다시 누르면 재부팅됩니다.
+Makefile로 자동화하지 않고 수동으로 적용하는 것을 권장합니다.** 짧게 누르면 안전 종료됩니다.
+**단, 완전히 꺼진 상태에서 버튼을 다시 눌러도 재부팅되지 않습니다** — `gpio-shutdown` 오버레이의
+"halt 상태에서 깨우기" 기능은 GPIO3(물리 5번 핀)에만 있는 하드웨어 특성이라(SoC의 상시 전원 도메인이
+그 핀만 감시함), `gpio_pin=4`처럼 다른 핀을 지정하면 종료 감지는 되지만 깨우기는 불가능해진다(공식
+오버레이 문서에 명시된 제약). 이 Pi는 PoE 어댑터가 GPIO3를 막고 있어 애초에 선택지가 없었다 — 즉 종료
+기능을 얻는 대신 버튼으로 다시 켜는 기능은 포기한 것이다. 완전 종료 후 다시 켜려면 전원 자체를
+껐다 켜야 한다(PoE 인젝터 스위치 또는 케이블 재연결).
 
 **Wi-Fi 전환 버튼**은 이 Pi의 무선 칩/드라이버가 진짜 동시(AP+STA) 모드를 지원하지 않는 것으로 실측 확인되어
 (홈 Wi-Fi `204_WIFI`와 자체 핫스팟 `VisionGuide-AP`가 wlan0 하나를 두고 경합, 항상 한쪽만 활성화됨) 만든

@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VisionGuide — 지팡이 데이터셋 사람 라벨 보완</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+header {
+  background: #16213e;
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 2px solid #0f3460;
+  flex-shrink: 0;
+}
+header h1 { font-size: 16px; color: #e94560; white-space: nowrap; }
+#progressWrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+#progressBar { flex: 1; height: 10px; background: #0f3460; border-radius: 5px; overflow: hidden; }
+#progressFill { height: 100%; background: #27ae60; width: 0%; transition: width .2s; }
+#progressText { font-size: 12px; color: #aaa; white-space: nowrap; }
+main { display: flex; flex: 1; overflow: hidden; }
+#viewer {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0d0d1a;
+  position: relative;
+  overflow: hidden;
+}
+#canvas { cursor: crosshair; background: #000; }
+#doneMsg {
+  display: none;
+  font-size: 22px;
+  color: #27ae60;
+  text-align: center;
+}
+#panel {
+  width: 300px;
+  background: #16213e;
+  padding: 16px;
+  overflow-y: auto;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#panel h2 { font-size: 13px; color: #999; text-transform: uppercase; letter-spacing: .5px; }
+.file-info { font-size: 12px; color: #ccc; word-break: break-all; }
+.btn {
+  padding: 10px 14px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+}
+.btn-save { background: #27ae60; color: #fff; }
+.btn-save:hover { background: #2ecc71; }
+.btn-sec { background: #0f3460; color: #fff; }
+.btn-sec:hover { background: #1a5490; }
+.btn-danger { background: #c0392b; color: #fff; }
+.btn-danger:hover { background: #e74c3c; }
+.btn-row { display: flex; gap: 8px; }
+.btn-row .btn { width: auto; flex: 1; }
+#boxList { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.box-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #0f3460;
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+.box-item button {
+  background: none;
+  border: none;
+  color: #e74c3c;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+.hint-box {
+  font-size: 11px;
+  color: #888;
+  line-height: 1.6;
+  background: #0d0d1a;
+  padding: 10px;
+  border-radius: 6px;
+}
+.legend { display: flex; gap: 14px; font-size: 11px; }
+.legend span { display: flex; align-items: center; gap: 5px; }
+.swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🧑 사람 라벨 보완</h1>
+  <div id="progressWrap">
+    <div id="progressBar"><div id="progressFill"></div></div>
+    <span id="progressText">로딩 중...</span>
+  </div>
+  <div class="legend">
+    <span><i class="swatch" style="background:#888"></i>기존 지팡이(읽기전용)</span>
+    <span><i class="swatch" style="background:#27ae60"></i>사람(수동)</span>
+    <span><i class="swatch" style="background:#f39c12"></i>사람(AI 제안, 검수 전)</span>
+  </div>
+</header>
+
+<main>
+  <div id="viewer">
+    <canvas id="canvas"></canvas>
+    <div id="doneMsg">🎉 모든 이미지 검토 완료!<br><span id="doneStats"></span></div>
+  </div>
+
+  <div id="panel">
+    <div>
+      <h2>현재 파일</h2>
+      <div class="file-info" id="fileInfo">-</div>
+    </div>
+
+    <div>
+      <h2>사람 박스 (<span id="boxCount">0</span>)</h2>
+      <div id="boxList"></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-sec" id="btnPrev">◀ 이전</button>
+      <button class="btn btn-danger" id="btnUndo">실행취소</button>
+    </div>
+    <div>
+      <label style="font-size:11px; color:#999">제안 방식</label>
+      <select id="suggestProvider" style="width:100%; padding:6px; border-radius:5px; background:#0f3460; color:#fff; border:none">
+        <option value="local_yolo">로컬 YOLO(COCO, 추천 — 빠름/무료)</option>
+        <option value="openai">OpenAI GPT vision (API 키 필요)</option>
+      </select>
+    </div>
+    <button class="btn btn-sec" id="btnSuggest">🤖 사람 박스 다시 제안받기</button>
+    <div id="aiStatus" style="font-size:11px; color:#888; min-height:14px"></div>
+    <button class="btn btn-save" id="btnSaveNext">저장하고 다음 ▶</button>
+
+    <div class="hint-box">
+      • 새 이미지를 열면 자동으로 AI 제안(주황색)이 표시됩니다 — 검수 전 표시이니 틀리면
+        지우고, 맞으면 그대로 두고 저장하세요<br>
+      • 놓친 사람은 캔버스에 드래그해서 직접 추가 (여러 명이면 여러 번)<br>
+      • 사람이 없으면 제안 박스를 다 지우고 바로 "저장하고 다음"<br>
+      • 단축키: Enter=저장·다음, Backspace=실행취소, ←=이전
+    </div>
+  </div>
+</main>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const viewer = document.getElementById('viewer');
+
+let img = new Image();
+let current = null;      // 서버에서 받은 현재 아이템 {split, filename, cane_boxes, person_boxes, index}
+// {cx,cy,w,h,source} 목록, 정규화 0~1 — 편집 중인 상태. source: 'manual'|'ai'
+// (ai는 아직 사람이 검수 전이라는 걸 표시하는 용도일 뿐, 저장 시엔 좌표만 보낸다)
+let personBoxes = [];
+let dragStart = null;    // 드래그 시작 캔버스 픽셀 좌표
+let dragCurrent = null;
+let aiBusy = false;
+
+function px2norm(x, y) {
+  return [x / canvas.width, y / canvas.height];
+}
+function norm2px(cx, cy, w, h) {
+  return [
+    (cx - w / 2) * canvas.width,
+    (cy - h / 2) * canvas.height,
+    w * canvas.width,
+    h * canvas.height,
+  ];
+}
+
+function redraw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (img.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }
+  // 기존 지팡이 박스 — 읽기 전용, 회색 점선
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  (current?.cane_boxes || []).forEach(([cx, cy, w, h]) => {
+    const [x, y, bw, bh] = norm2px(cx, cy, w, h);
+    ctx.strokeRect(x, y, bw, bh);
+  });
+  ctx.setLineDash([]);
+
+  // 사람 박스 — 수동(초록 실선) / AI 제안(주황, 검수 전이라는 표시)
+  ctx.lineWidth = 2;
+  personBoxes.forEach(({ cx, cy, w, h, source }) => {
+    const [x, y, bw, bh] = norm2px(cx, cy, w, h);
+    if (source === 'ai') {
+      ctx.strokeStyle = '#f39c12';
+      ctx.fillStyle = 'rgba(243,156,18,0.15)';
+    } else {
+      ctx.strokeStyle = '#27ae60';
+      ctx.fillStyle = 'rgba(39,174,96,0.15)';
+    }
+    ctx.fillRect(x, y, bw, bh);
+    ctx.strokeRect(x, y, bw, bh);
+  });
+
+  // 드래그 중인 미리보기 — 파란 점선
+  if (dragStart && dragCurrent) {
+    const x = Math.min(dragStart[0], dragCurrent[0]);
+    const y = Math.min(dragStart[1], dragCurrent[1]);
+    const w = Math.abs(dragCurrent[0] - dragStart[0]);
+    const h = Math.abs(dragCurrent[1] - dragStart[1]);
+    ctx.strokeStyle = '#3498db';
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+  }
+}
+
+function renderBoxList() {
+  document.getElementById('boxCount').textContent = personBoxes.length;
+  document.getElementById('boxList').innerHTML = personBoxes.map((b, i) => `
+    <div class="box-item">
+      <span>사람 ${i + 1}${b.source === 'ai' ? ' <span style="color:#f39c12">(AI 제안)</span>' : ''}</span>
+      <button onclick="removeBox(${i})">✕</button>
+    </div>
+  `).join('') || '<div style="color:#666">아직 없음</div>';
+}
+
+function removeBox(i) {
+  personBoxes.splice(i, 1);
+  renderBoxList();
+  redraw();
+}
+
+function fitCanvas() {
+  if (!img.naturalWidth) return;
+  const availW = viewer.clientWidth - 20;
+  const availH = viewer.clientHeight - 20;
+  const scale = Math.min(availW / img.naturalWidth, availH / img.naturalHeight, 1.5);
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  redraw();
+}
+
+window.addEventListener('resize', fitCanvas);
+
+function loadItem(data) {
+  if (data.done) {
+    canvas.style.display = 'none';
+    document.getElementById('doneMsg').style.display = 'block';
+    refreshStats().then(s => {
+      document.getElementById('doneStats').textContent = `${s.reviewed} / ${s.total} 검토됨`;
+    });
+    return;
+  }
+  canvas.style.display = 'block';
+  document.getElementById('doneMsg').style.display = 'none';
+  current = data;
+  personBoxes = (data.person_boxes || []).map(([cx, cy, w, h]) => ({ cx, cy, w, h, source: 'manual' }));
+  document.getElementById('fileInfo').textContent = `[${data.split}] ${data.filename} (#${data.index})`;
+  document.getElementById('aiStatus').textContent = '';
+  img = new Image();
+  img.onload = () => {
+    fitCanvas();
+    renderBoxList();
+    // 기존에 저장된 박스가 없는(=아직 아무도 확인 안 한) 이미지만 자동 제안 — 이미 검토/저장된
+    // 이미지를 다시 열었을 때(예: 이전 버튼) 제안이 중복으로 덧붙는 걸 방지한다.
+    if (personBoxes.length === 0) suggestWithAI(true);
+  };
+  img.src = `/api/image/${data.split}/${data.filename}`;
+}
+
+async function loadNext(afterIndex) {
+  const res = await fetch(`/api/next?after_index=${afterIndex}`);
+  loadItem(await res.json());
+}
+
+async function loadPrev() {
+  if (!current || current.index <= 0) return;
+  const res = await fetch(`/api/item/${current.index - 1}`);
+  loadItem(await res.json());
+}
+
+async function saveAndNext() {
+  if (!current) return;
+  const plainBoxes = personBoxes.map(({ cx, cy, w, h }) => [cx, cy, w, h]);
+  await fetch('/api/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ split: current.split, filename: current.filename, person_boxes: plainBoxes }),
+  });
+  await refreshStats();
+  await loadNext(current.index);
+}
+
+async function suggestWithAI(auto = false) {
+  if (!current || aiBusy) return;
+  const targetIndex = current.index;
+  const aiStatus = document.getElementById('aiStatus');
+  aiBusy = true;
+  const btn = document.getElementById('btnSuggest');
+  const originalText = btn.textContent;
+  btn.textContent = '🤖 분석 중...';
+  btn.disabled = true;
+  aiStatus.textContent = '자동 제안 요청 중...';
+  const provider = document.getElementById('suggestProvider').value;
+  try {
+    const res = await fetch(`/api/suggest/${targetIndex}?provider=${provider}`, { method: 'POST' });
+    const body = await res.json();
+    // 응답이 오는 동안 사용자가 이미 다른 이미지로 넘어갔으면 결과를 버린다(잘못된 이미지에 박스가 붙는 걸 방지).
+    if (!current || current.index !== targetIndex) return;
+    if (!res.ok) {
+      aiStatus.textContent = `제안 실패: ${body.detail || res.status}`;
+      if (!auto) alert(`AI 제안 실패: ${body.detail || res.status}`);
+      return;
+    }
+    body.boxes.forEach(([cx, cy, w, h]) => personBoxes.push({ cx, cy, w, h, source: 'ai' }));
+    renderBoxList();
+    redraw();
+    aiStatus.textContent = body.boxes.length
+      ? `제안 ${body.boxes.length}개 — 확인 후 저장하세요`
+      : '제안된 박스 없음 (사람 미검출)';
+  } catch (e) {
+    aiStatus.textContent = `제안 실패: ${e.message}`;
+    if (!auto) alert(`AI 제안 실패: ${e.message}`);
+  } finally {
+    aiBusy = false;
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+async function refreshStats() {
+  const res = await fetch('/api/stats');
+  const s = await res.json();
+  const pct = s.total > 0 ? Math.round((s.reviewed / s.total) * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = `${s.reviewed} / ${s.total} (${pct}%)`;
+  return s;
+}
+
+// ── 마우스로 박스 드래그 그리기 ──
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  dragStart = [e.clientX - rect.left, e.clientY - rect.top];
+  dragCurrent = dragStart;
+});
+canvas.addEventListener('mousemove', e => {
+  if (!dragStart) return;
+  const rect = canvas.getBoundingClientRect();
+  dragCurrent = [e.clientX - rect.left, e.clientY - rect.top];
+  redraw();
+});
+window.addEventListener('mouseup', e => {
+  if (!dragStart) return;
+  const rect = canvas.getBoundingClientRect();
+  const end = [
+    Math.max(0, Math.min(e.clientX - rect.left, canvas.width)),
+    Math.max(0, Math.min(e.clientY - rect.top, canvas.height)),
+  ];
+  const x = Math.min(dragStart[0], end[0]);
+  const y = Math.min(dragStart[1], end[1]);
+  const w = Math.abs(end[0] - dragStart[0]);
+  const h = Math.abs(end[1] - dragStart[1]);
+  dragStart = null;
+  dragCurrent = null;
+  if (w < 4 || h < 4) { redraw(); return; }  // 너무 작은 실수 클릭 무시
+  const [ncx, ncy] = px2norm(x + w / 2, y + h / 2);
+  const [nw, nh] = [w / canvas.width, h / canvas.height];
+  personBoxes.push({ cx: ncx, cy: ncy, w: nw, h: nh, source: 'manual' });
+  renderBoxList();
+  redraw();
+});
+
+document.getElementById('btnSaveNext').addEventListener('click', saveAndNext);
+document.getElementById('btnSuggest').addEventListener('click', suggestWithAI);
+document.getElementById('btnUndo').addEventListener('click', () => {
+  personBoxes.pop();
+  renderBoxList();
+  redraw();
+});
+document.getElementById('btnPrev').addEventListener('click', loadPrev);
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); saveAndNext(); }
+  else if (e.key === 'Backspace') { e.preventDefault(); personBoxes.pop(); renderBoxList(); redraw(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); loadPrev(); }
+});
+
+refreshStats();
+loadNext(-1);
+</script>
+</body>
+</html>

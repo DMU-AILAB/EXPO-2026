@@ -6,6 +6,13 @@
 # 유동인구 집계 sqlite (기기/세션별 로컬 데이터, 커밋 대상 아님)
 *.db
 
+# label_tool 진행상황 (작업자 로컬 상태 — 커밋 대상 아님)
+label_tool/reviewed.json
+
+# 로컬 절대경로가 박혀있는 임시 학습/캘리브레이션용 data.yaml — 사용자마다 경로가
+# 달라서 커밋하면 다른 PC/팀원 환경에서 깨짐 (datasets/data.yaml의 경로 문제와 동일 종류)
+datasets/data_local.yaml
+
 # Roboflow 원본 다운로드 (person 라벨 병합용 소스 — merge_person_dataset.py 참고,
 # 병합 결과만 datasets/train|val|test 에 커밋하고 원본 다운로드는 커밋하지 않음)
 datasets/Human Dataset v2-experiment-yolov8/
