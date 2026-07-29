@@ -476,12 +476,16 @@ class ClipRecorder:
             return {"ok": True, "clip_id": clip_id}
 
     def write(self, frame: np.ndarray) -> None:
+        # write()는 카메라 루프 스레드에서, stop()은 HTTP 핸들러 스레드에서 호출된다 —
+        # cv2.VideoWriter.write()를 락 밖에서 호출하면 stop()의 release()가 동시에
+        # 같은 writer 객체를 해제해버릴 수 있어(use-after-release) 세그폴트로 프로세스
+        # 전체가 죽는다(Pi 실기기에서 실제로 재현됨). write()와 release()가 절대 동시에
+        # 같은 writer를 건드리지 않도록 write() 호출 자체를 락 안에서 수행한다.
         with self._lock:
-            writer = self._writer
+            if self._writer is None:
+                return
+            self._writer.write(frame)
             clip_id = self._clip_id
-        if writer is None:
-            return
-        writer.write(frame)
         thumb_path = self.out_dir / f"{clip_id}.jpg"
         if not thumb_path.exists():
             cv2.imwrite(str(thumb_path), frame)  # 시작 시점 첫 프레임만 썸네일로 저장
@@ -490,12 +494,11 @@ class ClipRecorder:
         with self._lock:
             if self._writer is None:
                 return {"ok": False, "error": "녹화 중이 아닙니다"}
-            writer = self._writer
+            self._writer.release()
             clip_id = self._clip_id
             started_at = self._started_at
             self._writer = None
             self._clip_id = None
-        writer.release()
         duration = round(time.time() - started_at, 1)
         sidecar = {"started_at": datetime.fromtimestamp(started_at).isoformat(), "duration_sec": duration}
         (self.out_dir / f"{clip_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
