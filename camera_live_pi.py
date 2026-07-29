@@ -660,23 +660,33 @@ class MJPEGServer:
         srv = self
 
         class _Handler(BaseHTTPRequestHandler):
+            def _cors(self) -> None:
+                # roi_editor 페이지(:5000)에서 카메라 포트(:8080 등)로 직접 fetch()하는
+                # 구조라 브라우저 기준 크로스오리진(포트가 다르면 별도 origin)이다 —
+                # 이 헤더가 없으면 <img src>(스트림)와 달리 fetch()는 CORS에 막혀
+                # "Failed to fetch"로 실패한다(로컬 Wi-Fi 전용 도구라 * 허용도 안전).
+                self.send_header("Access-Control-Allow-Origin", "*")
+
             def _write_json(self, status: int, body: dict) -> None:
                 data = json.dumps(body).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                self._cors()
                 self.end_headers()
                 self.wfile.write(data)
 
             def _serve_clip_file(self, path, content_type: str) -> None:
                 if path is None:
                     self.send_response(404)
+                    self._cors()
                     self.end_headers()
                     return
                 data = path.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
+                self._cors()
                 self.end_headers()
                 self.wfile.write(data)
 
