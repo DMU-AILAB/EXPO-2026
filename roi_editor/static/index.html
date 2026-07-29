@@ -163,11 +163,11 @@ main {
   background: #000;
   display: flex;
   justify-content: center; /* 세로축(column) 중앙 정렬 — 라벨은 align-items:stretch(기본 상속)로 폭 그대로 */
-  max-height: 45vh;
+  max-height: 55vh;
 }
 #monitorViewWrap .dual-cell img {
   max-width: 100%;
-  max-height: 45vh;
+  max-height: 55vh;
   width: auto;
   display: block;
   border: none;
@@ -224,6 +224,7 @@ main {
   flex-wrap: wrap;
 }
 .dual-cell {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -487,8 +488,10 @@ main {
 .badge--amber { color: var(--amber); }
 #statsChart { width: 100%; height: 260px; display: block; }
 
-/* ── 녹화 패널 ── */
-#recordBtn {
+/* ── 녹화 버튼(영상 위 오버레이) — ROI 편집의 #recordBtn과 모니터링의 카메라별
+   .cell-record-btn이 공유한다 ── */
+#recordBtn,
+.cell-record-btn {
   position: absolute;
   top: 12px;
   left: 12px;
@@ -506,14 +509,18 @@ main {
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
 }
-#recordBtn.recording { background: var(--danger); }
-#recordBtn .rec-dot {
+.cell-record-btn { top: 32px; } /* 모니터링 카메라 카드는 라벨이 상단을 차지하므로 그 아래로 */
+#recordBtn.recording,
+.cell-record-btn.recording { background: var(--danger); }
+#recordBtn .rec-dot,
+.cell-record-btn .rec-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
   background: currentColor;
   display: inline-block;
 }
-#recordBtn.recording .rec-dot { animation: record-blink 1s infinite; }
+#recordBtn.recording .rec-dot,
+.cell-record-btn.recording .rec-dot { animation: record-blink 1s infinite; }
 @keyframes record-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
 .clip-item {
   display: flex;
@@ -1051,13 +1058,24 @@ function _cameraCellsHtml(list) {
   // refused로 즉시 실패하고 <img>의 onerror가 확실히 뜬다. 이걸로 "실제 입력이
   // 있는 카메라"만 남기고 나머지 칸은 숨긴다(설정상 몇 대 있는지와 무관).
   return list.map(c => `
-    <div class="dual-cell" data-cam="${escAttr(c.id)}">
+    <div class="dual-cell" data-cam="${escAttr(c.id)}" data-port="${c.port}">
       <div class="dual-label">${escHtml(c.label || c.id)}${c.enabled === false ? ' (비활성)' : ''}</div>
+      <button class="cell-record-btn" onclick="toggleCellRecording(${c.port}, this)">
+        <span class="rec-dot"></span><span class="cell-record-label">녹화 시작</span>
+      </button>
       <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}"
            onload="this.closest('.dual-cell').style.display=''"
            onerror="this.closest('.dual-cell').style.display='none'">
     </div>
   `).join('');
+}
+
+function _refreshCellRecordButtons(container) {
+  container.querySelectorAll('.dual-cell').forEach(cell => {
+    const port = cell.dataset.port;
+    const btn = cell.querySelector('.cell-record-btn');
+    if (port && btn) refreshCellRecordButton(port, btn);
+  });
 }
 
 function _availableCameraList() {
@@ -1066,6 +1084,7 @@ function _availableCameraList() {
 
 function renderDualView() {
   dualViewWrap.innerHTML = _cameraCellsHtml(cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }]);
+  _refreshCellRecordButtons(dualViewWrap);
 }
 
 // 모니터링 탭 — 설정상 활성화된 카메라 후보를 전부 렌더링하되, 실제로 스트림이
@@ -1074,6 +1093,7 @@ function renderDualView() {
 // 그 1대만 보인다. "설정에 2대가 등록돼 있다"만으로는 나란히 보이지 않는다.
 function renderMonitoringView() {
   monitorViewWrap.innerHTML = _cameraCellsHtml(_availableCameraList());
+  _refreshCellRecordButtons(monitorViewWrap);
 }
 
 btnDualView.addEventListener('click', () => {
@@ -1806,6 +1826,54 @@ recordBtn.addEventListener('click', async () => {
     setStatus(`❌ 녹화 ${wasRecording ? '중지' : '시작'} 실패: ${e.message}`, 'err');
   }
 });
+
+/* ================================================================
+   모니터링(카메라 여러 대) / 두 카메라 보기 — 카메라 카드마다 독립적인
+   녹화 버튼. ROI 편집 탭의 recordBtn과 같은 API(포트 기준)를 쓰지만
+   상태(타이머 등)는 카메라별로 따로 관리한다.
+================================================================ */
+const _cellRecordTimers = {}; // port -> intervalId
+
+function _setCellRecordButtonState(btn, port, recording, elapsedSec) {
+  clearInterval(_cellRecordTimers[port]);
+  btn.classList.toggle('recording', recording);
+  const label = btn.querySelector('.cell-record-label');
+  if (recording) {
+    const startedAtMs = Date.now() - (elapsedSec || 0) * 1000;
+    label.textContent = `녹화 중지 ${formatElapsed(elapsedSec || 0)}`;
+    _cellRecordTimers[port] = setInterval(() => {
+      label.textContent = `녹화 중지 ${formatElapsed((Date.now() - startedAtMs) / 1000)}`;
+    }, 1000);
+  } else {
+    label.textContent = '녹화 시작';
+  }
+}
+
+async function refreshCellRecordButton(port, btn) {
+  try {
+    const res  = await fetch(recordingUrlFor(port, '/recording/status'));
+    const data = await res.json();
+    _setCellRecordButtonState(btn, port, data.recording, data.elapsed_sec);
+  } catch (e) {
+    _setCellRecordButtonState(btn, port, false, 0);
+  }
+}
+
+async function toggleCellRecording(port, btn) {
+  const wasRecording = btn.classList.contains('recording');
+  try {
+    const res  = await fetch(
+      recordingUrlFor(port, wasRecording ? '/recording/stop' : '/recording/start'),
+      { method: 'POST' }
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '요청 실패');
+    await refreshCellRecordButton(port, btn);
+    if (wasRecording) setStatus(`✅ 녹화 종료 (${data.duration_sec}s) — 녹화 목록에서 확인하세요`, 'ok');
+  } catch (e) {
+    setStatus(`❌ 녹화 ${wasRecording ? '중지' : '시작'} 실패: ${e.message}`, 'err');
+  }
+}
 
 function formatClipSize(bytes) {
   if (bytes == null) return '';
