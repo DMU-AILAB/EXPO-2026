@@ -468,68 +468,106 @@ def _apply_channel_swap(frame: np.ndarray, enabled: bool) -> np.ndarray:
 
 class ClipRecorder:
     """수동 시작/중지 클립 녹화. `write()`는 매 프레임 무조건 호출되지만 녹화 중이
-    아니면 즉시 return하는 가벼운 no-op이라 평상시 오버헤드가 없다."""
+    아니면 즉시 return하는 가벼운 no-op이라 평상시 오버헤드가 없다.
+
+    한 번의 녹화 세션이 `segment_duration_sec`(기본 10분)을 넘기면 자동으로 현재
+    클립을 마감하고 새 클립으로 이어서 녹화한다(사용자는 계속 하나의 녹화로
+    인식 — 버튼 상태/경과시간은 세션 기준, 목록에는 세그먼트별로 분리돼 쌓임).
+    긴 녹화 하나가 통짜 파일이 되어 재생/탐색이 느려지는 것과, 녹화 도중
+    프로세스가 죽었을 때 통짜 파일 전체가 깨지는 것을 동시에 방지한다."""
 
     _ID_RE = re.compile(r"^clip_\d{8}_\d{6}$")
 
-    def __init__(self, out_dir: Path, max_clips: int = 30, max_total_bytes: int = 2 * 1024 ** 3) -> None:
+    def __init__(self, out_dir: Path, max_clips: int = 30, max_total_bytes: int = 2 * 1024 ** 3,
+                 segment_duration_sec: float = 600.0) -> None:
         self.out_dir = out_dir
         self.max_clips = max_clips
         self.max_total_bytes = max_total_bytes
+        self.segment_duration_sec = segment_duration_sec
         self._lock = threading.Lock()
         self._writer: cv2.VideoWriter | None = None
         self._clip_id: str | None = None
-        self._started_at: float = 0.0
+        self._frame_shape: tuple[int, int] | None = None
+        self._fps: float = 10.0
+        self._session_started_at: float = 0.0  # 사용자가 "시작"을 누른 시각 — 경과시간 표시 기준
+        self._segment_started_at: float = 0.0  # 현재 세그먼트(파일) 시작 시각 — 10분 분할 판단 기준
 
     def start(self, frame_shape: tuple[int, int], fps: float) -> dict:
         with self._lock:
             if self._writer is not None:
                 return {"ok": False, "error": "이미 녹화 중입니다"}
-            self.out_dir.mkdir(parents=True, exist_ok=True)
-            clip_id = "clip_" + datetime.now().strftime("%Y%m%d_%H%M%S")
-            h, w = frame_shape[:2]
-            out_path = str(self.out_dir / f"{clip_id}.mp4")
-            # "avc1"(H.264) — 브라우저 <video> 태그가 실제로 디코드할 수 있는 코덱이어야
-            # 한다. "mp4v" fourcc는 실제로는 MPEG-4 Part 2로 인코딩되는데(ffprobe로 확인),
-            # 이건 어느 브라우저도 재생 못 한다 — 파일은 만들어지고 다운로드도 되지만
-            # "영상이 영상이 아닌 느낌"(재생/미리보기 불가)이 되는 원인이었다.
-            writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"avc1"), max(fps, 1.0), (w, h))
-            if not writer.isOpened():
-                writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), max(fps, 1.0), (w, h))
-            if not writer.isOpened():
+            self._frame_shape = frame_shape
+            self._fps = fps
+            self._session_started_at = time.time()
+            if not self._open_new_segment_locked():
                 return {"ok": False, "error": "VideoWriter를 열 수 없습니다 (H.264/mp4v 모두 미지원)"}
-            self._writer = writer
-            self._clip_id = clip_id
-            self._started_at = time.time()
-            return {"ok": True, "clip_id": clip_id}
+            return {"ok": True, "clip_id": self._clip_id}
+
+    def _open_new_segment_locked(self) -> bool:
+        """새 세그먼트(클립 파일)를 연다 — 호출자가 이미 self._lock을 들고 있어야 한다."""
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        clip_id = "clip_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        h, w = self._frame_shape[:2]
+        out_path = str(self.out_dir / f"{clip_id}.mp4")
+        # "avc1"(H.264) — 브라우저 <video> 태그가 실제로 디코드할 수 있는 코덱이어야
+        # 한다. "mp4v" fourcc는 실제로는 MPEG-4 Part 2로 인코딩되는데(ffprobe로 확인),
+        # 이건 어느 브라우저도 재생 못 한다 — 파일은 만들어지고 다운로드도 되지만
+        # "영상이 영상이 아닌 느낌"(재생/미리보기 불가)이 되는 원인이었다.
+        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"avc1"), max(self._fps, 1.0), (w, h))
+        if not writer.isOpened():
+            writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), max(self._fps, 1.0), (w, h))
+        if not writer.isOpened():
+            return False
+        self._writer = writer
+        self._clip_id = clip_id
+        self._segment_started_at = time.time()
+        return True
+
+    def _finalize_segment_locked(self) -> tuple[str, float]:
+        """현재 세그먼트를 마감(release+사이드카 기록)한다 — 호출자가 이미
+        self._lock을 들고 있어야 한다. 디스크 정리(_enforce_quota)는 그 자체가
+        락을 다시 잡으므로(비재진입 Lock) 여기서 호출하지 않고 락 밖에서 한다."""
+        self._writer.release()
+        clip_id = self._clip_id
+        duration = round(time.time() - self._segment_started_at, 1)
+        sidecar = {"started_at": datetime.fromtimestamp(self._segment_started_at).isoformat(),
+                   "duration_sec": duration}
+        (self.out_dir / f"{clip_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
+        return clip_id, duration
 
     def write(self, frame: np.ndarray) -> None:
         # write()는 카메라 루프 스레드에서, stop()은 HTTP 핸들러 스레드에서 호출된다 —
         # cv2.VideoWriter.write()를 락 밖에서 호출하면 stop()의 release()가 동시에
         # 같은 writer 객체를 해제해버릴 수 있어(use-after-release) 세그폴트로 프로세스
         # 전체가 죽는다(Pi 실기기에서 실제로 재현됨). write()와 release()가 절대 동시에
-        # 같은 writer를 건드리지 않도록 write() 호출 자체를 락 안에서 수행한다.
+        # 같은 writer를 건드리지 않도록 write()·세그먼트 전환 모두 락 안에서 수행한다.
+        rotated = False
         with self._lock:
             if self._writer is None:
                 return
+            if time.time() - self._segment_started_at >= self.segment_duration_sec:
+                self._finalize_segment_locked()
+                rotated = True
+                if not self._open_new_segment_locked():
+                    # 새 세그먼트를 열 수 없으면 녹화를 중단한다 — 옛 writer는 이미 release됨
+                    self._writer = None
+                    self._clip_id = None
+                    return
             self._writer.write(frame)
             clip_id = self._clip_id
+        if rotated:
+            self._enforce_quota()
         thumb_path = self.out_dir / f"{clip_id}.jpg"
         if not thumb_path.exists():
-            cv2.imwrite(str(thumb_path), frame)  # 시작 시점 첫 프레임만 썸네일로 저장
+            cv2.imwrite(str(thumb_path), frame)  # 세그먼트 시작 시점 첫 프레임만 썸네일로 저장
 
     def stop(self) -> dict:
         with self._lock:
             if self._writer is None:
                 return {"ok": False, "error": "녹화 중이 아닙니다"}
-            self._writer.release()
-            clip_id = self._clip_id
-            started_at = self._started_at
+            clip_id, duration = self._finalize_segment_locked()
             self._writer = None
             self._clip_id = None
-        duration = round(time.time() - started_at, 1)
-        sidecar = {"started_at": datetime.fromtimestamp(started_at).isoformat(), "duration_sec": duration}
-        (self.out_dir / f"{clip_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
         self._enforce_quota()
         return {"ok": True, "clip_id": clip_id, "duration_sec": duration}
 
@@ -540,7 +578,7 @@ class ClipRecorder:
             return {
                 "recording": True,
                 "clip_id": self._clip_id,
-                "elapsed_sec": round(time.time() - self._started_at, 1),
+                "elapsed_sec": round(time.time() - self._session_started_at, 1),
             }
 
     def list_clips(self) -> list[dict]:

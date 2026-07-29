@@ -4,6 +4,7 @@
 """
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -201,3 +202,44 @@ def test_clip_recorder_clip_path_rejects_path_traversal():
 def test_clip_recorder_list_clips_excludes_active_and_missing_dir(tmp_path):
     rec = m.ClipRecorder(tmp_path / "does_not_exist")
     assert rec.list_clips() == []
+
+
+def test_clip_recorder_segments_long_recording_and_keeps_session_elapsed(tmp_path):
+    """segment_duration_sec를 아주 짧게 줘서 실제 cv2.VideoWriter로 회전(분할 저장)이
+    일어나는지 검증한다 — 10분을 실제로 기다릴 수 없으므로 짧은 값으로 대체."""
+    # clip_id는 초 단위 타임스탬프라 회전 간격이 1초 미만이면 같은 파일명이 나올 수
+    # 있다(실사용 600초 간격에서는 절대 벌어지지 않는 일) — 테스트에서도 1초 넘게
+    # 벌려서 검증한다.
+    rec = m.ClipRecorder(tmp_path, segment_duration_sec=1.1)
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+
+    start_result = rec.start((16, 16), fps=10.0)
+    assert start_result["ok"], start_result
+    first_clip_id = start_result["clip_id"]
+
+    rec.write(frame)
+    time.sleep(1.3)  # segment_duration_sec 초과 — 다음 write()에서 회전 발생
+    rec.write(frame)
+    rec.write(frame)
+
+    status = rec.status()
+    assert status["recording"] is True
+    second_clip_id = status["clip_id"]
+    assert second_clip_id != first_clip_id, "세그먼트가 회전해 새 clip_id가 발급돼야 한다"
+
+    # 회전된(마감된) 첫 세그먼트는 사이드카가 기록돼 목록에 바로 나타나야 한다
+    clips_while_recording = {c["id"]: c for c in rec.list_clips()}
+    assert first_clip_id in clips_while_recording
+    assert clips_while_recording[first_clip_id]["duration_sec"] is not None
+    assert second_clip_id not in clips_while_recording  # 아직 진행 중인 세그먼트는 목록 제외
+
+    # elapsed_sec는 세그먼트가 아니라 세션(최초 시작 시각) 기준으로 계속 누적돼야 한다
+    assert status["elapsed_sec"] >= 1.3
+
+    stop_result = rec.stop()
+    assert stop_result["ok"], stop_result
+    assert stop_result["clip_id"] == second_clip_id
+
+    final_clips = {c["id"] for c in rec.list_clips()}
+    assert first_clip_id in final_clips
+    assert second_clip_id in final_clips

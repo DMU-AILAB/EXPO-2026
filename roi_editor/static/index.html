@@ -777,6 +777,9 @@ main {
   <div class="page" id="page-recordings">
     <div id="recordingsClipCol">
       <div class="page-title">🎬 녹화 목록</div>
+      <select id="recordingsCameraFilter" style="width:100%; margin-bottom:10px; padding:6px 8px; border:1px solid var(--line); border-radius:var(--radius-sm); font-family:inherit; font-size:12px">
+        <option value="">전체 카메라</option>
+      </select>
       <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
     </div>
     <div id="recordingsPlayerCol">
@@ -918,6 +921,7 @@ async function loadCameras() {
   }
   renderCameraSelector();
   renderMonitoringView();
+  populateRecordingsCameraFilter();
   if (cameras.length > 0) {
     const preferred = cameras.find(c => c.id === activeCameraId) || cameras.find(c => c.enabled) || cameras[0];
     switchCamera(preferred.id);
@@ -1881,22 +1885,52 @@ function formatClipSize(bytes) {
   return mb >= 1 ? `${mb.toFixed(1)}MB` : `${Math.round(bytes / 1024)}KB`;
 }
 
+// 녹화 목록은 ROI 편집에서 현재 선택된 카메라 하나로 한정되지 않는다 — 등록된
+// 카메라 전체(연결 여부 무관, 예전에 찍어둔 녹화도 볼 수 있어야 하므로)를 필터
+// 후보로 삼는다.
+function _recordingsCameraList() {
+  return cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }];
+}
+
+function populateRecordingsCameraFilter() {
+  const sel = document.getElementById('recordingsCameraFilter');
+  const prev = sel.value;
+  const list = _recordingsCameraList();
+  sel.innerHTML = '<option value="">전체 카메라</option>' +
+    list.map(c => `<option value="${c.port}">${escHtml(c.label || c.id)}</option>`).join('');
+  if (list.some(c => String(c.port) === prev)) sel.value = prev;
+}
+
 async function loadClipList() {
   clipListEl.innerHTML = '<div class="roi-meta">불러오는 중...</div>';
+  const filterPort = document.getElementById('recordingsCameraFilter').value;
+  const targets = filterPort
+    ? _recordingsCameraList().filter(c => String(c.port) === filterPort)
+    : _recordingsCameraList();
+
   try {
-    const res   = await fetch(recordingUrlFor(currentPort, '/recording/list'));
-    const data  = await res.json();
-    const clips = data.clips || [];
+    const results = await Promise.all(targets.map(async c => {
+      try {
+        const res  = await fetch(recordingUrlFor(c.port, '/recording/list'));
+        const data = await res.json();
+        return (data.clips || []).map(clip => ({ ...clip, _port: c.port, _camLabel: c.label || c.id }));
+      } catch (e) {
+        return []; // 카메라 하나가 응답 없어도 나머지는 계속 보여준다
+      }
+    }));
+    const clips = results.flat().sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+
     if (clips.length === 0) {
       clipListEl.innerHTML = '<div class="roi-meta">아직 녹화된 영상이 없습니다 — 영상 좌상단 "녹화 시작" 버튼으로 시작하세요.</div>';
       return;
     }
+    const showCameraLabel = !filterPort && targets.length > 1;
     clipListEl.innerHTML = clips.map(c => `
-      <div class="clip-item" onclick="playClip('${escAttr(c.id)}')">
-        ${c.has_thumb ? `<img src="${recordingUrlFor(currentPort, `/recording/clips/${c.id}.jpg`)}" alt="">` : ''}
+      <div class="clip-item" onclick="playClip('${escAttr(c.id)}', ${c._port})">
+        ${c.has_thumb ? `<img src="${recordingUrlFor(c._port, `/recording/clips/${c.id}.jpg`)}" alt="">` : ''}
         <div class="clip-meta">
           ${c.started_at ? escHtml(new Date(c.started_at).toLocaleString()) : escHtml(c.id)}
-          <small>${c.duration_sec != null ? c.duration_sec + 's' : ''} · ${formatClipSize(c.size_bytes)}</small>
+          <small>${showCameraLabel ? escHtml(c._camLabel) + ' · ' : ''}${c.duration_sec != null ? c.duration_sec + 's' : ''} · ${formatClipSize(c.size_bytes)}</small>
         </div>
       </div>
     `).join('');
@@ -1905,8 +1939,10 @@ async function loadClipList() {
   }
 }
 
-function playClip(clipId) {
-  const url = recordingUrlFor(currentPort, `/recording/clips/${clipId}.mp4`);
+document.getElementById('recordingsCameraFilter').addEventListener('change', loadClipList);
+
+function playClip(clipId, port) {
+  const url = recordingUrlFor(port, `/recording/clips/${clipId}.mp4`);
   clipPlayer.src = url;
   clipPlayer.style.display = 'block';
   clipPlayer.play().catch(() => {});
@@ -1952,6 +1988,7 @@ function switchTab(name) {
     clipPlayer.pause();
     clipPlayer.style.display = 'none';
     clipDownloadWrap.style.display = 'none';
+    populateRecordingsCameraFilter();
     loadClipList();
   }
 }
