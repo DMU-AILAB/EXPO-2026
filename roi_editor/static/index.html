@@ -1035,10 +1035,17 @@ const monitorViewWrap = document.getElementById('monitorViewWrap');
 const btnDualView  = document.getElementById('btnDualView');
 
 function _cameraCellsHtml(list) {
+  // 설정상 활성화(enabled)돼 있어도 실제로 연결 안 된 카메라는 MJPEG 포트 자체가
+  // 아직 열려있지 않다(camera_live_pi.py가 _wait_for_camera()에서 대기 중이면
+  // mjpeg.start()를 아직 안 부른 상태) — 그래서 stream.mjpg 요청이 connection
+  // refused로 즉시 실패하고 <img>의 onerror가 확실히 뜬다. 이걸로 "실제 입력이
+  // 있는 카메라"만 남기고 나머지 칸은 숨긴다(설정상 몇 대 있는지와 무관).
   return list.map(c => `
-    <div class="dual-cell">
+    <div class="dual-cell" data-cam="${escAttr(c.id)}">
       <div class="dual-label">${escHtml(c.label || c.id)}${c.enabled === false ? ' (비활성)' : ''}</div>
-      <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}">
+      <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}"
+           onload="this.closest('.dual-cell').style.display=''"
+           onerror="this.closest('.dual-cell').style.display='none'">
     </div>
   `).join('');
 }
@@ -1051,8 +1058,10 @@ function renderDualView() {
   dualViewWrap.innerHTML = _cameraCellsHtml(cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }]);
 }
 
-// 모니터링 탭 — 카메라가 2대 이상 사용 가능하면(활성 상태) 무조건 전부 동시에 보여준다.
-// ROI 편집 탭은 한 번에 한 카메라만 편집하지만, 모니터링은 감시 목적이라 전체를 봐야 한다.
+// 모니터링 탭 — 설정상 활성화된 카메라 후보를 전부 렌더링하되, 실제로 스트림이
+// 연결되는 것만 남는다(_cameraCellsHtml의 onerror가 나머지를 숨김) — 그 결과
+// 실제 입력이 2대 이상일 때만 자연스럽게 나란히 보이고, 1대만 연결돼 있으면
+// 그 1대만 보인다. "설정에 2대가 등록돼 있다"만으로는 나란히 보이지 않는다.
 function renderMonitoringView() {
   monitorViewWrap.innerHTML = _cameraCellsHtml(_availableCameraList());
 }
