@@ -205,3 +205,31 @@ def test_stats_timeseries_30d_returns_30_daily_points(client):
 def test_stats_timeseries_rejects_unknown_period(client):
     res = client.get("/api/stats/timeseries", params={"period": "bogus"})
     assert res.status_code == 400
+
+
+def test_get_events_empty_by_default(client):
+    res = client.get("/api/events")
+    assert res.status_code == 200
+    assert res.json() == {"events": []}
+
+
+def test_get_audio_file_serves_file_inside_audio_dir(client, tmp_path):
+    (tmp_path / "audio").mkdir(exist_ok=True)
+    f = tmp_path / "audio" / "hello.mp3"
+    f.write_bytes(b"fake-mp3-bytes")
+    res = client.get("/api/audio/file", params={"path": str(f)})
+    assert res.status_code == 200
+    assert res.content == b"fake-mp3-bytes"
+
+
+def test_get_audio_file_rejects_path_outside_audio_dir(client, tmp_path):
+    outside = tmp_path / "outside.mp3"
+    outside.write_bytes(b"nope")
+    res = client.get("/api/audio/file", params={"path": str(outside)})
+    assert res.status_code == 400
+
+
+def test_get_audio_file_404_for_missing_file(client, tmp_path):
+    missing = tmp_path / "audio" / "missing.mp3"
+    res = client.get("/api/audio/file", params={"path": str(missing)})
+    assert res.status_code == 404

@@ -66,6 +66,12 @@ except ImportError:
     _TRAFFIC_AVAILABLE = False
 
 try:
+    from detection_events import log_event
+    _EVENTS_AVAILABLE = True
+except ImportError:
+    _EVENTS_AVAILABLE = False
+
+try:
     from gpiozero import LED as _GPIOLed
     _GPIO_AVAILABLE = True
 except ImportError as _e:
@@ -1162,6 +1168,9 @@ class CameraPipeline:
                                 print(f"[TRIGGER][{tag}] ROI={roi.name}  audio={roi.audio_file or '없음'}")
                                 if self.shared.audio_player is not None:
                                     self.shared.audio_player.play(roi.audio_file)
+                                if _EVENTS_AVAILABLE and profile.traffic_db:
+                                    log_event(profile.traffic_db, datetime.now().isoformat(),
+                                              CLASS_NAMES[CANE_CLASS_ID], roi.name)
                     for r in roi_manager.rois:
                         if r.name not in active:
                             dispatcher.on_not_detected(r.name)

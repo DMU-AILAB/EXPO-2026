@@ -35,7 +35,8 @@ DEPLOY_PY = \
 	simple_tracker.py \
 	cane_person_assoc.py \
 	foot_traffic_counter.py \
-	camera_config.py
+	camera_config.py \
+	detection_events.py
 
 # Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.
 # 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.

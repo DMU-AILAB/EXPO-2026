@@ -143,6 +143,20 @@ main {
 #recordingsPlayerCol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .page-title { font-size: 16px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
 
+/* 모니터링 페이지 — 좌(최근 감지 이벤트) 68% / 우(상태 카드) 32% */
+#page-monitoring.active { display: block; overflow-y: auto; padding: 24px 32px; }
+.monitoring-body { display: grid; grid-template-columns: 68% 32%; gap: 16px; align-items: start; }
+.monitoring-side { display: flex; flex-direction: column; gap: 12px; }
+.events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.events-table th {
+  text-align: left; padding: 8px 12px; color: var(--ink-soft); font-weight: 600;
+  font-size: 12px; border-bottom: 1px solid var(--line);
+}
+.events-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
+.events-table tr:last-child td { border-bottom: none; }
+.audio-test-row { display: flex; gap: 6px; }
+.audio-test-row select { flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-family: inherit; font-size: 12px; }
+
 /* ── viewer ── */
 #viewer {
   flex: 1;
@@ -220,7 +234,6 @@ main {
 }
 #conf-section,
 #camera-section,
-#stats-section,
 #panel-top,
 #roi-list,
 #form-section {
@@ -315,18 +328,6 @@ main {
   padding: 1px 5px;
   margin-left: 5px;
 }
-#stats-section {
-  padding: 12px;
-  flex-shrink: 0;
-}
-.stats-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--ink-soft);
-  margin-bottom: 3px;
-}
-.stats-row b { color: var(--ink); font-size: 13px; }
 #panel-top {
   padding: 10px 12px;
   display: flex;
@@ -348,7 +349,10 @@ main {
   border-radius: var(--radius-sm);
   padding: 9px 10px;
   margin-bottom: 7px;
+  cursor: pointer;
 }
+.roi-item:hover { border-color: var(--accent); }
+.roi-item.selected { border-color: var(--accent); border-width: 2px; }
 .roi-item-hd {
   display: flex;
   justify-content: space-between;
@@ -443,6 +447,10 @@ main {
 }
 .stat-tile__label { font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
 .stat-tile__value { font-size: 26px; font-weight: 700; color: var(--ink); }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.badge__dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.badge--good { color: var(--good); }
+.badge--amber { color: var(--amber); }
 #statsChart { width: 100%; height: 260px; display: block; }
 
 /* ── 녹화 패널 ── */
@@ -496,17 +504,57 @@ main {
 <header>
   <h1>VisionGuide</h1>
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="roi">ROI 편집</button>
+    <button class="tab-btn active" data-tab="monitoring">모니터링</button>
+    <button class="tab-btn" data-tab="roi">ROI 편집</button>
     <button class="tab-btn" data-tab="stats">통계</button>
     <button class="tab-btn" data-tab="recordings">녹화</button>
   </nav>
 </header>
 
 <main>
-  <div class="page active" id="page-roi">
+  <div class="page active" id="page-monitoring">
+    <div class="monitoring-body">
+      <div>
+        <div class="page-title">최근 감지 이벤트</div>
+        <div class="sum-card" style="padding:0; overflow:hidden">
+          <table class="events-table">
+            <thead><tr><th>시각</th><th>클래스</th><th>구역</th></tr></thead>
+            <tbody id="eventsTableBody">
+              <tr><td colspan="3" class="roi-meta" style="padding:12px">불러오는 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="monitoring-side">
+        <div class="stat-tile">
+          <div class="stat-tile__label">카메라 상태</div>
+          <div class="badge badge--good" id="cameraStatusBadge"><span class="badge__dot"></span>확인 중</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile__label">오늘 총 유동인구</div>
+          <div class="stat-tile__value" id="statTotal">-</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile__label">지팡이 사용자 감지</div>
+          <div class="stat-tile__value" id="statCane">-</div>
+        </div>
+        <div class="sum-card" style="padding:14px 16px">
+          <div class="stat-tile__label" style="margin-bottom:8px">안내 음성 테스트</div>
+          <div class="audio-test-row">
+            <select id="audioTestSelect"><option value="">등록된 오디오 없음</option></select>
+            <button class="btn btn-sm" id="btnAudioTest">▶ 재생</button>
+          </div>
+          <audio id="audioTestPlayer" style="display:none"></audio>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-roi">
     <div class="roi-toolbar">
-      <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
-      <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-right:12px"></span>
+      <button class="btn btn-prim btn-sm" id="btnToggleDrawing">+ 새 구역 그리기</button>
+      <span class="hint" id="drawingHint" style="display:none">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+      <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-left:auto; margin-right:12px"></span>
       <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
       <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
     </div>
@@ -592,10 +640,6 @@ main {
       <label for="fConfPerson">사람 신뢰도: <span id="confPersonValue">0.55</span></label>
       <input type="range" id="fConfPerson" min="0.1" max="0.95" step="0.05" value="0.55">
     </div>
-    <div id="stats-section">
-      <div class="stats-row"><span>오늘 유동인구</span><b id="statTotal">-</b></div>
-      <div class="stats-row"><span>지팡이 사용자</span><b id="statCane">-</b></div>
-    </div>
     <div id="panel-top">
       <span id="roi-count">ROI 목록 (0)</span>
       <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
@@ -604,7 +648,7 @@ main {
       <div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>
     </div>
     <div id="form-section" style="display:none">
-      <h3>➕ 새 ROI 정보 입력</h3>
+      <h3 id="formTitle">➕ 새 ROI 정보 입력</h3>
       <div class="fg">
         <label>구역 유형</label>
         <div class="zone-type-toggle">
@@ -630,8 +674,9 @@ main {
         <input id="fPriority" type="number" value="1" min="1">
       </div>
       <div class="form-btns">
-        <button class="btn btn-prim" id="btnAddRoi">ROI 추가</button>
-        <button class="btn btn-danger" id="btnCancel">취소</button>
+        <button class="btn btn-danger" id="btnDeleteRoiInForm" style="display:none">삭제</button>
+        <button class="btn btn-save" id="btnAddRoi">저장</button>
+        <button class="btn btn-prim" id="btnCancel">취소</button>
       </div>
     </div>
       </div>
@@ -680,7 +725,6 @@ main {
 </main>
 
 <div id="statusbar"><span id="status" class="s-ok">서버에 연결 중...</span></div>
-<input type="file" id="fAudioPickExisting" accept="audio/*" style="display:none">
 
 <script>
 /* ================================================================
@@ -690,10 +734,11 @@ const COLORS = ['#00dc00','#ff8c00','#00c8ff','#ff00c8','#00ffc8'];
 
 let rois        = [];   // [{name, points, priority, announcement_text, audio_file, zone_type}]
 let drawing     = [];   // 현재 그리는 중인 꼭짓점 [[nx,ny], ...]
-let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
+let pendingPoly = null; // 폼 입력 대기 중인 폴리곤(새 ROI 그리기 완료 후)
+let editingIndex = null; // 목록에서 클릭해 편집 중인 기존 ROI의 인덱스(그리기와 배타적)
+let drawingModeEnabled = false; // "+ 새 구역 그리기" 토글 — 켜져 있을 때만 캔버스 클릭이 꼭짓점을 추가
 let mousePos    = null; // canvas 픽셀 좌표 [x, y]
-let pendingAudioPath = ''; // 새 ROI 폼에서 업로드된 오디오의 Pi 경로
-let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
+let pendingAudioPath = ''; // 폼에서 업로드(또는 편집 중인 ROI의 기존) 오디오의 Pi 경로
 // 클래스별 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영 (rois.json의
 // conf 필드에 {white_cane, person} 객체로 저장됨. 예전 파일처럼 숫자 하나였던 경우도
 // loadFromServer()에서 두 값에 그대로 채워 넣어 하위호환한다.)
@@ -718,7 +763,6 @@ const noStream   = document.getElementById('no-stream');
 const canvasWrap = document.getElementById('canvas-wrap');
 const audioPick  = document.getElementById('fAudioPick');
 const audioStatusEl = document.getElementById('audioStatus');
-const existingAudioPick = document.getElementById('fAudioPickExisting');
 const confCaneInput  = document.getElementById('fConfCane');
 const confCaneValueEl = document.getElementById('confCaneValue');
 const confPersonInput  = document.getElementById('fConfPerson');
@@ -746,12 +790,20 @@ function setStream(port) {
 
 setStream(8080); // 카메라 프로필이 없는 레거시 단일 카메라 기본값 — loadCameras()가 있으면 덮어씀
 
-stream.onload = syncSize;
+stream.onload = () => { syncSize(); setCameraStatusBadge(true); };
 stream.onerror = () => {
   canvasWrap.style.display = 'none';
   noStream.style.display = 'block';
   setStatus('카메라 스트림 연결 실패 — camera_live_pi.py 실행 여부 확인', 'err');
+  setCameraStatusBadge(false);
 };
+
+function setCameraStatusBadge(ok) {
+  const el = document.getElementById('cameraStatusBadge');
+  if (!el) return;
+  el.className = ok ? 'badge badge--good' : 'badge badge--amber';
+  el.innerHTML = `<span class="badge__dot"></span>${ok ? '정상' : '연결 끊김'}`;
+}
 
 // MJPEG는 onload가 늦게 오므로 폴링으로 보완
 setInterval(() => {
@@ -1051,12 +1103,12 @@ function canvasPos(e) {
 function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 저장된 ROIs
+  // 저장된 ROIs — 편집 중(선택된) ROI는 굵은 테두리로 강조
   rois.forEach((roi, i) => {
     const isExclude = (roi.zone_type || 'trigger') === 'exclude';
     const color = isExclude ? '#ff3030' : COLORS[i % COLORS.length];
     const label = (isExclude ? '🚫 ' : '') + roi.name;
-    drawPoly(roi.points, color, isExclude ? 0.15 : 0.20, label, true, isExclude);
+    drawPoly(roi.points, color, isExclude ? 0.15 : 0.20, label, true, isExclude, i === editingIndex ? 4 : 2);
   });
 
   // 폼 대기 중인 폴리곤
@@ -1068,7 +1120,7 @@ function redraw() {
   drawInProgress();
 }
 
-function drawPoly(points, color, alpha, label, closed, dashed = false) {
+function drawPoly(points, color, alpha, label, closed, dashed = false, lineWidth = 2) {
   if (points.length < 2) return;
 
   ctx.beginPath();
@@ -1084,9 +1136,9 @@ function drawPoly(points, color, alpha, label, closed, dashed = false) {
   ctx.fillStyle = color + Math.round(alpha * 255).toString(16).padStart(2, '0');
   ctx.fill();
 
-  // stroke — 제외구역은 점선으로 트리거 구역과 구분
+  // stroke — 제외구역은 점선으로 트리거 구역과 구분, 편집 중인 ROI는 굵게
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = lineWidth;
   ctx.setLineDash(dashed ? [8, 5] : []);
   ctx.stroke();
   ctx.setLineDash([]);
@@ -1164,9 +1216,29 @@ canvas.addEventListener('mouseleave', () => {
   if (drawing.length > 0) redraw();
 });
 
+const btnToggleDrawing = document.getElementById('btnToggleDrawing');
+const drawingHintEl = document.getElementById('drawingHint');
+
+function setDrawingMode(enabled) {
+  drawingModeEnabled = enabled;
+  btnToggleDrawing.textContent = enabled ? '그리기 취소' : '+ 새 구역 그리기';
+  btnToggleDrawing.classList.toggle('btn-save', enabled);
+  drawingHintEl.style.display = enabled ? 'inline' : 'none';
+}
+
+btnToggleDrawing.addEventListener('click', () => {
+  if (drawingModeEnabled) {
+    cancelDrawing();
+  } else {
+    if (editingIndex !== null) closeForm(); // 편집 중이던 기존 ROI 폼과 배타적
+    setDrawingMode(true);
+    setStatus('캔버스를 클릭해 구역 꼭짓점을 추가하세요', 'warn');
+  }
+});
+
 let lastClickTime = 0;
 canvas.addEventListener('click', e => {
-  if (pendingPoly) return;
+  if (!drawingModeEnabled || pendingPoly) return;
 
   const now = Date.now();
   // dblclick fires click×2 → ignore second click within 300ms
@@ -1180,18 +1252,21 @@ canvas.addEventListener('click', e => {
 });
 
 canvas.addEventListener('dblclick', e => {
-  if (pendingPoly) return;
+  if (!drawingModeEnabled || pendingPoly) return;
   if (drawing.length < 3) {
     setStatus('꼭짓점이 3개 이상 필요합니다', 'err');
     return;
   }
   pendingPoly = drawing.slice();
   drawing = [];
+  setDrawingMode(false);
   formSec.style.display = 'block';
+  document.getElementById('formTitle').textContent = '➕ 새 ROI 정보 입력';
+  document.getElementById('btnDeleteRoiInForm').style.display = 'none';
   updateZoneTypeFieldsVisibility();
   document.getElementById('fName').focus();
   document.getElementById('fPriority').value = rois.length + 1;
-  setStatus('ROI 정보를 입력하고 [ROI 추가]를 누르세요', 'warn');
+  setStatus('ROI 정보를 입력하고 [저장]을 누르세요', 'warn');
   redraw();
 });
 
@@ -1219,48 +1294,72 @@ document.addEventListener('keydown', e => {
 /* ================================================================
    Form
 ================================================================ */
-function cancelDrawing() {
+function closeFormSilently() {
   drawing = [];
   pendingPoly = null;
+  editingIndex = null;
+  setDrawingMode(false);
   formSec.style.display = 'none';
   resetAudioPick();
   document.querySelector('input[name="fZoneType"][value="trigger"]').checked = true;
   updateZoneTypeFieldsVisibility();
-  setStatus('취소됨 — 캔버스를 클릭해 다시 그리세요', 'ok');
-  redraw();
 }
 
-document.getElementById('btnCancel').addEventListener('click', cancelDrawing);
+function closeForm() {
+  closeFormSilently();
+  setStatus('닫힘', 'ok');
+  renderList();
+  redraw();
+}
+const cancelDrawing = closeForm; // 그리기 취소/폼 닫기 공용 별칭 — 기존 호출부 호환
+
+document.getElementById('btnCancel').addEventListener('click', closeForm);
+document.getElementById('btnDeleteRoiInForm').addEventListener('click', () => {
+  if (editingIndex === null) return;
+  const name = rois[editingIndex].name;
+  if (!confirm(`'${name}' ROI를 삭제하시겠습니까?`)) return;
+  rois.splice(editingIndex, 1);
+  closeForm();
+  saveToServer();
+});
 
 document.getElementById('btnAddRoi').addEventListener('click', () => {
   const name     = document.getElementById('fName').value.trim();
   const text     = document.getElementById('fText').value.trim();
   const prio     = parseInt(document.getElementById('fPriority').value) || 1;
   const zoneType = document.querySelector('input[name="fZoneType"]:checked').value;
+  const audioFile = zoneType === 'exclude' ? '' : pendingAudioPath;
 
   if (!name) { setStatus('이름은 필수입니다', 'err'); return; }
   if (zoneType === 'trigger' && !text) { setStatus('트리거 구역은 안내 텍스트가 필수입니다', 'err'); return; }
-  if (rois.find(r => r.name === name)) { setStatus(`'${name}' 이름이 이미 존재합니다`, 'err'); return; }
+  const dup = rois.find((r, i) => r.name === name && i !== editingIndex);
+  if (dup) { setStatus(`'${name}' 이름이 이미 존재합니다`, 'err'); return; }
 
-  rois.push({
-    name,
-    points: pendingPoly,
-    priority: prio,
-    announcement_text: text,
-    audio_file: zoneType === 'exclude' ? '' : pendingAudioPath,
-    zone_type: zoneType,
-  });
+  if (editingIndex !== null) {
+    const roi = rois[editingIndex];
+    roi.name = name;
+    roi.priority = prio;
+    roi.announcement_text = text;
+    roi.audio_file = audioFile;
+    roi.zone_type = zoneType;
+    setStatus(`'${name}' 수정됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
+  } else {
+    if (!pendingPoly) { setStatus('그려진 폴리곤이 없습니다', 'err'); return; }
+    rois.push({
+      name,
+      points: pendingPoly,
+      priority: prio,
+      announcement_text: text,
+      audio_file: audioFile,
+      zone_type: zoneType,
+    });
+    setStatus(`'${name}' 추가됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
+  }
 
-  pendingPoly = null;
-  formSec.style.display = 'none';
+  closeFormSilently();
   ['fName','fText'].forEach(id => document.getElementById(id).value = '');
-  document.querySelector('input[name="fZoneType"][value="trigger"]').checked = true;
-  updateZoneTypeFieldsVisibility();
-  resetAudioPick();
-
   renderList();
   redraw();
-  setStatus(`'${name}' 추가됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
 });
 
 /* ================================================================
@@ -1296,71 +1395,53 @@ audioPick.addEventListener('change', async (e) => {
   }
 });
 
-function pickAudioFor(i) {
-  audioTargetIndex = i;
-  existingAudioPick.value = '';
-  existingAudioPick.click();
-}
-
-existingAudioPick.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file || audioTargetIndex === null) return;
-  const roiName = rois[audioTargetIndex].name;
-  setStatus(`⏳ 업로드 중... (${file.name})`, 'warn');
-  try {
-    const path = await uploadAudio(file);
-    rois[audioTargetIndex].audio_file = path;
-    renderList();
-    await saveToServer();
-    setStatus(`✅ '${roiName}' 오디오 적용 및 저장 완료 — 기기가 2초 이내 자동 반영합니다`, 'ok');
-  } catch (err) {
-    setStatus(`❌ 업로드 실패: ${err.message}`, 'err');
-  } finally {
-    audioTargetIndex = null;
-  }
-});
-
 /* ================================================================
    ROI list
 ================================================================ */
 function renderList() {
   document.getElementById('roi-count').textContent = `ROI 목록 (${rois.length})`;
+  refreshAudioTestOptions();
 
   if (rois.length === 0) {
     roiListEl.innerHTML = '<div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>';
     return;
   }
 
+  // 데모(RoiEditPage.jsx) 패턴 — 목록은 단순 버튼 리스트, 클릭하면 우측 폼에 로드되어
+  // 편집(이름/텍스트/오디오/우선순위/구역유형)할 수 있다. 삭제도 그 폼 안에서만 한다.
   roiListEl.innerHTML = rois.map((roi, i) => {
     const isExclude = (roi.zone_type || 'trigger') === 'exclude';
+    const selected = i === editingIndex;
     return `
-    <div class="roi-item">
-      <div class="roi-item-hd">
-        <span>
-          <span class="color-dot" style="background:${isExclude ? '#ff3030' : COLORS[i % COLORS.length]}"></span>
-          <span class="roi-name">${escHtml(roi.name)}</span>
-          ${isExclude ? '<span class="badge-exclude">🚫 제외구역</span>' : ''}
-        </span>
-        <button class="btn btn-danger btn-sm" onclick="deleteRoi('${escAttr(roi.name)}')">삭제</button>
-      </div>
-      ${roi.announcement_text ? `<div class="roi-meta">${escHtml(roi.announcement_text)}</div>` : ''}
-      ${roi.audio_file ? `<div class="roi-meta">🎵 ${escHtml(roi.audio_file.split(/[\\/]/).pop())}</div>` : ''}
-      <div class="roi-meta">우선순위 ${roi.priority} | 꼭짓점 ${roi.points.length}개</div>
-      ${isExclude ? '' : `
-      <div class="form-btns" style="margin-top:6px">
-        <button class="btn btn-prim btn-sm" onclick="pickAudioFor(${i})">🎵 오디오 ${roi.audio_file ? '변경' : '추가'}</button>
-      </div>`}
-    </div>
+    <button class="roi-item${selected ? ' selected' : ''}" style="display:block; width:100%; text-align:left; border:1px solid var(--line); background:var(--surface)" onclick="selectRoiForEdit(${i})">
+      <span class="color-dot" style="background:${isExclude ? '#ff3030' : COLORS[i % COLORS.length]}"></span>
+      <span class="roi-name">▸ ${escHtml(roi.name)}</span>
+      ${isExclude ? '<span class="badge-exclude">🚫 제외구역</span>' : ''}
+      ${selected ? ' <span class="roi-meta">(선택)</span>' : ''}
+    </button>
   `;
   }).join('');
 }
 
-function deleteRoi(name) {
-  if (!confirm(`'${name}' ROI를 삭제하시겠습니까?`)) return;
-  rois = rois.filter(r => r.name !== name);
+function selectRoiForEdit(i) {
+  closeFormSilently(); // 상태만 초기화(재귀적으로 renderList를 다시 부르지 않도록)
+  editingIndex = i;
+  const roi = rois[i];
+  const isExclude = (roi.zone_type || 'trigger') === 'exclude';
+
+  document.getElementById('formTitle').textContent = `✏️ '${roi.name}' 편집`;
+  document.querySelector(`input[name="fZoneType"][value="${isExclude ? 'exclude' : 'trigger'}"]`).checked = true;
+  document.getElementById('fName').value = roi.name;
+  document.getElementById('fText').value = roi.announcement_text || '';
+  document.getElementById('fPriority').value = roi.priority;
+  pendingAudioPath = roi.audio_file || '';
+  audioStatusEl.textContent = pendingAudioPath ? `현재: ${pendingAudioPath.split(/[\\/]/).pop()}` : '등록된 오디오 없음';
+  audioStatusEl.className = 'roi-meta';
+  document.getElementById('btnDeleteRoiInForm').style.display = 'inline-block';
+  updateZoneTypeFieldsVisibility();
+  formSec.style.display = 'block';
   renderList();
   redraw();
-  saveToServer();
 }
 
 document.getElementById('btnClearAll').addEventListener('click', () => {
@@ -1450,6 +1531,51 @@ async function loadStats() {
     // 통계는 부가 정보 — 실패해도 조용히 무시
   }
 }
+
+/* ================================================================
+   모니터링 페이지 — 최근 감지 이벤트 + 안내 음성 테스트
+================================================================ */
+async function loadEvents() {
+  const tbody = document.getElementById('eventsTableBody');
+  try {
+    const res  = await fetch(_apiUrl('/api/events?limit=8'));
+    const data = await res.json();
+    const events = data.events || [];
+    if (events.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="roi-meta" style="padding:12px">아직 감지된 이벤트가 없습니다</td></tr>';
+      return;
+    }
+    tbody.innerHTML = events.map(ev => `
+      <tr>
+        <td>${escHtml(new Date(ev.ts).toLocaleTimeString())}</td>
+        <td>${escHtml(ev.class_name)}</td>
+        <td>${escHtml(ev.roi_name)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" class="roi-meta s-err" style="padding:12px">이벤트 조회 실패: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function refreshAudioTestOptions() {
+  const sel = document.getElementById('audioTestSelect');
+  const withAudio = rois.filter(r => r.audio_file);
+  if (withAudio.length === 0) {
+    sel.innerHTML = '<option value="">등록된 오디오 없음</option>';
+    return;
+  }
+  sel.innerHTML = withAudio.map(r =>
+    `<option value="${escAttr(r.audio_file)}">${escHtml(r.name)}</option>`
+  ).join('');
+}
+
+document.getElementById('btnAudioTest').addEventListener('click', () => {
+  const sel = document.getElementById('audioTestSelect');
+  if (!sel.value) return;
+  const player = document.getElementById('audioTestPlayer');
+  player.src = `/api/audio/file?path=${encodeURIComponent(sel.value)}`;
+  player.play().catch(err => setStatus(`❌ 재생 실패: ${err.message}`, 'err'));
+});
 
 /* ================================================================
    통계 패널 (기간별 시계열 — 순수 canvas 꺾은선 그래프, 차트 라이브러리 없음)
@@ -1637,7 +1763,11 @@ function switchTab(name) {
   document.querySelectorAll('main > .page').forEach(page => {
     page.classList.toggle('active', page.id === `page-${name}`);
   });
-  if (name === 'roi') {
+  if (name === 'monitoring') {
+    loadEvents();
+    loadStats();
+    refreshAudioTestOptions();
+  } else if (name === 'roi') {
     syncSize();
   } else if (name === 'stats') {
     loadStatsTimeseries(statsPeriod);
@@ -1716,6 +1846,8 @@ syncSize();
 setInterval(loadStats, 5000);
 loadDeviceStatus();
 setInterval(loadDeviceStatus, 10000);
+loadEvents();
+setInterval(loadEvents, 5000);
 </script>
 </body>
 </html>
