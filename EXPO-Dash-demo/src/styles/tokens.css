@@ -1,0 +1,26 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css');
+
+:root {
+  --accent: #2c4be0;
+  --accent-soft: rgba(44, 75, 224, 0.14);
+  --good: #15875a;
+  --good-soft: rgba(21, 135, 90, 0.12);
+  --amber: #d98a2b;
+  --amber-soft: rgba(217, 138, 43, 0.14);
+  --danger: #d3372c;
+
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --ink: #1b1e27;
+  --ink-soft: #6b6f7a;
+  --line: #e7e5df;
+
+  --shell-height: 64px;
+  --content-pad-x: 76px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --shadow-card: 0 1px 2px rgba(27, 30, 39, 0.04), 0 4px 12px rgba(27, 30, 39, 0.03);
+
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, sans-serif;
+}
