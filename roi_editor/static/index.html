@@ -72,6 +72,21 @@ header h1::before {
 }
 .hint { font-size: 11px; color: var(--ink-soft); margin-left: auto; white-space: nowrap; }
 
+/* ── 상단 탭 네비게이션 (TopBar) ── */
+.tabs { display: flex; gap: 28px; margin-left: auto; }
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-family: inherit;
+}
+.tab-btn.active { color: var(--ink); font-weight: 700; border-bottom-color: var(--accent); }
+
 /* ── buttons ── */
 .btn {
   padding: 6px 13px;
@@ -94,15 +109,39 @@ header h1::before {
 .btn-danger:hover { background: var(--danger-soft); }
 .btn-sm { font-size: 10px; padding: 3px 7px; }
 
-/* ── layout ── */
+/* ── layout: 상단 탭으로 전환되는 페이지들 (모니터링/ROI 편집·통계·녹화) ── */
 main {
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg);
+}
+.page { display: none; height: 100%; overflow: hidden; }
+.page.active { display: flex; flex-direction: column; }
+
+/* ROI 편집 페이지 — 상단 툴바 + 좌(영상/캔버스) 68% / 우(패널) 32% 본문 */
+.roi-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.roi-body {
   display: flex;
   flex: 1;
   overflow: hidden;
   gap: 12px;
   padding: 12px;
-  background: var(--bg);
 }
+
+/* 통계/녹화 페이지 — 데모 화면3·4와 동일한 카드+그리드 구성, 상시 상주(모달 아님) */
+#page-stats.active { display: block; overflow-y: auto; padding: 24px 32px; }
+#page-recordings.active { display: flex; gap: 16px; padding: 16px; }
+#recordingsClipCol { width: 320px; flex-shrink: 0; overflow-y: auto; }
+#recordingsPlayerCol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.page-title { font-size: 16px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
 
 /* ── viewer ── */
 #viewer {
@@ -124,7 +163,7 @@ main {
 #stream {
   display: block;
   max-width: 100%;
-  max-height: calc(100vh - 108px);
+  max-height: calc(100vh - 150px);
 }
 #canvas {
   position: absolute;
@@ -371,37 +410,16 @@ main {
 .s-warn { color: var(--amber); }
 .s-err  { color: var(--danger); }
 
-/* ── 통계/녹화 오버레이 패널 (공통) ── */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(27, 30, 39, 0.45);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.modal-card {
+/* ── 통계 페이지 ── */
+.stats-chart-card {
   background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
-  padding: 20px;
-  width: 720px;
-  max-width: 92vw;
-  max-height: 86vh;
-  overflow-y: auto;
+  padding: 16px 20px;
+  max-width: 900px;
 }
-.modal-hd {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 14px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--ink);
-}
-
-/* ── 통계 패널 ── */
+.stats-chart-card__title { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 12px; }
 .period-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
 .period-tab {
   padding: 6px 14px;
@@ -415,7 +433,7 @@ main {
   font-family: inherit;
 }
 .period-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; max-width: 900px; }
 .stat-tile {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -476,73 +494,37 @@ main {
 <body>
 
 <header>
-  <h1>VisionGuide ROI 편집기</h1>
-  <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
-  <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-right:12px"></span>
-  <button class="btn btn-prim btn-sm" id="btnShowStats">📊 통계</button>
-  <button class="btn btn-prim btn-sm" id="btnShowRecordings">🎬 녹화 목록</button>
-  <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
-  <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
+  <h1>VisionGuide</h1>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="roi">ROI 편집</button>
+    <button class="tab-btn" data-tab="stats">통계</button>
+    <button class="tab-btn" data-tab="recordings">녹화</button>
+  </nav>
 </header>
 
-<div id="statsOverlay" class="modal-overlay">
-  <div class="modal-card">
-    <div class="modal-hd">
-      <span>📊 유동인구 통계</span>
-      <button class="btn btn-sm" id="btnCloseStats">✕ 닫기</button>
-    </div>
-    <div class="period-tabs">
-      <button class="period-tab active" data-period="today">오늘</button>
-      <button class="period-tab" data-period="7d">7일</button>
-      <button class="period-tab" data-period="30d">30일</button>
-    </div>
-    <div class="stat-tiles">
-      <div class="stat-tile">
-        <div class="stat-tile__label">총 유동인구</div>
-        <div class="stat-tile__value" id="statsTotalVal">-</div>
-      </div>
-      <div class="stat-tile">
-        <div class="stat-tile__label">지팡이 사용자 수</div>
-        <div class="stat-tile__value" id="statsCaneVal">-</div>
-      </div>
-      <div class="stat-tile">
-        <div class="stat-tile__label">지팡이 사용자 비율</div>
-        <div class="stat-tile__value" id="statsRatioVal">-</div>
-      </div>
-    </div>
-    <canvas id="statsChart" width="640" height="260"></canvas>
-  </div>
-</div>
-
-<div id="recordingsOverlay" class="modal-overlay">
-  <div class="modal-card">
-    <div class="modal-hd">
-      <span>🎬 녹화 목록</span>
-      <button class="btn btn-sm" id="btnCloseRecordings">✕ 닫기</button>
-    </div>
-    <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
-    <video id="clipPlayer" controls></video>
-    <div id="clipDownloadWrap" style="margin-top:8px; display:none">
-      <a id="clipDownloadLink" class="btn btn-sm" download>⬇ 다운로드</a>
-    </div>
-  </div>
-</div>
-
 <main>
-  <div id="viewer">
-    <button id="recordBtn"><span class="rec-dot"></span><span id="recordBtnLabel">녹화 시작</span></button>
-    <div id="canvas-wrap">
-      <img id="stream" alt="">
-      <canvas id="canvas"></canvas>
+  <div class="page active" id="page-roi">
+    <div class="roi-toolbar">
+      <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+      <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-right:12px"></span>
+      <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
+      <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
     </div>
-    <div id="dualViewWrap"></div>
-    <div id="no-stream" style="display:none">
-      카메라 스트림에 연결할 수 없습니다.<br>
-      <code>camera_live_pi.py --headless</code> 가 실행 중인지 확인하세요.
-    </div>
-  </div>
+    <div class="roi-body">
+      <div id="viewer">
+        <button id="recordBtn"><span class="rec-dot"></span><span id="recordBtnLabel">녹화 시작</span></button>
+        <div id="canvas-wrap">
+          <img id="stream" alt="">
+          <canvas id="canvas"></canvas>
+        </div>
+        <div id="dualViewWrap"></div>
+        <div id="no-stream" style="display:none">
+          카메라 스트림에 연결할 수 없습니다.<br>
+          <code>camera_live_pi.py --headless</code> 가 실행 중인지 확인하세요.
+        </div>
+      </div>
 
-  <div id="panel">
+      <div id="panel">
     <div id="camera-section">
       <div id="cameraSelectWrap" style="display:none">
         <label for="cameraSelect">카메라</label>
@@ -652,6 +634,48 @@ main {
         <button class="btn btn-danger" id="btnCancel">취소</button>
       </div>
     </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-stats">
+    <div class="page-title">📊 유동인구 통계</div>
+    <div class="period-tabs">
+      <button class="period-tab active" data-period="today">오늘</button>
+      <button class="period-tab" data-period="7d">7일</button>
+      <button class="period-tab" data-period="30d">30일</button>
+    </div>
+    <div class="stat-tiles">
+      <div class="stat-tile">
+        <div class="stat-tile__label">총 유동인구</div>
+        <div class="stat-tile__value" id="statsTotalVal">-</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile__label">지팡이 사용자 수</div>
+        <div class="stat-tile__value" id="statsCaneVal">-</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile__label">지팡이 사용자 비율</div>
+        <div class="stat-tile__value" id="statsRatioVal">-</div>
+      </div>
+    </div>
+    <div class="stats-chart-card">
+      <div class="stats-chart-card__title">시간대별/일별 유동인구</div>
+      <canvas id="statsChart" width="800" height="280"></canvas>
+    </div>
+  </div>
+
+  <div class="page" id="page-recordings">
+    <div id="recordingsClipCol">
+      <div class="page-title">🎬 녹화 목록</div>
+      <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
+    </div>
+    <div id="recordingsPlayerCol">
+      <video id="clipPlayer" controls></video>
+      <div id="clipDownloadWrap" style="margin-top:8px; display:none">
+        <a id="clipDownloadLink" class="btn btn-sm" download>⬇ 다운로드</a>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -678,6 +702,8 @@ let confPerson = 0.55;
 let cameras       = [];   // GET /api/cameras 결과 — 비어있으면 기존 단일 카메라 UI 그대로
 let activeCameraId = null; // 현재 선택된 카메라 id (null = 카메라 프로필 없는 레거시 모드)
 let modelVariants = [];   // GET /api/model-variants 결과 — camera_config.MODEL_VARIANTS와 동기화
+let recordElapsedTimer = null;  // setStream()이 페이지 로드 시 곧바로 refreshRecordButton()을
+let recordStartedAtMs = null;   // 호출하므로, 이 두 변수는 그 호출 전에 선언되어 있어야 한다.
 
 /* ================================================================
    DOM refs
@@ -699,7 +725,6 @@ const confPersonInput  = document.getElementById('fConfPerson');
 const confPersonValueEl = document.getElementById('confPersonValue');
 const recordBtn      = document.getElementById('recordBtn');
 const recordBtnLabel = document.getElementById('recordBtnLabel');
-const recordingsOverlay = document.getElementById('recordingsOverlay');
 const clipListEl     = document.getElementById('clipList');
 const clipPlayer     = document.getElementById('clipPlayer');
 const clipDownloadWrap = document.getElementById('clipDownloadWrap');
@@ -1429,7 +1454,6 @@ async function loadStats() {
 /* ================================================================
    통계 패널 (기간별 시계열 — 순수 canvas 꺾은선 그래프, 차트 라이브러리 없음)
 ================================================================ */
-const statsOverlay = document.getElementById('statsOverlay');
 let statsPeriod = 'today';
 
 function drawLineChart(canvasEl, points, valueKey) {
@@ -1509,13 +1533,6 @@ async function loadStatsTimeseries(period) {
   }
 }
 
-document.getElementById('btnShowStats').addEventListener('click', () => {
-  statsOverlay.style.display = 'flex';
-  loadStatsTimeseries(statsPeriod);
-});
-document.getElementById('btnCloseStats').addEventListener('click', () => {
-  statsOverlay.style.display = 'none';
-});
 document.querySelectorAll('.period-tab').forEach(btn => {
   btn.addEventListener('click', () => loadStatsTimeseries(btn.dataset.period));
 });
@@ -1524,9 +1541,6 @@ document.querySelectorAll('.period-tab').forEach(btn => {
    녹화 (수동 시작/중지 클립) — 브라우저가 현재 스트림과 같은 포트로 직접 호출한다
    (roi_editor 서버를 거치지 않음 — streamUrlFor(port)와 동일한 패턴).
 ================================================================ */
-let recordElapsedTimer = null;
-let recordStartedAtMs = null;
-
 function formatElapsed(sec) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
@@ -1613,15 +1627,30 @@ function playClip(clipId) {
   clipDownloadWrap.style.display = 'block';
 }
 
-document.getElementById('btnShowRecordings').addEventListener('click', () => {
-  recordingsOverlay.style.display = 'flex';
-  clipPlayer.style.display = 'none';
-  clipDownloadWrap.style.display = 'none';
-  loadClipList();
-});
-document.getElementById('btnCloseRecordings').addEventListener('click', () => {
-  recordingsOverlay.style.display = 'none';
-  clipPlayer.pause();
+/* ================================================================
+   상단 탭 전환 — ROI 편집 / 통계 / 녹화 (데모 대시보드의 TopBar 탭 패턴)
+================================================================ */
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === name);
+  });
+  document.querySelectorAll('main > .page').forEach(page => {
+    page.classList.toggle('active', page.id === `page-${name}`);
+  });
+  if (name === 'roi') {
+    syncSize();
+  } else if (name === 'stats') {
+    loadStatsTimeseries(statsPeriod);
+  } else if (name === 'recordings') {
+    clipPlayer.pause();
+    clipPlayer.style.display = 'none';
+    clipDownloadWrap.style.display = 'none';
+    loadClipList();
+  }
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
 /* ================================================================
