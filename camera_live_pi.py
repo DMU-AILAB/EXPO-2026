@@ -338,11 +338,27 @@ def build_backend(
 
 # ── 카메라 소스 ────────────────────────────────────────────────────
 
+class CameraNotFoundError(RuntimeError):
+    """카메라 하드웨어가 지금 물리적으로 연결되지 않은 상태 — USB 웹캠 미연결처럼
+    일시적일 수 있는 상황이라, 일반 오류(설정 오류/드라이버 크래시 등)와 달리
+    CameraPipeline이 에러로 취급하지 않고 조용히 재시도하며 기다린다."""
+
+
 class _Picamera2Source:
     def __init__(self, width: int = 640, height: int = 480, camera_num: int = 0) -> None:
         from picamera2 import Picamera2  # type: ignore[import]
         # camera_num은 듀얼 CSI 카메라(카메라 멀티플렉서 HAT 등)를 위한 것 — 이 저장소에서
         # 검증된 조합은 CSI 카메라 1대 + USB 웹캠 1대뿐이라 실기기 미검증 상태.
+        #
+        # 개수부터 먼저 확인 — 그냥 Picamera2(camera_num=camera_num)를 호출하면 인식된
+        # 카메라 수보다 큰 인덱스일 때 내부적으로 리스트 인덱싱을 해서 IndexError를 낸다
+        # (실기기에서 USB 웹캠 미연결 시 재현됨). 여기서 미리 걸러 CameraNotFoundError로
+        # 변환해야 호출부가 "카메라가 아직 없다"와 "진짜 오류"를 구분할 수 있다.
+        info = Picamera2.global_camera_info()
+        if camera_num >= len(info):
+            raise CameraNotFoundError(
+                f"picamera2 camera_num={camera_num} 없음 (현재 {len(info)}대 인식됨)"
+            )
         self._cam = Picamera2(camera_num=camera_num)
         # picamera2 naming is counter-intuitive: the "RGB888" format returns a
         # numpy array in B,G,R memory order — exactly what OpenCV expects.
@@ -371,7 +387,7 @@ class _OpenCVSource:
         src = int(source) if str(source).isdigit() else source
         self._cap = cv2.VideoCapture(src)
         if not self._cap.isOpened():
-            raise RuntimeError(f"카메라/영상을 열 수 없습니다: {source}")
+            raise CameraNotFoundError(f"카메라/영상을 열 수 없습니다: {source}")
 
     def read(self) -> tuple[bool, np.ndarray]:
         return self._cap.read()
@@ -962,6 +978,26 @@ class CameraPipeline:
     def is_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def _wait_for_camera(self, tag: str):
+        """카메라가 아직 물리적으로 연결되지 않았으면(CameraNotFoundError) 조용히
+        기다리다가, 연결되는 즉시 자동으로 인식해 반환한다 — USB 웹캠을 나중에 꽂아도
+        파이프라인을 수동으로 재시작할 필요가 없다. 그 외의 오류는 그대로 올려보내
+        `_run()`이 평소처럼 ERROR로 로깅하고 (외부 슈퍼바이저가) 재시도하게 한다.
+        종료 신호를 받으면 None을 반환한다."""
+        logged_absent = False
+        while not (self._local_stop.is_set() or self.shared.stop_event.is_set()):
+            try:
+                camera = build_camera(self.profile.source, backend=self.profile.backend)
+                if logged_absent:
+                    print(f"[INFO][{tag}] 카메라 연결 감지 — 파이프라인을 시작합니다")
+                return camera
+            except CameraNotFoundError as e:
+                if not logged_absent:
+                    print(f"[INFO][{tag}] 카메라 미연결 — {e} (연결되면 자동으로 인식합니다)")
+                    logged_absent = True
+                self._local_stop.wait(RESTART_BACKOFF_SEC)
+        return None
+
     def _run(self) -> None:
         profile = self.profile
         tag = profile.id
@@ -979,17 +1015,22 @@ class CameraPipeline:
         variant = MODEL_VARIANTS.get(profile.model_variant, MODEL_VARIANTS["v2_640"])
 
         try:
+            # 카메라 존재 확인을 추론 백엔드 로딩보다 먼저 한다 — USB 웹캠처럼 나중에
+            # 꽂힐 수 있는 카메라가 아직 없으면 TFLite 모델을 매번 다시 로딩하며 기다리는
+            # 낭비 없이 곧바로 대기 상태로 들어간다(_wait_for_camera 참고).
+            try:
+                camera = self._wait_for_camera(tag)
+            except Exception as e:
+                print(f"[ERROR][{tag}] 카메라 초기화 실패: {e}")
+                return
+            if camera is None:
+                return  # 종료 신호를 받아 대기를 그만둔 경우
+
             try:
                 backend = build_backend(self.base_conf, prefer=profile.inference_backend,
                                          weights_dir=variant["weights_dir"], input_size=variant["input_size"])
             except Exception as e:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
-                return
-
-            try:
-                camera = build_camera(profile.source, backend=profile.backend)
-            except Exception as e:
-                print(f"[ERROR][{tag}] 카메라 초기화 실패: {e}")
                 return
 
             tracker = SimpleTracker()
