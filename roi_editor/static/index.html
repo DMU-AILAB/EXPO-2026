@@ -27,6 +27,9 @@
   --radius-md: 10px;
   --shadow-card: 0 1px 2px rgba(27, 30, 39, 0.04), 0 4px 12px rgba(27, 30, 39, 0.03);
 
+  --shell-height: 64px;
+  --content-pad-x: 32px;
+
   --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -44,8 +47,9 @@ body {
 
 /* ── header ── */
 header {
+  height: var(--shell-height);
   background: var(--surface);
-  padding: 10px 18px;
+  padding: 0 var(--content-pad-x);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -123,7 +127,7 @@ main {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 10px var(--content-pad-x);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
   flex-shrink: 0;
@@ -133,18 +137,18 @@ main {
   flex: 1;
   overflow: hidden;
   gap: 12px;
-  padding: 12px;
+  padding: 16px var(--content-pad-x);
 }
 
 /* 통계/녹화 페이지 — 데모 화면3·4와 동일한 카드+그리드 구성, 상시 상주(모달 아님) */
-#page-stats.active { display: block; overflow-y: auto; padding: 24px 32px; }
-#page-recordings.active { display: flex; gap: 16px; padding: 16px; }
+#page-stats.active { display: block; overflow-y: auto; padding: 24px var(--content-pad-x); }
+#page-recordings.active { display: flex; gap: 16px; padding: 16px var(--content-pad-x); }
 #recordingsClipCol { width: 320px; flex-shrink: 0; overflow-y: auto; }
 #recordingsPlayerCol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .page-title { font-size: 16px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
 
 /* 모니터링 페이지 — 좌(최근 감지 이벤트) 68% / 우(상태 카드) 32% */
-#page-monitoring.active { display: block; overflow-y: auto; padding: 24px 32px; }
+#page-monitoring.active { display: block; overflow-y: auto; padding: 24px var(--content-pad-x); }
 .monitoring-body { display: grid; grid-template-columns: 68% 32%; gap: 16px; align-items: start; }
 .monitoring-side { display: flex; flex-direction: column; gap: 12px; }
 /* 모니터링/ROI 편집 두 페이지가 같은 "카메라 뷰포트" 톤(검은 배경+테두리+둥근
@@ -176,8 +180,8 @@ main {
 #monitorViewWrap .dual-label { border-radius: 0; }
 .events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .events-table th {
-  text-align: left; padding: 8px 12px; color: var(--ink-soft); font-weight: 600;
-  font-size: 12px; border-bottom: 1px solid var(--line);
+  text-align: left; padding: 10px 12px; color: var(--ink-soft); font-weight: 600;
+  font-size: 12px; border-bottom: 1px solid var(--line); background: var(--bg);
 }
 .events-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
 .events-table tr:last-child td { border-bottom: none; }
@@ -367,7 +371,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: bold;
   color: var(--ink);
   flex-shrink: 0;
@@ -456,7 +460,7 @@ main {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
   padding: 16px 20px;
-  max-width: 900px;
+  max-width: 1200px;
 }
 .stats-chart-card__title { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 12px; }
 .period-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
@@ -472,16 +476,16 @@ main {
   font-family: inherit;
 }
 .period-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; max-width: 900px; }
+.stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; max-width: 1200px; }
 .stat-tile {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
-  padding: 14px 16px;
+  padding: 16px 18px;
 }
-.stat-tile__label { font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
-.stat-tile__value { font-size: 26px; font-weight: 700; color: var(--ink); }
+.stat-tile__label { font-size: 13px; color: var(--ink-soft); margin-bottom: 8px; }
+.stat-tile__value { font-size: 34px; font-weight: 700; line-height: 1.1; color: var(--ink); }
 .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .badge__dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .badge--good { color: var(--good); }
@@ -539,10 +543,23 @@ main {
 .clip-item .clip-meta small { color: var(--ink-soft); display: block; margin-top: 2px; }
 #clipPlayer { width: 100%; max-height: 50vh; background: #000; border-radius: var(--radius-sm); margin-top: 12px; display: none; }
 
+/* ── 확인 모달 (네이티브 confirm() 대체) ── */
+.confirm-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(27,30,39,0.45);
+  align-items: center; justify-content: center; z-index: 200;
+}
+.confirm-overlay.active { display: flex; }
+.confirm-card {
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+  padding: 20px; width: 360px; max-width: 90vw; font-size: 13px; color: var(--ink);
+}
+#confirmMessage { white-space: pre-line; line-height: 1.5; }
+
 /* ── 모바일/좁은 화면 대응 ── */
 @media (max-width: 860px) {
   header { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
-  .tabs { margin-left: 0; gap: 16px; width: 100%; justify-content: space-between; }
+  .tabs { margin-left: 0; gap: 10px; width: 100%; justify-content: space-between; }
+  .tab-btn { font-size: 12px; }
   .roi-body { flex-direction: column; }
   .roi-toolbar { flex-wrap: wrap; }
   #panel { width: 100%; }
@@ -587,9 +604,12 @@ main {
         </div>
       </div>
       <div class="monitoring-side">
-        <div class="stat-tile">
-          <div class="stat-tile__label">카메라 상태</div>
-          <div class="badge badge--good" id="cameraStatusBadge"><span class="badge__dot"></span>확인 중</div>
+        <div class="stat-tile" style="display:flex; align-items:center; justify-content:space-between">
+          <div>
+            <div class="stat-tile__label">카메라 상태</div>
+            <div class="badge badge--good" id="cameraStatusBadge"><span class="badge__dot"></span>확인 중</div>
+          </div>
+          <div class="roi-meta" id="cameraStatusTime"></div>
         </div>
         <div class="stat-tile">
           <div class="stat-tile__label">오늘 총 유동인구</div>
@@ -708,7 +728,7 @@ main {
         <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
       </div>
       <div id="roi-list">
-        <div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>
+        <div class="roi-meta" style="padding:4px">불러오는 중...</div>
       </div>
     </div>
     <div id="form-section" style="display:none">
@@ -792,6 +812,15 @@ main {
 </main>
 
 <div id="statusbar"><span id="status" class="s-ok">서버에 연결 중...</span></div>
+<div id="confirmOverlay" class="confirm-overlay">
+  <div class="confirm-card">
+    <div id="confirmMessage"></div>
+    <div class="form-btns" style="margin-top:16px">
+      <button class="btn" id="confirmCancelBtn">취소</button>
+      <button class="btn btn-save" id="confirmOkBtn">확인</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ================================================================
@@ -870,6 +899,8 @@ function setCameraStatusBadge(ok) {
   if (!el) return;
   el.className = ok ? 'badge badge--good' : 'badge badge--amber';
   el.innerHTML = `<span class="badge__dot"></span>${ok ? '정상' : '연결 끊김'}`;
+  const timeEl = document.getElementById('cameraStatusTime');
+  if (timeEl) timeEl.textContent = new Date().toLocaleTimeString();
 }
 
 // MJPEG는 onload가 늦게 오므로 폴링으로 보완
@@ -1026,7 +1057,7 @@ async function addCameraFromScan(num, model) {
 async function deleteCurrentCamera() {
   const cam = cameras.find(c => c.id === activeCameraId);
   if (!cam) return;
-  if (!confirm(`'${cam.label || cam.id}' 카메라를 삭제하시겠습니까? (ROI 설정은 파일로 남아있습니다)`)) return;
+  if (!(await confirmDialog(`'${cam.label || cam.id}' 카메라를 삭제하시겠습니까? (ROI 설정은 파일로 남아있습니다)`))) return;
 
   const updated = cameras.filter(c => c.id !== activeCameraId);
   try {
@@ -1156,7 +1187,7 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
 
   const newRotation = parseInt(document.getElementById('camRotation').value, 10);
   if (newRotation !== cam.rotation) {
-    const proceed = confirm(
+    const proceed = await confirmDialog(
       '⚠️ 카메라 회전값을 변경했습니다.\n' +
       '이 카메라에 이미 그려진 ROI/제외구역이 새 회전 기준으로 맞지 않을 수 있습니다.\n' +
       '구역을 다시 확인하고 필요시 재그려주세요.\n\n계속하시겠습니까?'
@@ -1432,10 +1463,10 @@ function closeForm() {
 const cancelDrawing = closeForm; // 그리기 취소/폼 닫기 공용 별칭 — 기존 호출부 호환
 
 document.getElementById('btnCancel').addEventListener('click', closeForm);
-document.getElementById('btnDeleteRoiInForm').addEventListener('click', () => {
+document.getElementById('btnDeleteRoiInForm').addEventListener('click', async () => {
   if (editingIndex === null) return;
   const name = rois[editingIndex].name;
-  if (!confirm(`'${name}' ROI를 삭제하시겠습니까?`)) return;
+  if (!(await confirmDialog(`'${name}' ROI를 삭제하시겠습니까?`))) return;
   rois.splice(editingIndex, 1);
   closeForm();
   saveToServer();
@@ -1521,7 +1552,7 @@ function renderList() {
   refreshAudioTestOptions();
 
   if (rois.length === 0) {
-    roiListEl.innerHTML = '<div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>';
+    roiListEl.innerHTML = '<div style="text-align:center; padding:32px 12px; color:var(--ink-soft)"><div style="font-size:24px; margin-bottom:8px">📍</div><div class="roi-meta">등록된 ROI가 없습니다<br>"+ 새 구역 그리기"로 시작하세요</div></div>';
     return;
   }
 
@@ -1562,9 +1593,9 @@ function selectRoiForEdit(i) {
   redraw();
 }
 
-document.getElementById('btnClearAll').addEventListener('click', () => {
+document.getElementById('btnClearAll').addEventListener('click', async () => {
   if (rois.length === 0) return;
-  if (!confirm('모든 ROI를 삭제하시겠습니까?')) return;
+  if (!(await confirmDialog('모든 ROI를 삭제하시겠습니까?'))) return;
   rois = [];
   cancelDrawing();
   renderList();
@@ -2003,6 +2034,27 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 function setStatus(msg, type) {
   statusEl.textContent = msg;
   statusEl.className = type === 'err' ? 's-err' : type === 'warn' ? 's-warn' : 's-ok';
+}
+
+// 네이티브 confirm() 대체 — 톤을 카드/버튼 스타일과 통일한다.
+function confirmDialog(message) {
+  const overlay = document.getElementById('confirmOverlay');
+  document.getElementById('confirmMessage').textContent = message;
+  overlay.classList.add('active');
+  return new Promise(resolve => {
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+    const cleanup = (result) => {
+      overlay.classList.remove('active');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
 }
 
 function escHtml(s) {
