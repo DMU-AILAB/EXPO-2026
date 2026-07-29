@@ -27,7 +27,10 @@ from shapely.geometry import Polygon
 # sys.path[0]이 그 디렉토리가 된다 — 저장소 루트의 foot_traffic_counter.py/camera_config.py를
 # import하려면 루트를 sys.path에 직접 넣어줘야 한다.
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from foot_traffic_counter import read_daily_totals  # noqa: E402
+from foot_traffic_counter import (  # noqa: E402
+    read_daily_totals, read_hourly_breakdown, read_range_daily_totals,
+)
+from detection_events import read_recent_events  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CameraProfile, load_camera_config, save_camera_config, validate_camera_config,
 )
@@ -204,6 +207,48 @@ async def get_rois(camera: str | None = None):
 async def get_stats(camera: str | None = None):
     path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
     return read_daily_totals(path)
+
+
+_STATS_PERIOD_DAYS = {"7d": 7, "30d": 30}
+
+
+@app.get("/api/stats/timeseries")
+async def get_stats_timeseries(camera: str | None = None, period: str = "today"):
+    """유동인구 시계열 — period=today면 시간대별(0~23시), 7d/30d면 일별 합계.
+
+    ROI별 집계는 현재 DB 스키마(카메라 단위 시간별 합계만 기록)로는 낼 수 없어 대상 외.
+    """
+    if period != "today" and period not in _STATS_PERIOD_DAYS:
+        raise HTTPException(status_code=400, detail=f"unknown period: {period}")
+
+    path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    if period == "today":
+        return {"granularity": "hour", "points": read_hourly_breakdown(path)}
+    days = _STATS_PERIOD_DAYS[period]
+    return {"granularity": "day", "points": read_range_daily_totals(path, days)}
+
+
+@app.get("/api/events")
+async def get_events(camera: str | None = None, limit: int = 8):
+    """모니터링 탭의 "최근 감지 이벤트" 표 — ROI 트리거(오디오 안내가 실제로 나간
+    순간)마다 camera_live_pi.py가 기록한 이벤트를 최신순으로 반환한다."""
+    path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    return {"events": read_recent_events(path, limit=limit)}
+
+
+@app.get("/api/audio/file")
+async def get_audio_file(path: str):
+    """ROI에 연결된 오디오 파일을 브라우저에서 미리듣기(테스트 재생)할 수 있도록 서빙.
+
+    `path`는 camera_live_pi.py가 재생에 쓰는 것과 동일한 절대경로(POST /api/audio/upload가
+    반환한 값)이며, audio_dir 하위인지 확인해 그 밖의 임의 경로 접근은 차단한다.
+    """
+    resolved = Path(path).resolve()
+    if audio_dir.resolve() not in resolved.parents:
+        raise HTTPException(status_code=400, detail="audio_dir 밖의 경로는 서빙할 수 없습니다")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
+    return FileResponse(resolved)
 
 
 class RoisPayload(BaseModel):

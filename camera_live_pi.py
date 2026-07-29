@@ -30,14 +30,17 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import re
 import signal
 import struct
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
@@ -61,6 +64,12 @@ try:
 except ImportError:
     CANE_CLASS_ID, PERSON_CLASS_ID = 0, 1
     _TRAFFIC_AVAILABLE = False
+
+try:
+    from detection_events import log_event
+    _EVENTS_AVAILABLE = True
+except ImportError:
+    _EVENTS_AVAILABLE = False
 
 try:
     from gpiozero import LED as _GPIOLed
@@ -335,11 +344,27 @@ def build_backend(
 
 # ── 카메라 소스 ────────────────────────────────────────────────────
 
+class CameraNotFoundError(RuntimeError):
+    """카메라 하드웨어가 지금 물리적으로 연결되지 않은 상태 — USB 웹캠 미연결처럼
+    일시적일 수 있는 상황이라, 일반 오류(설정 오류/드라이버 크래시 등)와 달리
+    CameraPipeline이 에러로 취급하지 않고 조용히 재시도하며 기다린다."""
+
+
 class _Picamera2Source:
     def __init__(self, width: int = 640, height: int = 480, camera_num: int = 0) -> None:
         from picamera2 import Picamera2  # type: ignore[import]
         # camera_num은 듀얼 CSI 카메라(카메라 멀티플렉서 HAT 등)를 위한 것 — 이 저장소에서
         # 검증된 조합은 CSI 카메라 1대 + USB 웹캠 1대뿐이라 실기기 미검증 상태.
+        #
+        # 개수부터 먼저 확인 — 그냥 Picamera2(camera_num=camera_num)를 호출하면 인식된
+        # 카메라 수보다 큰 인덱스일 때 내부적으로 리스트 인덱싱을 해서 IndexError를 낸다
+        # (실기기에서 USB 웹캠 미연결 시 재현됨). 여기서 미리 걸러 CameraNotFoundError로
+        # 변환해야 호출부가 "카메라가 아직 없다"와 "진짜 오류"를 구분할 수 있다.
+        info = Picamera2.global_camera_info()
+        if camera_num >= len(info):
+            raise CameraNotFoundError(
+                f"picamera2 camera_num={camera_num} 없음 (현재 {len(info)}대 인식됨)"
+            )
         self._cam = Picamera2(camera_num=camera_num)
         # picamera2 naming is counter-intuitive: the "RGB888" format returns a
         # numpy array in B,G,R memory order — exactly what OpenCV expects.
@@ -368,7 +393,7 @@ class _OpenCVSource:
         src = int(source) if str(source).isdigit() else source
         self._cap = cv2.VideoCapture(src)
         if not self._cap.isOpened():
-            raise RuntimeError(f"카메라/영상을 열 수 없습니다: {source}")
+            raise CameraNotFoundError(f"카메라/영상을 열 수 없습니다: {source}")
 
     def read(self) -> tuple[bool, np.ndarray]:
         return self._cap.read()
@@ -434,28 +459,310 @@ def _apply_channel_swap(frame: np.ndarray, enabled: bool) -> np.ndarray:
     return frame[:, :, ::-1].copy() if enabled else frame
 
 
+# ── 영상 녹화 (수동 시작/중지 클립) ───────────────────────────────────
+#
+# 개인정보 정책 예외: 대시보드 설계 문서(원본 영상 저장 금지, BBox/통계만 저장)는 상용
+# 배치 기준이며, 이번 데모 범위에서는 사용자 승인으로 예외 적용한다(CLAUDE.md 참고).
+# 그래서 별도 raw 프레임 캡처 경로 없이 MJPEGServer.push()가 받는, 이미 회전/탐지
+# 오버레이/ROI오버레이가 그려진 최종 프레임을 그대로 녹화한다.
+
+class ClipRecorder:
+    """수동 시작/중지 클립 녹화. `write()`는 매 프레임 무조건 호출되지만 녹화 중이
+    아니면 즉시 return하는 가벼운 no-op이라 평상시 오버헤드가 없다.
+
+    한 번의 녹화 세션이 `segment_duration_sec`(기본 10분)을 넘기면 자동으로 현재
+    클립을 마감하고 새 클립으로 이어서 녹화한다(사용자는 계속 하나의 녹화로
+    인식 — 버튼 상태/경과시간은 세션 기준, 목록에는 세그먼트별로 분리돼 쌓임).
+    긴 녹화 하나가 통짜 파일이 되어 재생/탐색이 느려지는 것과, 녹화 도중
+    프로세스가 죽었을 때 통짜 파일 전체가 깨지는 것을 동시에 방지한다."""
+
+    _ID_RE = re.compile(r"^clip_\d{8}_\d{6}$")
+
+    def __init__(self, out_dir: Path, max_clips: int = 30, max_total_bytes: int = 2 * 1024 ** 3,
+                 segment_duration_sec: float = 600.0) -> None:
+        self.out_dir = out_dir
+        self.max_clips = max_clips
+        self.max_total_bytes = max_total_bytes
+        self.segment_duration_sec = segment_duration_sec
+        self._lock = threading.Lock()
+        self._writer: cv2.VideoWriter | None = None
+        self._clip_id: str | None = None
+        self._frame_shape: tuple[int, int] | None = None
+        self._fps: float = 10.0
+        self._session_started_at: float = 0.0  # 사용자가 "시작"을 누른 시각 — 경과시간 표시 기준
+        self._segment_started_at: float = 0.0  # 현재 세그먼트(파일) 시작 시각 — 10분 분할 판단 기준
+
+    def start(self, frame_shape: tuple[int, int], fps: float) -> dict:
+        with self._lock:
+            if self._writer is not None:
+                return {"ok": False, "error": "이미 녹화 중입니다"}
+            self._frame_shape = frame_shape
+            self._fps = fps
+            self._session_started_at = time.time()
+            if not self._open_new_segment_locked():
+                return {"ok": False, "error": "VideoWriter를 열 수 없습니다 (H.264/mp4v 모두 미지원)"}
+            return {"ok": True, "clip_id": self._clip_id}
+
+    def _open_new_segment_locked(self) -> bool:
+        """새 세그먼트(클립 파일)를 연다 — 호출자가 이미 self._lock을 들고 있어야 한다."""
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        clip_id = "clip_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        h, w = self._frame_shape[:2]
+        out_path = str(self.out_dir / f"{clip_id}.mp4")
+        # "avc1"(H.264) — 브라우저 <video> 태그가 실제로 디코드할 수 있는 코덱이어야
+        # 한다. "mp4v" fourcc는 실제로는 MPEG-4 Part 2로 인코딩되는데(ffprobe로 확인),
+        # 이건 어느 브라우저도 재생 못 한다 — 파일은 만들어지고 다운로드도 되지만
+        # "영상이 영상이 아닌 느낌"(재생/미리보기 불가)이 되는 원인이었다.
+        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"avc1"), max(self._fps, 1.0), (w, h))
+        if not writer.isOpened():
+            writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), max(self._fps, 1.0), (w, h))
+        if not writer.isOpened():
+            return False
+        self._writer = writer
+        self._clip_id = clip_id
+        self._segment_started_at = time.time()
+        return True
+
+    def _finalize_segment_locked(self) -> tuple[str, float]:
+        """현재 세그먼트를 마감(release+사이드카 기록)한다 — 호출자가 이미
+        self._lock을 들고 있어야 한다. 디스크 정리(_enforce_quota)는 그 자체가
+        락을 다시 잡으므로(비재진입 Lock) 여기서 호출하지 않고 락 밖에서 한다."""
+        self._writer.release()
+        clip_id = self._clip_id
+        duration = round(time.time() - self._segment_started_at, 1)
+        sidecar = {"started_at": datetime.fromtimestamp(self._segment_started_at).isoformat(),
+                   "duration_sec": duration}
+        (self.out_dir / f"{clip_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
+        return clip_id, duration
+
+    def write(self, frame: np.ndarray) -> None:
+        # write()는 카메라 루프 스레드에서, stop()은 HTTP 핸들러 스레드에서 호출된다 —
+        # cv2.VideoWriter.write()를 락 밖에서 호출하면 stop()의 release()가 동시에
+        # 같은 writer 객체를 해제해버릴 수 있어(use-after-release) 세그폴트로 프로세스
+        # 전체가 죽는다(Pi 실기기에서 실제로 재현됨). write()와 release()가 절대 동시에
+        # 같은 writer를 건드리지 않도록 write()·세그먼트 전환 모두 락 안에서 수행한다.
+        rotated = False
+        with self._lock:
+            if self._writer is None:
+                return
+            if time.time() - self._segment_started_at >= self.segment_duration_sec:
+                self._finalize_segment_locked()
+                rotated = True
+                if not self._open_new_segment_locked():
+                    # 새 세그먼트를 열 수 없으면 녹화를 중단한다 — 옛 writer는 이미 release됨
+                    self._writer = None
+                    self._clip_id = None
+                    return
+            self._writer.write(frame)
+            clip_id = self._clip_id
+        if rotated:
+            self._enforce_quota()
+        thumb_path = self.out_dir / f"{clip_id}.jpg"
+        if not thumb_path.exists():
+            cv2.imwrite(str(thumb_path), frame)  # 세그먼트 시작 시점 첫 프레임만 썸네일로 저장
+
+    def stop(self) -> dict:
+        with self._lock:
+            if self._writer is None:
+                return {"ok": False, "error": "녹화 중이 아닙니다"}
+            clip_id, duration = self._finalize_segment_locked()
+            self._writer = None
+            self._clip_id = None
+        self._enforce_quota()
+        return {"ok": True, "clip_id": clip_id, "duration_sec": duration}
+
+    def status(self) -> dict:
+        with self._lock:
+            if self._writer is None:
+                return {"recording": False}
+            return {
+                "recording": True,
+                "clip_id": self._clip_id,
+                "elapsed_sec": round(time.time() - self._session_started_at, 1),
+            }
+
+    def list_clips(self) -> list[dict]:
+        if not self.out_dir.exists():
+            return []
+        with self._lock:
+            active_id = self._clip_id
+        clips = []
+        for mp4 in sorted(self.out_dir.glob("clip_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True):
+            clip_id = mp4.stem
+            if clip_id == active_id:
+                continue  # 아직 진행 중인 클립은 stop() 전까지 목록에서 제외
+            meta = {}
+            json_path = self.out_dir / f"{clip_id}.json"
+            if json_path.exists():
+                try:
+                    meta = json.loads(json_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    meta = {}
+            clips.append({
+                "id": clip_id,
+                "started_at": meta.get("started_at"),
+                "duration_sec": meta.get("duration_sec"),
+                "size_bytes": mp4.stat().st_size,
+                "has_thumb": (self.out_dir / f"{clip_id}.jpg").exists(),
+            })
+        return clips
+
+    def clip_path(self, clip_id: str, kind: str) -> Path | None:
+        """kind: "video"|"thumb". id가 예상 형식이 아니면 None(경로 탈출 방지)."""
+        if not self._ID_RE.match(clip_id):
+            return None
+        suffix = {"video": ".mp4", "thumb": ".jpg"}.get(kind)
+        if suffix is None:
+            return None
+        path = self.out_dir / f"{clip_id}{suffix}"
+        return path if path.exists() else None
+
+    def _enforce_quota(self) -> None:
+        """개수/총용량 상한 초과 시 가장 오래된 클립(mp4+jpg+json)부터 삭제한다.
+        순수 파일시스템 로직 — cv2 의존 없이 단위테스트 가능하도록 분리."""
+        if not self.out_dir.exists():
+            return
+        with self._lock:
+            active_id = self._clip_id
+        mp4s = [
+            p for p in sorted(self.out_dir.glob("clip_*.mp4"), key=lambda p: p.stat().st_mtime)
+            if p.stem != active_id
+        ]
+
+        def _total_bytes() -> int:
+            return sum(f.stat().st_size for f in self.out_dir.glob("clip_*"))
+
+        while mp4s and (len(mp4s) > self.max_clips or _total_bytes() > self.max_total_bytes):
+            oldest = mp4s.pop(0)
+            clip_id = oldest.stem
+            for suffix in (".mp4", ".jpg", ".json"):
+                p = self.out_dir / f"{clip_id}{suffix}"
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+            print(f"[INFO] 녹화 보관 상한 초과 — 오래된 클립 삭제: {clip_id}")
+
+
+def _route_recording(method: str, path: str) -> tuple[str, str] | None:
+    """녹화 제어 HTTP 요청을 (action, clip_id) 튜플로 매칭하는 순수 함수 — 실제
+    소켓 서버 없이 라우팅 로직만 단위테스트할 수 있도록 핸들러 클래스 밖으로 뽑았다.
+    매칭되는 라우트가 없으면 None(핸들러가 /stream.mjpg 등 다른 경로로 계속 처리)."""
+    p = urlsplit(path).path
+    if method == "GET" and p == "/recording/status":
+        return ("status", "")
+    if method == "POST" and p == "/recording/start":
+        return ("start", "")
+    if method == "POST" and p == "/recording/stop":
+        return ("stop", "")
+    if method == "GET" and p == "/recording/list":
+        return ("list", "")
+    if method == "GET" and p.startswith("/recording/clips/"):
+        name = p[len("/recording/clips/"):]
+        if name.endswith(".mp4"):
+            return ("clip_video", name[:-4])
+        if name.endswith(".jpg"):
+            return ("clip_thumb", name[:-4])
+    return None
+
+
 # ── MJPEG HTTP 스트리밍 서버 ───────────────────────────────────────
 
 class MJPEGServer:
-    """스레드 안전 MJPEG 스트리밍 서버."""
+    """스레드 안전 MJPEG 스트리밍 서버. 녹화 제어(`/recording/*`)도 같은 포트에서
+    처리한다 — 브라우저가 이미 이 포트로 `/stream.mjpg`에 직접 접속하는 기존 구조와
+    동일하게, roi_editor를 거치지 않고 브라우저가 직접 호출한다."""
 
-    def __init__(self, port: int = 8080) -> None:
+    def __init__(self, port: int = 8080, recordings_dir: Path | None = None) -> None:
         self._port  = port
         self._jpeg: bytes = b""
+        self._frame_shape: tuple[int, int] | None = None
+        self._fps_samples: list[float] = []
         self._lock  = threading.Lock()
         self._httpd: ThreadingHTTPServer | None = None
+        self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
 
-    def push(self, frame: np.ndarray) -> None:
+    def push(self, frame: np.ndarray, fps: float | None = None) -> None:
         """메인 루프에서 매 프레임마다 호출."""
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         with self._lock:
             self._jpeg = buf.tobytes()
+            self._frame_shape = frame.shape[:2]
+            if fps and fps > 0:
+                self._fps_samples.append(fps)
+                if len(self._fps_samples) > 30:
+                    self._fps_samples.pop(0)
+        self.recorder.write(frame)
+
+    def _avg_fps(self) -> float:
+        with self._lock:
+            samples = list(self._fps_samples)
+        return sum(samples) / len(samples) if samples else 10.0
 
     def _handler_class(self):
         srv = self
 
         class _Handler(BaseHTTPRequestHandler):
+            def _cors(self) -> None:
+                # roi_editor 페이지(:5000)에서 카메라 포트(:8080 등)로 직접 fetch()하는
+                # 구조라 브라우저 기준 크로스오리진(포트가 다르면 별도 origin)이다 —
+                # 이 헤더가 없으면 <img src>(스트림)와 달리 fetch()는 CORS에 막혀
+                # "Failed to fetch"로 실패한다(로컬 Wi-Fi 전용 도구라 * 허용도 안전).
+                self.send_header("Access-Control-Allow-Origin", "*")
+
+            def _write_json(self, status: int, body: dict) -> None:
+                data = json.dumps(body).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self._cors()
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _serve_clip_file(self, path, content_type: str) -> None:
+                if path is None:
+                    self.send_response(404)
+                    self._cors()
+                    self.end_headers()
+                    return
+                data = path.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self._cors()
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _handle_recording_route(self, method: str) -> bool:
+                route = _route_recording(method, self.path)
+                if route is None:
+                    return False
+                action, clip_id = route
+                if action == "status":
+                    self._write_json(200, srv.recorder.status())
+                elif action == "start":
+                    with srv._lock:
+                        shape = srv._frame_shape
+                    if shape is None:
+                        self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
+                    else:
+                        result = srv.recorder.start(shape, srv._avg_fps())
+                        self._write_json(200 if result.get("ok") else 409, result)
+                elif action == "stop":
+                    result = srv.recorder.stop()
+                    self._write_json(200 if result.get("ok") else 409, result)
+                elif action == "list":
+                    self._write_json(200, {"clips": srv.recorder.list_clips()})
+                elif action == "clip_video":
+                    self._serve_clip_file(srv.recorder.clip_path(clip_id, "video"), "video/mp4")
+                elif action == "clip_thumb":
+                    self._serve_clip_file(srv.recorder.clip_path(clip_id, "thumb"), "image/jpeg")
+                return True
+
             def do_GET(self):
+                if self._handle_recording_route("GET"):
+                    return
                 if self.path != "/stream.mjpg":
                     self.send_response(404)
                     self.end_headers()
@@ -481,6 +788,12 @@ class MJPEGServer:
                         time.sleep(0.033)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # 클라이언트가 연결을 끊은 경우
+
+            def do_POST(self):
+                if self._handle_recording_route("POST"):
+                    return
+                self.send_response(404)
+                self.end_headers()
 
             def log_message(self, *_):
                 pass  # HTTP 접근 로그 억제
@@ -725,6 +1038,26 @@ class CameraPipeline:
     def is_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def _wait_for_camera(self, tag: str):
+        """카메라가 아직 물리적으로 연결되지 않았으면(CameraNotFoundError) 조용히
+        기다리다가, 연결되는 즉시 자동으로 인식해 반환한다 — USB 웹캠을 나중에 꽂아도
+        파이프라인을 수동으로 재시작할 필요가 없다. 그 외의 오류는 그대로 올려보내
+        `_run()`이 평소처럼 ERROR로 로깅하고 (외부 슈퍼바이저가) 재시도하게 한다.
+        종료 신호를 받으면 None을 반환한다."""
+        logged_absent = False
+        while not (self._local_stop.is_set() or self.shared.stop_event.is_set()):
+            try:
+                camera = build_camera(self.profile.source, backend=self.profile.backend)
+                if logged_absent:
+                    print(f"[INFO][{tag}] 카메라 연결 감지 — 파이프라인을 시작합니다")
+                return camera
+            except CameraNotFoundError as e:
+                if not logged_absent:
+                    print(f"[INFO][{tag}] 카메라 미연결 — {e} (연결되면 자동으로 인식합니다)")
+                    logged_absent = True
+                self._local_stop.wait(RESTART_BACKOFF_SEC)
+        return None
+
     def _run(self) -> None:
         profile = self.profile
         tag = profile.id
@@ -742,17 +1075,22 @@ class CameraPipeline:
         variant = MODEL_VARIANTS.get(profile.model_variant, MODEL_VARIANTS["v2_640"])
 
         try:
+            # 카메라 존재 확인을 추론 백엔드 로딩보다 먼저 한다 — USB 웹캠처럼 나중에
+            # 꽂힐 수 있는 카메라가 아직 없으면 TFLite 모델을 매번 다시 로딩하며 기다리는
+            # 낭비 없이 곧바로 대기 상태로 들어간다(_wait_for_camera 참고).
+            try:
+                camera = self._wait_for_camera(tag)
+            except Exception as e:
+                print(f"[ERROR][{tag}] 카메라 초기화 실패: {e}")
+                return
+            if camera is None:
+                return  # 종료 신호를 받아 대기를 그만둔 경우
+
             try:
                 backend = build_backend(self.base_conf, prefer=profile.inference_backend,
                                          weights_dir=variant["weights_dir"], input_size=variant["input_size"])
             except Exception as e:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
-                return
-
-            try:
-                camera = build_camera(profile.source, backend=profile.backend)
-            except Exception as e:
-                print(f"[ERROR][{tag}] 카메라 초기화 실패: {e}")
                 return
 
             tracker = SimpleTracker()
@@ -777,7 +1115,7 @@ class CameraPipeline:
                         roi_manager = None
 
             if self.headless:
-                mjpeg = MJPEGServer(profile.port)
+                mjpeg = MJPEGServer(profile.port, recordings_dir=Path("recordings") / profile.id)
                 try:
                     mjpeg.start()
                 except OSError as e:
@@ -884,6 +1222,9 @@ class CameraPipeline:
                                 print(f"[TRIGGER][{tag}] ROI={roi.name}  audio={roi.audio_file or '없음'}")
                                 if self.shared.audio_player is not None:
                                     self.shared.audio_player.play(roi.audio_file)
+                                if _EVENTS_AVAILABLE and profile.traffic_db:
+                                    log_event(profile.traffic_db, datetime.now().isoformat(),
+                                              CLASS_NAMES[CANE_CLASS_ID], roi.name)
                     for r in roi_manager.rois:
                         if r.name not in active:
                             dispatcher.on_not_detected(r.name)
@@ -894,7 +1235,7 @@ class CameraPipeline:
 
                 if self.headless:
                     assert mjpeg is not None
-                    mjpeg.push(frame)
+                    mjpeg.push(frame, fps)
                 else:
                     cv2.imshow(f"VisionGuide — {tag}", frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):

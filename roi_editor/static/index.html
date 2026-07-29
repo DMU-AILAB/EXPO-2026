@@ -5,54 +5,188 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VisionGuide — ROI Editor</title>
 <style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css');
+
+:root {
+  --accent: #2c4be0;
+  --accent-soft: rgba(44, 75, 224, 0.14);
+  --good: #15875a;
+  --good-soft: rgba(21, 135, 90, 0.12);
+  --amber: #d98a2b;
+  --amber-soft: rgba(217, 138, 43, 0.14);
+  --danger: #d3372c;
+  --danger-soft: rgba(211, 55, 44, 0.12);
+
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --ink: #1b1e27;
+  --ink-soft: #6b6f7a;
+  --line: #e7e5df;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --shadow-card: 0 1px 2px rgba(27, 30, 39, 0.04), 0 4px 12px rgba(27, 30, 39, 0.03);
+
+  --shell-height: 64px;
+  --content-pad-x: 32px;
+
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: 'Segoe UI', sans-serif;
-  background: #1a1a2e;
-  color: #eee;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--ink);
   height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ── header ── */
 header {
-  background: #16213e;
-  padding: 10px 18px;
+  height: var(--shell-height);
+  background: var(--surface);
+  padding: 0 var(--content-pad-x);
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 2px solid #0f3460;
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-header h1 { font-size: 16px; color: #e94560; white-space: nowrap; }
-.hint { font-size: 11px; color: #666; margin-left: auto; white-space: nowrap; }
+header h1 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+header h1::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
+}
+.hint { font-size: 12px; color: var(--ink-soft); margin-left: auto; white-space: nowrap; }
+
+/* ── 상단 탭 네비게이션 (TopBar) ── */
+.tabs { display: flex; gap: 28px; margin-left: auto; }
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-family: inherit;
+}
+.tab-btn.active { color: var(--ink); font-weight: 700; border-bottom-color: var(--accent); }
 
 /* ── buttons ── */
 .btn {
   padding: 6px 13px;
-  border: none;
-  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  font-family: inherit;
 }
-.btn-save  { background: #27ae60; color: #fff; }
-.btn-save:hover  { background: #2ecc71; }
-.btn-prim  { background: #0f3460; color: #fff; }
-.btn-prim:hover  { background: #1a5490; }
-.btn-danger { background: #c0392b; color: #fff; }
-.btn-danger:hover { background: #e74c3c; }
-.btn-sm { font-size: 10px; padding: 3px 7px; }
+.btn:hover { border-color: var(--accent); }
+.btn-save  { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-save:hover  { background: #2540c2; border-color: #2540c2; }
+.btn-prim  { background: var(--surface); color: var(--ink); }
+.btn-prim:hover  { border-color: var(--accent); }
+.btn-danger { background: var(--surface); color: var(--danger); border-color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
+.btn-sm { font-size: 11px; padding: 3px 7px; }
 
-/* ── layout ── */
+/* ── layout: 상단 탭으로 전환되는 페이지들 (모니터링/ROI 편집·통계·녹화) ── */
 main {
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg);
+}
+.page { display: none; height: 100%; overflow: hidden; }
+.page.active { display: flex; flex-direction: column; }
+
+/* ROI 편집 페이지 — 상단 툴바 + 좌(영상/캔버스) 68% / 우(패널) 32% 본문 */
+.roi-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px var(--content-pad-x);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.roi-body {
   display: flex;
   flex: 1;
   overflow: hidden;
+  gap: 12px;
+  padding: 16px var(--content-pad-x);
 }
+
+/* 통계/녹화 페이지 — 데모 화면3·4와 동일한 카드+그리드 구성, 상시 상주(모달 아님) */
+#page-stats.active { display: block; overflow-y: auto; padding: 24px var(--content-pad-x); }
+#page-recordings.active { display: flex; gap: 16px; padding: 16px var(--content-pad-x); }
+#recordingsClipCol { width: 320px; flex-shrink: 0; overflow-y: auto; }
+#recordingsPlayerCol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.page-title { font-size: 16px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
+
+/* 모니터링 페이지 — 좌(최근 감지 이벤트) 68% / 우(상태 카드) 32% */
+#page-monitoring.active { display: block; overflow-y: auto; padding: 24px var(--content-pad-x); }
+.monitoring-body { display: grid; grid-template-columns: 68% 32%; gap: 16px; align-items: start; }
+.monitoring-side { display: flex; flex-direction: column; gap: 12px; }
+/* 모니터링/ROI 편집 두 페이지가 같은 "카메라 뷰포트" 톤(검은 배경+테두리+둥근
+   모서리)을 공유한다 — #viewer(ROI 편집, 단일 카메라+캔버스)와 #monitorViewWrap
+   (모니터링, 카메라 1~2대) 양쪽에 동일하게 적용. */
+#monitorViewWrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+#monitorViewWrap .dual-cell {
+  flex: 1 1 320px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  justify-content: center; /* 세로축(column) 중앙 정렬 — 라벨은 align-items:stretch(기본 상속)로 폭 그대로 */
+  max-height: 55vh;
+}
+#monitorViewWrap .dual-cell img {
+  max-width: 100%;
+  max-height: 55vh;
+  width: auto;
+  display: block;
+  border: none;
+  align-self: center;
+}
+#monitorViewWrap .dual-label { border-radius: 0; }
+.events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.events-table th {
+  text-align: left; padding: 10px 12px; color: var(--ink-soft); font-weight: 600;
+  font-size: 12px; border-bottom: 1px solid var(--line); background: var(--bg);
+}
+.events-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
+.events-table tr:last-child td { border-bottom: none; }
+.audio-test-row { display: flex; gap: 6px; }
+.audio-test-row select { flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-family: inherit; font-size: 12px; }
 
 /* ── viewer ── */
 #viewer {
@@ -63,6 +197,8 @@ main {
   background: #000;
   overflow: hidden;
   position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
 #canvas-wrap {
   position: relative;
@@ -72,7 +208,7 @@ main {
 #stream {
   display: block;
   max-width: 100%;
-  max-height: calc(100vh - 84px);
+  max-height: calc(100vh - 150px);
 }
 #canvas {
   position: absolute;
@@ -92,15 +228,16 @@ main {
   flex-wrap: wrap;
 }
 .dual-cell {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 .dual-cell .dual-label {
-  color: #eee;
+  color: var(--ink);
   font-size: 12px;
   font-weight: bold;
-  background: #16213e;
+  background: var(--surface);
   padding: 4px 8px;
   border-radius: 4px 4px 0 0;
 }
@@ -108,10 +245,10 @@ main {
   max-width: 46vw;
   max-height: 70vh;
   display: block;
-  border: 1px solid #0f3460;
+  border: 1px solid var(--line);
 }
 #no-stream {
-  color: #555;
+  color: #888;
   font-size: 13px;
   text-align: center;
   padding: 40px;
@@ -119,48 +256,64 @@ main {
 
 /* ── panel ── */
 #panel {
-  width: 270px;
-  background: #16213e;
-  border-left: 2px solid #0f3460;
+  width: 320px;
+  background: var(--bg);
   display: flex;
   flex-direction: column;
+  gap: 12px;
   overflow: hidden;
   flex-shrink: 0;
 }
+#conf-section,
+#camera-section,
+#roi-list-card,
+#form-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+#roi-list-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 160px;
+  overflow: hidden;
+}
 #conf-section {
-  padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
+  padding: 12px;
   flex-shrink: 0;
 }
 #conf-section label {
-  font-size: 11px;
-  color: #99a;
+  font-size: 12px;
+  color: var(--ink-soft);
   display: block;
   margin-bottom: 4px;
 }
 #conf-section input[type="range"] {
   width: 100%;
+  accent-color: var(--accent);
 }
 #camera-section {
-  padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
+  padding: 12px;
   flex-shrink: 0;
 }
 .scan-result-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #0f3460;
+  background: var(--bg);
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 6px 8px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
 }
-.scan-result-item .model { color: #eee; }
-.scan-result-item .already { color: #666; font-size: 10px; }
+.scan-result-item .model { color: var(--ink); }
+.scan-result-item .already { color: var(--ink-soft); font-size: 11px; }
 #camera-section label {
-  font-size: 11px;
-  color: #99a;
+  font-size: 12px;
+  color: var(--ink-soft);
   display: block;
   margin-bottom: 4px;
 }
@@ -169,12 +322,18 @@ main {
 #camera-section input[type="number"] {
   width: 100%;
   padding: 5px 8px;
-  background: #0f3460;
-  border: 1px solid #2a3a60;
-  border-radius: 4px;
-  color: #eee;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
   font-size: 12px;
   margin-bottom: 6px;
+  font-family: inherit;
+}
+#camera-section select:focus,
+#camera-section input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 #camera-section .cam-row {
   display: flex;
@@ -185,49 +344,38 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
-  color: #99a;
+  font-size: 12px;
+  color: var(--ink-soft);
   margin-bottom: 6px;
 }
 #camForm { display: none; margin-top: 6px; }
 .zone-type-toggle {
   display: flex;
   gap: 10px;
-  font-size: 11px;
-  color: #ccc;
+  font-size: 12px;
+  color: var(--ink-soft);
 }
 .zone-type-toggle label { display: flex; align-items: center; gap: 4px; margin-bottom: 0; }
 .badge-exclude {
   display: inline-block;
-  font-size: 10px;
-  color: #fff;
-  background: #c0392b;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-soft);
   border-radius: 3px;
   padding: 1px 5px;
   margin-left: 5px;
 }
-#stats-section {
-  padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
-  flex-shrink: 0;
-}
-.stats-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: #99a;
-  margin-bottom: 3px;
-}
-.stats-row b { color: #eee; font-size: 13px; }
 #panel-top {
   padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 13px;
   font-weight: bold;
+  color: var(--ink);
   flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
 }
 #roi-list {
   flex: 1;
@@ -235,11 +383,15 @@ main {
   padding: 8px;
 }
 .roi-item {
-  background: #0f3460;
-  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 9px 10px;
   margin-bottom: 7px;
+  cursor: pointer;
 }
+.roi-item:hover { border-color: var(--accent); }
+.roi-item.selected { border-color: var(--accent); border-width: 2px; }
 .roi-item-hd {
   display: flex;
   justify-content: space-between;
@@ -253,78 +405,256 @@ main {
   margin-right: 5px;
   flex-shrink: 0;
 }
-.roi-name  { font-weight: bold; font-size: 13px; }
-.roi-meta  { font-size: 11px; color: #99a; margin-top: 2px; }
+.roi-name  { font-weight: bold; font-size: 14px; color: var(--ink); }
+.roi-meta  { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 
 /* ── form ── */
 #form-section {
-  border-top: 2px solid #0f3460;
   padding: 12px;
   flex-shrink: 0;
 }
 #form-section h3 {
   font-size: 12px;
-  color: #e94560;
+  font-weight: 700;
+  color: var(--ink);
   margin-bottom: 9px;
 }
 .fg { margin-bottom: 8px; }
 .fg label {
-  font-size: 10px;
-  color: #99a;
+  font-size: 11px;
+  color: var(--ink-soft);
   display: block;
   margin-bottom: 3px;
 }
 .fg input {
   width: 100%;
   padding: 5px 8px;
-  background: #0f3460;
-  border: 1px solid #2a3a60;
-  border-radius: 4px;
-  color: #eee;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
   font-size: 12px;
+  font-family: inherit;
 }
-.fg input:focus { outline: none; border-color: #e94560; }
+.fg input:focus { outline: none; border-color: var(--accent); }
 .form-btns { display: flex; gap: 6px; margin-top: 4px; }
 .form-btns .btn { flex: 1; }
 
 /* ── status bar ── */
 #statusbar {
-  background: #0a0a1a;
+  background: var(--surface);
   padding: 5px 16px;
-  font-size: 11px;
-  color: #666;
+  font-size: 12px;
+  color: var(--ink-soft);
   flex-shrink: 0;
-  border-top: 1px solid #0f3460;
+  border-top: 1px solid var(--line);
 }
-.s-ok   { color: #27ae60; }
-.s-warn { color: #f39c12; }
-.s-err  { color: #e74c3c; }
+.s-ok   { color: var(--good); }
+.s-warn { color: var(--amber); }
+.s-err  { color: var(--danger); }
+
+/* ── 통계 페이지 ── */
+.stats-chart-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 16px 20px;
+  max-width: 1200px;
+}
+.stats-chart-card__title { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 12px; }
+.period-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.period-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+}
+.period-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; max-width: 1200px; }
+.stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 16px 18px;
+}
+.stat-tile__label { font-size: 13px; color: var(--ink-soft); margin-bottom: 8px; }
+.stat-tile__value { font-size: 34px; font-weight: 700; line-height: 1.1; color: var(--ink); }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.badge__dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.badge--good { color: var(--good); }
+.badge--amber { color: var(--amber); }
+#statsChart { width: 100%; height: 260px; display: block; }
+
+/* ── 녹화 버튼(영상 위 오버레이) — ROI 편집의 #recordBtn과 모니터링의 카메라별
+   .cell-record-btn이 공유한다 ── */
+#recordBtn,
+.cell-record-btn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.cell-record-btn { top: 32px; } /* 모니터링 카메라 카드는 라벨이 상단을 차지하므로 그 아래로 */
+#recordBtn.recording,
+.cell-record-btn.recording { background: var(--danger); }
+#recordBtn .rec-dot,
+.cell-record-btn .rec-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+#recordBtn.recording .rec-dot,
+.cell-record-btn.recording .rec-dot { animation: record-blink 1s infinite; }
+@keyframes record-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+.clip-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.clip-item:hover { border-color: var(--accent); }
+.clip-item img { width: 72px; height: 40px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0; }
+.clip-item .clip-meta { font-size: 12px; color: var(--ink); }
+.clip-item .clip-meta small { color: var(--ink-soft); display: block; margin-top: 2px; }
+#clipPlayer { width: 100%; max-height: 50vh; background: #000; border-radius: var(--radius-sm); margin-top: 12px; display: none; }
+
+/* ── 확인 모달 (네이티브 confirm() 대체) ── */
+.confirm-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(27,30,39,0.45);
+  align-items: center; justify-content: center; z-index: 200;
+}
+.confirm-overlay.active { display: flex; }
+.confirm-card {
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+  padding: 20px; width: 360px; max-width: 90vw; font-size: 13px; color: var(--ink);
+}
+#confirmMessage { white-space: pre-line; line-height: 1.5; }
+
+/* ── 모바일/좁은 화면 대응 ── */
+@media (max-width: 860px) {
+  header { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
+  .tabs { margin-left: 0; gap: 10px; width: 100%; justify-content: space-between; }
+  .tab-btn { font-size: 12px; }
+  .roi-body { flex-direction: column; }
+  .roi-toolbar { flex-wrap: wrap; }
+  #panel { width: 100%; }
+  #viewer { min-height: 260px; }
+  .monitoring-body { grid-template-columns: 1fr; }
+  #page-monitoring.active { padding: 16px; }
+  #page-stats.active { padding: 16px; }
+  .stat-tiles { grid-template-columns: 1fr; max-width: none; }
+  .stats-chart-card { max-width: none; }
+  #page-recordings.active { flex-direction: column; padding: 12px; }
+  #recordingsClipCol { width: 100%; max-height: 40vh; }
+  .btn { padding: 9px 14px; } /* 터치 타겟 확대 */
+  .btn-sm { padding: 7px 10px; }
+}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>🦯 VisionGuide ROI Editor</h1>
-  <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
-  <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-right:12px"></span>
-  <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
-  <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
+  <h1>VisionGuide</h1>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="monitoring">모니터링</button>
+    <button class="tab-btn" data-tab="roi">ROI 편집</button>
+    <button class="tab-btn" data-tab="stats">통계</button>
+    <button class="tab-btn" data-tab="recordings">녹화</button>
+  </nav>
 </header>
 
 <main>
-  <div id="viewer">
-    <div id="canvas-wrap">
-      <img id="stream" alt="">
-      <canvas id="canvas"></canvas>
-    </div>
-    <div id="dualViewWrap"></div>
-    <div id="no-stream" style="display:none">
-      카메라 스트림에 연결할 수 없습니다.<br>
-      <code>camera_live_pi.py --headless</code> 가 실행 중인지 확인하세요.
+  <div class="page active" id="page-monitoring">
+    <div class="monitoring-body">
+      <div>
+        <div id="monitorViewWrap"></div>
+        <div class="page-title" style="margin-top:16px">최근 감지 이벤트</div>
+        <div class="sum-card" style="padding:0; overflow:hidden">
+          <table class="events-table">
+            <thead><tr><th>시각</th><th>클래스</th><th>구역</th></tr></thead>
+            <tbody id="eventsTableBody">
+              <tr><td colspan="3" class="roi-meta" style="padding:12px">불러오는 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="monitoring-side">
+        <div class="stat-tile" style="display:flex; align-items:center; justify-content:space-between">
+          <div>
+            <div class="stat-tile__label">카메라 상태</div>
+            <div class="badge badge--good" id="cameraStatusBadge"><span class="badge__dot"></span>확인 중</div>
+          </div>
+          <div class="roi-meta" id="cameraStatusTime"></div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile__label">오늘 총 유동인구</div>
+          <div class="stat-tile__value" id="statTotal">-</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile__label">지팡이 사용자 감지</div>
+          <div class="stat-tile__value" id="statCane">-</div>
+        </div>
+        <div class="sum-card" style="padding:14px 16px">
+          <div class="stat-tile__label" style="margin-bottom:8px">안내 음성 테스트</div>
+          <div class="audio-test-row">
+            <select id="audioTestSelect"><option value="">등록된 오디오 없음</option></select>
+            <button class="btn btn-sm" id="btnAudioTest">▶ 재생</button>
+          </div>
+          <audio id="audioTestPlayer" style="display:none"></audio>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div id="panel">
+  <div class="page" id="page-roi">
+    <div class="roi-toolbar">
+      <button class="btn btn-prim btn-sm" id="btnToggleDrawing">+ 새 구역 그리기</button>
+      <button class="btn btn-save btn-sm" id="btnFinishPoly" style="display:none">✓ 완성</button>
+      <span class="hint" id="drawingHint" style="display:none">탭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭 또는 [✓ 완성]: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+      <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-left:auto; margin-right:12px"></span>
+      <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
+      <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
+    </div>
+    <div class="roi-body">
+      <div id="viewer">
+        <button id="recordBtn"><span class="rec-dot"></span><span id="recordBtnLabel">녹화 시작</span></button>
+        <div id="canvas-wrap">
+          <img id="stream" alt="">
+          <canvas id="canvas"></canvas>
+        </div>
+        <div id="dualViewWrap"></div>
+        <div id="no-stream" style="display:none">
+          카메라 스트림에 연결할 수 없습니다.<br>
+          <code>camera_live_pi.py --headless</code> 가 실행 중인지 확인하세요.
+        </div>
+      </div>
+
+      <div id="panel">
     <div id="camera-section">
       <div id="cameraSelectWrap" style="display:none">
         <label for="cameraSelect">카메라</label>
@@ -392,19 +722,17 @@ main {
       <label for="fConfPerson">사람 신뢰도: <span id="confPersonValue">0.55</span></label>
       <input type="range" id="fConfPerson" min="0.1" max="0.95" step="0.05" value="0.55">
     </div>
-    <div id="stats-section">
-      <div class="stats-row"><span>오늘 유동인구</span><b id="statTotal">-</b></div>
-      <div class="stats-row"><span>지팡이 사용자</span><b id="statCane">-</b></div>
-    </div>
-    <div id="panel-top">
-      <span id="roi-count">ROI 목록 (0)</span>
-      <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
-    </div>
-    <div id="roi-list">
-      <div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>
+    <div id="roi-list-card">
+      <div id="panel-top">
+        <span id="roi-count">ROI 목록 (0)</span>
+        <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
+      </div>
+      <div id="roi-list">
+        <div class="roi-meta" style="padding:4px">불러오는 중...</div>
+      </div>
     </div>
     <div id="form-section" style="display:none">
-      <h3>➕ 새 ROI 정보 입력</h3>
+      <h3 id="formTitle">➕ 새 ROI 정보 입력</h3>
       <div class="fg">
         <label>구역 유형</label>
         <div class="zone-type-toggle">
@@ -430,15 +758,69 @@ main {
         <input id="fPriority" type="number" value="1" min="1">
       </div>
       <div class="form-btns">
-        <button class="btn btn-prim" id="btnAddRoi">ROI 추가</button>
-        <button class="btn btn-danger" id="btnCancel">취소</button>
+        <button class="btn btn-danger" id="btnDeleteRoiInForm" style="display:none">삭제</button>
+        <button class="btn btn-save" id="btnAddRoi">저장</button>
+        <button class="btn btn-prim" id="btnCancel">취소</button>
+      </div>
+    </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-stats">
+    <div class="page-title">📊 유동인구 통계</div>
+    <div class="period-tabs">
+      <button class="period-tab active" data-period="today">오늘</button>
+      <button class="period-tab" data-period="7d">7일</button>
+      <button class="period-tab" data-period="30d">30일</button>
+    </div>
+    <div class="stat-tiles">
+      <div class="stat-tile">
+        <div class="stat-tile__label">총 유동인구</div>
+        <div class="stat-tile__value" id="statsTotalVal">-</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile__label">지팡이 사용자 수</div>
+        <div class="stat-tile__value" id="statsCaneVal">-</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile__label">지팡이 사용자 비율</div>
+        <div class="stat-tile__value" id="statsRatioVal">-</div>
+      </div>
+    </div>
+    <div class="stats-chart-card">
+      <div class="stats-chart-card__title">시간대별/일별 유동인구</div>
+      <canvas id="statsChart" width="800" height="280"></canvas>
+    </div>
+  </div>
+
+  <div class="page" id="page-recordings">
+    <div id="recordingsClipCol">
+      <div class="page-title">🎬 녹화 목록</div>
+      <select id="recordingsCameraFilter" style="width:100%; margin-bottom:10px; padding:6px 8px; border:1px solid var(--line); border-radius:var(--radius-sm); font-family:inherit; font-size:12px">
+        <option value="">전체 카메라</option>
+      </select>
+      <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
+    </div>
+    <div id="recordingsPlayerCol">
+      <video id="clipPlayer" controls></video>
+      <div id="clipDownloadWrap" style="margin-top:8px; display:none">
+        <a id="clipDownloadLink" class="btn btn-sm" download>⬇ 다운로드</a>
       </div>
     </div>
   </div>
 </main>
 
 <div id="statusbar"><span id="status" class="s-ok">서버에 연결 중...</span></div>
-<input type="file" id="fAudioPickExisting" accept="audio/*" style="display:none">
+<div id="confirmOverlay" class="confirm-overlay">
+  <div class="confirm-card">
+    <div id="confirmMessage"></div>
+    <div class="form-btns" style="margin-top:16px">
+      <button class="btn" id="confirmCancelBtn">취소</button>
+      <button class="btn btn-save" id="confirmOkBtn">확인</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ================================================================
@@ -448,10 +830,11 @@ const COLORS = ['#00dc00','#ff8c00','#00c8ff','#ff00c8','#00ffc8'];
 
 let rois        = [];   // [{name, points, priority, announcement_text, audio_file, zone_type}]
 let drawing     = [];   // 현재 그리는 중인 꼭짓점 [[nx,ny], ...]
-let pendingPoly = null; // 폼 입력 대기 중인 폴리곤
+let pendingPoly = null; // 폼 입력 대기 중인 폴리곤(새 ROI 그리기 완료 후)
+let editingIndex = null; // 목록에서 클릭해 편집 중인 기존 ROI의 인덱스(그리기와 배타적)
+let drawingModeEnabled = false; // "+ 새 구역 그리기" 토글 — 켜져 있을 때만 캔버스 클릭이 꼭짓점을 추가
 let mousePos    = null; // canvas 픽셀 좌표 [x, y]
-let pendingAudioPath = ''; // 새 ROI 폼에서 업로드된 오디오의 Pi 경로
-let audioTargetIndex = null; // 기존 ROI 오디오 변경 시 대상 인덱스
+let pendingAudioPath = ''; // 폼에서 업로드(또는 편집 중인 ROI의 기존) 오디오의 Pi 경로
 // 클래스별 탐지 신뢰도 임계값 — camera_live_pi.py가 2초 이내 자동 반영 (rois.json의
 // conf 필드에 {white_cane, person} 객체로 저장됨. 예전 파일처럼 숫자 하나였던 경우도
 // loadFromServer()에서 두 값에 그대로 채워 넣어 하위호환한다.)
@@ -460,6 +843,8 @@ let confPerson = 0.55;
 let cameras       = [];   // GET /api/cameras 결과 — 비어있으면 기존 단일 카메라 UI 그대로
 let activeCameraId = null; // 현재 선택된 카메라 id (null = 카메라 프로필 없는 레거시 모드)
 let modelVariants = [];   // GET /api/model-variants 결과 — camera_config.MODEL_VARIANTS와 동기화
+let recordElapsedTimer = null;  // setStream()이 페이지 로드 시 곧바로 refreshRecordButton()을
+let recordStartedAtMs = null;   // 호출하므로, 이 두 변수는 그 호출 전에 선언되어 있어야 한다.
 
 /* ================================================================
    DOM refs
@@ -474,29 +859,49 @@ const noStream   = document.getElementById('no-stream');
 const canvasWrap = document.getElementById('canvas-wrap');
 const audioPick  = document.getElementById('fAudioPick');
 const audioStatusEl = document.getElementById('audioStatus');
-const existingAudioPick = document.getElementById('fAudioPickExisting');
 const confCaneInput  = document.getElementById('fConfCane');
 const confCaneValueEl = document.getElementById('confCaneValue');
 const confPersonInput  = document.getElementById('fConfPerson');
 const confPersonValueEl = document.getElementById('confPersonValue');
+const recordBtn      = document.getElementById('recordBtn');
+const recordBtnLabel = document.getElementById('recordBtnLabel');
+const clipListEl     = document.getElementById('clipList');
+const clipPlayer     = document.getElementById('clipPlayer');
+const clipDownloadWrap = document.getElementById('clipDownloadWrap');
+const clipDownloadLink = document.getElementById('clipDownloadLink');
 
 /* ================================================================
    Stream setup
 ================================================================ */
 function streamUrlFor(port) { return `http://${location.hostname}:${port}/stream.mjpg`; }
+function recordingUrlFor(port, path) { return `http://${location.hostname}:${port}${path}`; }
+
+let currentPort = 8080;  // 녹화 제어 API도 이 포트로 직접 호출 — stream.mjpg와 동일한 포트
 
 function setStream(port) {
+  currentPort = port;
   stream.src = streamUrlFor(port);
+  refreshRecordButton();
 }
 
 setStream(8080); // 카메라 프로필이 없는 레거시 단일 카메라 기본값 — loadCameras()가 있으면 덮어씀
 
-stream.onload = syncSize;
+stream.onload = () => { syncSize(); setCameraStatusBadge(true); };
 stream.onerror = () => {
   canvasWrap.style.display = 'none';
   noStream.style.display = 'block';
   setStatus('카메라 스트림 연결 실패 — camera_live_pi.py 실행 여부 확인', 'err');
+  setCameraStatusBadge(false);
 };
+
+function setCameraStatusBadge(ok) {
+  const el = document.getElementById('cameraStatusBadge');
+  if (!el) return;
+  el.className = ok ? 'badge badge--good' : 'badge badge--amber';
+  el.innerHTML = `<span class="badge__dot"></span>${ok ? '정상' : '연결 끊김'}`;
+  const timeEl = document.getElementById('cameraStatusTime');
+  if (timeEl) timeEl.textContent = new Date().toLocaleTimeString();
+}
 
 // MJPEG는 onload가 늦게 오므로 폴링으로 보완
 setInterval(() => {
@@ -546,6 +951,8 @@ async function loadCameras() {
     cameras = [];
   }
   renderCameraSelector();
+  renderMonitoringView();
+  populateRecordingsCameraFilter();
   if (cameras.length > 0) {
     const preferred = cameras.find(c => c.id === activeCameraId) || cameras.find(c => c.enabled) || cameras[0];
     switchCamera(preferred.id);
@@ -650,7 +1057,7 @@ async function addCameraFromScan(num, model) {
 async function deleteCurrentCamera() {
   const cam = cameras.find(c => c.id === activeCameraId);
   if (!cam) return;
-  if (!confirm(`'${cam.label || cam.id}' 카메라를 삭제하시겠습니까? (ROI 설정은 파일로 남아있습니다)`)) return;
+  if (!(await confirmDialog(`'${cam.label || cam.id}' 카메라를 삭제하시겠습니까? (ROI 설정은 파일로 남아있습니다)`))) return;
 
   const updated = cameras.filter(c => c.id !== activeCameraId);
   try {
@@ -676,16 +1083,52 @@ async function deleteCurrentCamera() {
 ================================================================ */
 let dualViewActive = false;
 const dualViewWrap = document.getElementById('dualViewWrap');
+const monitorViewWrap = document.getElementById('monitorViewWrap');
 const btnDualView  = document.getElementById('btnDualView');
 
-function renderDualView() {
-  const list = cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }];
-  dualViewWrap.innerHTML = list.map(c => `
-    <div class="dual-cell">
+function _cameraCellsHtml(list) {
+  // 설정상 활성화(enabled)돼 있어도 실제로 연결 안 된 카메라는 MJPEG 포트 자체가
+  // 아직 열려있지 않다(camera_live_pi.py가 _wait_for_camera()에서 대기 중이면
+  // mjpeg.start()를 아직 안 부른 상태) — 그래서 stream.mjpg 요청이 connection
+  // refused로 즉시 실패하고 <img>의 onerror가 확실히 뜬다. 이걸로 "실제 입력이
+  // 있는 카메라"만 남기고 나머지 칸은 숨긴다(설정상 몇 대 있는지와 무관).
+  return list.map(c => `
+    <div class="dual-cell" data-cam="${escAttr(c.id)}" data-port="${c.port}">
       <div class="dual-label">${escHtml(c.label || c.id)}${c.enabled === false ? ' (비활성)' : ''}</div>
-      <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}">
+      <button class="cell-record-btn" onclick="toggleCellRecording(${c.port}, this)">
+        <span class="rec-dot"></span><span class="cell-record-label">녹화 시작</span>
+      </button>
+      <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}"
+           onload="this.closest('.dual-cell').style.display=''"
+           onerror="this.closest('.dual-cell').style.display='none'">
     </div>
   `).join('');
+}
+
+function _refreshCellRecordButtons(container) {
+  container.querySelectorAll('.dual-cell').forEach(cell => {
+    const port = cell.dataset.port;
+    const btn = cell.querySelector('.cell-record-btn');
+    if (port && btn) refreshCellRecordButton(port, btn);
+  });
+}
+
+function _availableCameraList() {
+  return cameras.length > 0 ? cameras.filter(c => c.enabled !== false) : [{ id: 'legacy', label: '카메라', port: 8080 }];
+}
+
+function renderDualView() {
+  dualViewWrap.innerHTML = _cameraCellsHtml(cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }]);
+  _refreshCellRecordButtons(dualViewWrap);
+}
+
+// 모니터링 탭 — 설정상 활성화된 카메라 후보를 전부 렌더링하되, 실제로 스트림이
+// 연결되는 것만 남는다(_cameraCellsHtml의 onerror가 나머지를 숨김) — 그 결과
+// 실제 입력이 2대 이상일 때만 자연스럽게 나란히 보이고, 1대만 연결돼 있으면
+// 그 1대만 보인다. "설정에 2대가 등록돼 있다"만으로는 나란히 보이지 않는다.
+function renderMonitoringView() {
+  monitorViewWrap.innerHTML = _cameraCellsHtml(_availableCameraList());
+  _refreshCellRecordButtons(monitorViewWrap);
 }
 
 btnDualView.addEventListener('click', () => {
@@ -744,7 +1187,7 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
 
   const newRotation = parseInt(document.getElementById('camRotation').value, 10);
   if (newRotation !== cam.rotation) {
-    const proceed = confirm(
+    const proceed = await confirmDialog(
       '⚠️ 카메라 회전값을 변경했습니다.\n' +
       '이 카메라에 이미 그려진 ROI/제외구역이 새 회전 기준으로 맞지 않을 수 있습니다.\n' +
       '구역을 다시 확인하고 필요시 재그려주세요.\n\n계속하시겠습니까?'
@@ -796,12 +1239,12 @@ function canvasPos(e) {
 function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 저장된 ROIs
+  // 저장된 ROIs — 편집 중(선택된) ROI는 굵은 테두리로 강조
   rois.forEach((roi, i) => {
     const isExclude = (roi.zone_type || 'trigger') === 'exclude';
     const color = isExclude ? '#ff3030' : COLORS[i % COLORS.length];
     const label = (isExclude ? '🚫 ' : '') + roi.name;
-    drawPoly(roi.points, color, isExclude ? 0.15 : 0.20, label, true, isExclude);
+    drawPoly(roi.points, color, isExclude ? 0.15 : 0.20, label, true, isExclude, i === editingIndex ? 4 : 2);
   });
 
   // 폼 대기 중인 폴리곤
@@ -813,7 +1256,7 @@ function redraw() {
   drawInProgress();
 }
 
-function drawPoly(points, color, alpha, label, closed, dashed = false) {
+function drawPoly(points, color, alpha, label, closed, dashed = false, lineWidth = 2) {
   if (points.length < 2) return;
 
   ctx.beginPath();
@@ -829,9 +1272,9 @@ function drawPoly(points, color, alpha, label, closed, dashed = false) {
   ctx.fillStyle = color + Math.round(alpha * 255).toString(16).padStart(2, '0');
   ctx.fill();
 
-  // stroke — 제외구역은 점선으로 트리거 구역과 구분
+  // stroke — 제외구역은 점선으로 트리거 구역과 구분, 편집 중인 ROI는 굵게
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = lineWidth;
   ctx.setLineDash(dashed ? [8, 5] : []);
   ctx.stroke();
   ctx.setLineDash([]);
@@ -849,7 +1292,7 @@ function drawPoly(points, color, alpha, label, closed, dashed = false) {
   if (label && points.length >= 3) {
     const cx = points.reduce((s, p) => s + p[0], 0) / points.length * canvas.width;
     const cy = points.reduce((s, p) => s + p[1], 0) / points.length * canvas.height;
-    ctx.font = 'bold 13px sans-serif';
+    ctx.font = "bold 13px 'Pretendard Variable', sans-serif";
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#000';
     ctx.strokeText(label, cx - 20, cy + 5);
@@ -909,9 +1352,55 @@ canvas.addEventListener('mouseleave', () => {
   if (drawing.length > 0) redraw();
 });
 
+const btnToggleDrawing = document.getElementById('btnToggleDrawing');
+const btnFinishPoly = document.getElementById('btnFinishPoly');
+const drawingHintEl = document.getElementById('drawingHint');
+
+function setDrawingMode(enabled) {
+  drawingModeEnabled = enabled;
+  btnToggleDrawing.textContent = enabled ? '그리기 취소' : '+ 새 구역 그리기';
+  btnToggleDrawing.classList.toggle('btn-save', enabled);
+  drawingHintEl.style.display = enabled ? 'inline' : 'none';
+  updateFinishButtonVisibility();
+}
+
+function updateFinishButtonVisibility() {
+  btnFinishPoly.style.display = (drawingModeEnabled && drawing.length >= 3) ? 'inline-block' : 'none';
+}
+
+btnToggleDrawing.addEventListener('click', () => {
+  if (drawingModeEnabled) {
+    cancelDrawing();
+  } else {
+    if (editingIndex !== null) closeForm(); // 편집 중이던 기존 ROI 폼과 배타적
+    setDrawingMode(true);
+    setStatus('캔버스를 탭(클릭)해 구역 꼭짓점을 추가하세요', 'warn');
+  }
+});
+
+function finishPolygon() {
+  if (drawing.length < 3) {
+    setStatus('꼭짓점이 3개 이상 필요합니다', 'err');
+    return;
+  }
+  pendingPoly = drawing.slice();
+  drawing = [];
+  setDrawingMode(false);
+  formSec.style.display = 'block';
+  document.getElementById('formTitle').textContent = '➕ 새 ROI 정보 입력';
+  document.getElementById('btnDeleteRoiInForm').style.display = 'none';
+  updateZoneTypeFieldsVisibility();
+  document.getElementById('fName').focus();
+  document.getElementById('fPriority').value = rois.length + 1;
+  setStatus('ROI 정보를 입력하고 [저장]을 누르세요', 'warn');
+  redraw();
+}
+
+btnFinishPoly.addEventListener('click', finishPolygon);
+
 let lastClickTime = 0;
 canvas.addEventListener('click', e => {
-  if (pendingPoly) return;
+  if (!drawingModeEnabled || pendingPoly) return;
 
   const now = Date.now();
   // dblclick fires click×2 → ignore second click within 300ms
@@ -920,24 +1409,14 @@ canvas.addEventListener('click', e => {
 
   const [cx, cy] = canvasPos(e);
   drawing.push(toNorm(cx, cy));
-  setStatus(`꼭짓점 ${drawing.length}개 추가됨 — 더블클릭으로 완성 | ESC 취소`, 'warn');
+  updateFinishButtonVisibility();
+  setStatus(`꼭짓점 ${drawing.length}개 추가됨 — 더블클릭 또는 [✓ 완성]으로 완성 | ESC 취소`, 'warn');
   redraw();
 });
 
 canvas.addEventListener('dblclick', e => {
-  if (pendingPoly) return;
-  if (drawing.length < 3) {
-    setStatus('꼭짓점이 3개 이상 필요합니다', 'err');
-    return;
-  }
-  pendingPoly = drawing.slice();
-  drawing = [];
-  formSec.style.display = 'block';
-  updateZoneTypeFieldsVisibility();
-  document.getElementById('fName').focus();
-  document.getElementById('fPriority').value = rois.length + 1;
-  setStatus('ROI 정보를 입력하고 [ROI 추가]를 누르세요', 'warn');
-  redraw();
+  if (!drawingModeEnabled || pendingPoly) return;
+  finishPolygon();
 });
 
 /* ================================================================
@@ -964,48 +1443,72 @@ document.addEventListener('keydown', e => {
 /* ================================================================
    Form
 ================================================================ */
-function cancelDrawing() {
+function closeFormSilently() {
   drawing = [];
   pendingPoly = null;
+  editingIndex = null;
+  setDrawingMode(false);
   formSec.style.display = 'none';
   resetAudioPick();
   document.querySelector('input[name="fZoneType"][value="trigger"]').checked = true;
   updateZoneTypeFieldsVisibility();
-  setStatus('취소됨 — 캔버스를 클릭해 다시 그리세요', 'ok');
-  redraw();
 }
 
-document.getElementById('btnCancel').addEventListener('click', cancelDrawing);
+function closeForm() {
+  closeFormSilently();
+  setStatus('닫힘', 'ok');
+  renderList();
+  redraw();
+}
+const cancelDrawing = closeForm; // 그리기 취소/폼 닫기 공용 별칭 — 기존 호출부 호환
+
+document.getElementById('btnCancel').addEventListener('click', closeForm);
+document.getElementById('btnDeleteRoiInForm').addEventListener('click', async () => {
+  if (editingIndex === null) return;
+  const name = rois[editingIndex].name;
+  if (!(await confirmDialog(`'${name}' ROI를 삭제하시겠습니까?`))) return;
+  rois.splice(editingIndex, 1);
+  closeForm();
+  saveToServer();
+});
 
 document.getElementById('btnAddRoi').addEventListener('click', () => {
   const name     = document.getElementById('fName').value.trim();
   const text     = document.getElementById('fText').value.trim();
   const prio     = parseInt(document.getElementById('fPriority').value) || 1;
   const zoneType = document.querySelector('input[name="fZoneType"]:checked').value;
+  const audioFile = zoneType === 'exclude' ? '' : pendingAudioPath;
 
   if (!name) { setStatus('이름은 필수입니다', 'err'); return; }
   if (zoneType === 'trigger' && !text) { setStatus('트리거 구역은 안내 텍스트가 필수입니다', 'err'); return; }
-  if (rois.find(r => r.name === name)) { setStatus(`'${name}' 이름이 이미 존재합니다`, 'err'); return; }
+  const dup = rois.find((r, i) => r.name === name && i !== editingIndex);
+  if (dup) { setStatus(`'${name}' 이름이 이미 존재합니다`, 'err'); return; }
 
-  rois.push({
-    name,
-    points: pendingPoly,
-    priority: prio,
-    announcement_text: text,
-    audio_file: zoneType === 'exclude' ? '' : pendingAudioPath,
-    zone_type: zoneType,
-  });
+  if (editingIndex !== null) {
+    const roi = rois[editingIndex];
+    roi.name = name;
+    roi.priority = prio;
+    roi.announcement_text = text;
+    roi.audio_file = audioFile;
+    roi.zone_type = zoneType;
+    setStatus(`'${name}' 수정됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
+  } else {
+    if (!pendingPoly) { setStatus('그려진 폴리곤이 없습니다', 'err'); return; }
+    rois.push({
+      name,
+      points: pendingPoly,
+      priority: prio,
+      announcement_text: text,
+      audio_file: audioFile,
+      zone_type: zoneType,
+    });
+    setStatus(`'${name}' 추가됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
+  }
 
-  pendingPoly = null;
-  formSec.style.display = 'none';
+  closeFormSilently();
   ['fName','fText'].forEach(id => document.getElementById(id).value = '');
-  document.querySelector('input[name="fZoneType"][value="trigger"]').checked = true;
-  updateZoneTypeFieldsVisibility();
-  resetAudioPick();
-
   renderList();
   redraw();
-  setStatus(`'${name}' 추가됨 — [💾 전체 저장]으로 Pi에 반영하세요`, 'warn');
 });
 
 /* ================================================================
@@ -1041,76 +1544,58 @@ audioPick.addEventListener('change', async (e) => {
   }
 });
 
-function pickAudioFor(i) {
-  audioTargetIndex = i;
-  existingAudioPick.value = '';
-  existingAudioPick.click();
-}
-
-existingAudioPick.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file || audioTargetIndex === null) return;
-  const roiName = rois[audioTargetIndex].name;
-  setStatus(`⏳ 업로드 중... (${file.name})`, 'warn');
-  try {
-    const path = await uploadAudio(file);
-    rois[audioTargetIndex].audio_file = path;
-    renderList();
-    await saveToServer();
-    setStatus(`✅ '${roiName}' 오디오 적용 및 저장 완료 — 기기가 2초 이내 자동 반영합니다`, 'ok');
-  } catch (err) {
-    setStatus(`❌ 업로드 실패: ${err.message}`, 'err');
-  } finally {
-    audioTargetIndex = null;
-  }
-});
-
 /* ================================================================
    ROI list
 ================================================================ */
 function renderList() {
   document.getElementById('roi-count').textContent = `ROI 목록 (${rois.length})`;
+  refreshAudioTestOptions();
 
   if (rois.length === 0) {
-    roiListEl.innerHTML = '<div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>';
+    roiListEl.innerHTML = '<div style="text-align:center; padding:32px 12px; color:var(--ink-soft)"><div style="font-size:24px; margin-bottom:8px">📍</div><div class="roi-meta">등록된 ROI가 없습니다<br>"+ 새 구역 그리기"로 시작하세요</div></div>';
     return;
   }
 
+  // 데모(RoiEditPage.jsx) 패턴 — 목록은 단순 버튼 리스트, 클릭하면 우측 폼에 로드되어
+  // 편집(이름/텍스트/오디오/우선순위/구역유형)할 수 있다. 삭제도 그 폼 안에서만 한다.
   roiListEl.innerHTML = rois.map((roi, i) => {
     const isExclude = (roi.zone_type || 'trigger') === 'exclude';
+    const selected = i === editingIndex;
     return `
-    <div class="roi-item">
-      <div class="roi-item-hd">
-        <span>
-          <span class="color-dot" style="background:${isExclude ? '#ff3030' : COLORS[i % COLORS.length]}"></span>
-          <span class="roi-name">${escHtml(roi.name)}</span>
-          ${isExclude ? '<span class="badge-exclude">🚫 제외구역</span>' : ''}
-        </span>
-        <button class="btn btn-danger btn-sm" onclick="deleteRoi('${escAttr(roi.name)}')">삭제</button>
-      </div>
-      ${roi.announcement_text ? `<div class="roi-meta">${escHtml(roi.announcement_text)}</div>` : ''}
-      ${roi.audio_file ? `<div class="roi-meta">🎵 ${escHtml(roi.audio_file.split(/[\\/]/).pop())}</div>` : ''}
-      <div class="roi-meta">우선순위 ${roi.priority} | 꼭짓점 ${roi.points.length}개</div>
-      ${isExclude ? '' : `
-      <div class="form-btns" style="margin-top:6px">
-        <button class="btn btn-prim btn-sm" onclick="pickAudioFor(${i})">🎵 오디오 ${roi.audio_file ? '변경' : '추가'}</button>
-      </div>`}
-    </div>
+    <button class="roi-item${selected ? ' selected' : ''}" style="display:block; width:100%; text-align:left; border:1px solid var(--line); background:var(--surface)" onclick="selectRoiForEdit(${i})">
+      <span class="color-dot" style="background:${isExclude ? '#ff3030' : COLORS[i % COLORS.length]}"></span>
+      <span class="roi-name">▸ ${escHtml(roi.name)}</span>
+      ${isExclude ? '<span class="badge-exclude">🚫 제외구역</span>' : ''}
+      ${selected ? ' <span class="roi-meta">(선택)</span>' : ''}
+    </button>
   `;
   }).join('');
 }
 
-function deleteRoi(name) {
-  if (!confirm(`'${name}' ROI를 삭제하시겠습니까?`)) return;
-  rois = rois.filter(r => r.name !== name);
+function selectRoiForEdit(i) {
+  closeFormSilently(); // 상태만 초기화(재귀적으로 renderList를 다시 부르지 않도록)
+  editingIndex = i;
+  const roi = rois[i];
+  const isExclude = (roi.zone_type || 'trigger') === 'exclude';
+
+  document.getElementById('formTitle').textContent = `✏️ '${roi.name}' 편집`;
+  document.querySelector(`input[name="fZoneType"][value="${isExclude ? 'exclude' : 'trigger'}"]`).checked = true;
+  document.getElementById('fName').value = roi.name;
+  document.getElementById('fText').value = roi.announcement_text || '';
+  document.getElementById('fPriority').value = roi.priority;
+  pendingAudioPath = roi.audio_file || '';
+  audioStatusEl.textContent = pendingAudioPath ? `현재: ${pendingAudioPath.split(/[\\/]/).pop()}` : '등록된 오디오 없음';
+  audioStatusEl.className = 'roi-meta';
+  document.getElementById('btnDeleteRoiInForm').style.display = 'inline-block';
+  updateZoneTypeFieldsVisibility();
+  formSec.style.display = 'block';
   renderList();
   redraw();
-  saveToServer();
 }
 
-document.getElementById('btnClearAll').addEventListener('click', () => {
+document.getElementById('btnClearAll').addEventListener('click', async () => {
   if (rois.length === 0) return;
-  if (!confirm('모든 ROI를 삭제하시겠습니까?')) return;
+  if (!(await confirmDialog('모든 ROI를 삭제하시겠습니까?'))) return;
   rois = [];
   cancelDrawing();
   renderList();
@@ -1123,7 +1608,9 @@ document.getElementById('btnClearAll').addEventListener('click', () => {
 document.getElementById('btnSaveAll').addEventListener('click', saveToServer);
 
 function _apiUrl(path) {
-  return activeCameraId ? `${path}?camera=${encodeURIComponent(activeCameraId)}` : path;
+  if (!activeCameraId) return path;
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}camera=${encodeURIComponent(activeCameraId)}`;
 }
 
 async function saveToServer() {
@@ -1195,11 +1682,379 @@ async function loadStats() {
 }
 
 /* ================================================================
+   모니터링 페이지 — 최근 감지 이벤트 + 안내 음성 테스트
+================================================================ */
+async function loadEvents() {
+  const tbody = document.getElementById('eventsTableBody');
+  try {
+    const res  = await fetch(_apiUrl('/api/events?limit=8'));
+    const data = await res.json();
+    const events = data.events || [];
+    if (events.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="roi-meta" style="padding:12px">아직 감지된 이벤트가 없습니다</td></tr>';
+      return;
+    }
+    tbody.innerHTML = events.map(ev => `
+      <tr>
+        <td>${escHtml(new Date(ev.ts).toLocaleTimeString())}</td>
+        <td>${escHtml(ev.class_name)}</td>
+        <td>${escHtml(ev.roi_name)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" class="roi-meta s-err" style="padding:12px">이벤트 조회 실패: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function refreshAudioTestOptions() {
+  const sel = document.getElementById('audioTestSelect');
+  const withAudio = rois.filter(r => r.audio_file);
+  if (withAudio.length === 0) {
+    sel.innerHTML = '<option value="">등록된 오디오 없음</option>';
+    return;
+  }
+  sel.innerHTML = withAudio.map(r =>
+    `<option value="${escAttr(r.audio_file)}">${escHtml(r.name)}</option>`
+  ).join('');
+}
+
+document.getElementById('btnAudioTest').addEventListener('click', () => {
+  const sel = document.getElementById('audioTestSelect');
+  if (!sel.value) return;
+  const player = document.getElementById('audioTestPlayer');
+  player.src = `/api/audio/file?path=${encodeURIComponent(sel.value)}`;
+  player.play().catch(err => setStatus(`❌ 재생 실패: ${err.message}`, 'err'));
+});
+
+/* ================================================================
+   통계 패널 (기간별 시계열 — 순수 canvas 꺾은선 그래프, 차트 라이브러리 없음)
+================================================================ */
+let statsPeriod = 'today';
+
+function drawLineChart(canvasEl, points, valueKey) {
+  const dctx = canvasEl.getContext('2d');
+  const w = canvasEl.width, h = canvasEl.height;
+  dctx.clearRect(0, 0, w, h);
+  if (!points.length) return;
+
+  const padL = 38, padR = 12, padT = 12, padB = 26;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const values = points.map(p => p[valueKey]);
+  const maxV = Math.max(1, ...values);
+
+  const xFor = i => padL + (points.length === 1 ? 0 : (i / (points.length - 1)) * plotW);
+  const yFor = v => padT + plotH - (v / maxV) * plotH;
+
+  const grad = dctx.createLinearGradient(0, padT, 0, padT + plotH);
+  grad.addColorStop(0, 'rgba(44,75,224,0.22)');
+  grad.addColorStop(1, 'rgba(44,75,224,0.02)');
+  dctx.beginPath();
+  dctx.moveTo(xFor(0), padT + plotH);
+  values.forEach((v, i) => dctx.lineTo(xFor(i), yFor(v)));
+  dctx.lineTo(xFor(values.length - 1), padT + plotH);
+  dctx.closePath();
+  dctx.fillStyle = grad;
+  dctx.fill();
+
+  dctx.beginPath();
+  values.forEach((v, i) => {
+    const x = xFor(i), y = yFor(v);
+    if (i === 0) dctx.moveTo(x, y); else dctx.lineTo(x, y);
+  });
+  dctx.strokeStyle = '#2c4be0';
+  dctx.lineWidth = 2;
+  dctx.stroke();
+
+  dctx.strokeStyle = '#e7e5df';
+  dctx.lineWidth = 1;
+  dctx.beginPath();
+  dctx.moveTo(padL, padT);
+  dctx.lineTo(padL, padT + plotH);
+  dctx.lineTo(padL + plotW, padT + plotH);
+  dctx.stroke();
+
+  dctx.fillStyle = '#6b6f7a';
+  dctx.font = "11px 'Pretendard Variable', sans-serif";
+  dctx.textAlign = 'center';
+  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  points.forEach((p, i) => {
+    if (i % labelEvery !== 0 && i !== points.length - 1) return;
+    const label = ('hour' in p) ? String(p.hour) : p.date.slice(5);
+    dctx.fillText(label, xFor(i), h - 6);
+  });
+
+  dctx.textAlign = 'right';
+  dctx.fillText(String(maxV), padL - 6, padT + 4);
+  dctx.fillText('0', padL - 6, padT + plotH + 4);
+}
+
+async function loadStatsTimeseries(period) {
+  statsPeriod = period;
+  document.querySelectorAll('.period-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.period === period);
+  });
+  try {
+    const res  = await fetch(_apiUrl(`/api/stats/timeseries?period=${period}`));
+    const data = await res.json();
+    const points = data.points || [];
+    const total  = points.reduce((s, p) => s + p.total_count, 0);
+    const cane   = points.reduce((s, p) => s + p.cane_user_count, 0);
+    document.getElementById('statsTotalVal').textContent = total;
+    document.getElementById('statsCaneVal').textContent  = cane;
+    document.getElementById('statsRatioVal').textContent = total > 0 ? `${((cane / total) * 100).toFixed(1)}%` : '0%';
+    drawLineChart(document.getElementById('statsChart'), points, 'total_count');
+  } catch (e) {
+    setStatus(`❌ 통계 조회 실패: ${e.message}`, 'err');
+  }
+}
+
+document.querySelectorAll('.period-tab').forEach(btn => {
+  btn.addEventListener('click', () => loadStatsTimeseries(btn.dataset.period));
+});
+
+/* ================================================================
+   녹화 (수동 시작/중지 클립) — 브라우저가 현재 스트림과 같은 포트로 직접 호출한다
+   (roi_editor 서버를 거치지 않음 — streamUrlFor(port)와 동일한 패턴).
+================================================================ */
+function formatElapsed(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function setRecordButtonState(recording, elapsedSec) {
+  recordBtn.classList.toggle('recording', recording);
+  recordBtnLabel.textContent = recording ? `녹화 중지 ${formatElapsed(elapsedSec || 0)}` : '녹화 시작';
+}
+
+async function refreshRecordButton() {
+  clearInterval(recordElapsedTimer);
+  try {
+    const res  = await fetch(recordingUrlFor(currentPort, '/recording/status'));
+    const data = await res.json();
+    if (data.recording) {
+      recordStartedAtMs = Date.now() - data.elapsed_sec * 1000;
+      setRecordButtonState(true, data.elapsed_sec);
+      recordElapsedTimer = setInterval(() => {
+        setRecordButtonState(true, (Date.now() - recordStartedAtMs) / 1000);
+      }, 1000);
+    } else {
+      setRecordButtonState(false, 0);
+    }
+  } catch (e) {
+    setRecordButtonState(false, 0);  // 기기 응답 없음 — 평상시 상태로 표시
+  }
+}
+
+recordBtn.addEventListener('click', async () => {
+  const wasRecording = recordBtn.classList.contains('recording');
+  try {
+    const res  = await fetch(
+      recordingUrlFor(currentPort, wasRecording ? '/recording/stop' : '/recording/start'),
+      { method: 'POST' }
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '요청 실패');
+    await refreshRecordButton();
+    if (wasRecording) setStatus(`✅ 녹화 종료 (${data.duration_sec}s) — 녹화 목록에서 확인하세요`, 'ok');
+  } catch (e) {
+    setStatus(`❌ 녹화 ${wasRecording ? '중지' : '시작'} 실패: ${e.message}`, 'err');
+  }
+});
+
+/* ================================================================
+   모니터링(카메라 여러 대) / 두 카메라 보기 — 카메라 카드마다 독립적인
+   녹화 버튼. ROI 편집 탭의 recordBtn과 같은 API(포트 기준)를 쓰지만
+   상태(타이머 등)는 카메라별로 따로 관리한다.
+================================================================ */
+const _cellRecordTimers = {}; // port -> intervalId
+
+function _setCellRecordButtonState(btn, port, recording, elapsedSec) {
+  clearInterval(_cellRecordTimers[port]);
+  btn.classList.toggle('recording', recording);
+  const label = btn.querySelector('.cell-record-label');
+  if (recording) {
+    const startedAtMs = Date.now() - (elapsedSec || 0) * 1000;
+    label.textContent = `녹화 중지 ${formatElapsed(elapsedSec || 0)}`;
+    _cellRecordTimers[port] = setInterval(() => {
+      label.textContent = `녹화 중지 ${formatElapsed((Date.now() - startedAtMs) / 1000)}`;
+    }, 1000);
+  } else {
+    label.textContent = '녹화 시작';
+  }
+}
+
+async function refreshCellRecordButton(port, btn) {
+  try {
+    const res  = await fetch(recordingUrlFor(port, '/recording/status'));
+    const data = await res.json();
+    _setCellRecordButtonState(btn, port, data.recording, data.elapsed_sec);
+  } catch (e) {
+    _setCellRecordButtonState(btn, port, false, 0);
+  }
+}
+
+async function toggleCellRecording(port, btn) {
+  const wasRecording = btn.classList.contains('recording');
+  try {
+    const res  = await fetch(
+      recordingUrlFor(port, wasRecording ? '/recording/stop' : '/recording/start'),
+      { method: 'POST' }
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '요청 실패');
+    await refreshCellRecordButton(port, btn);
+    if (wasRecording) setStatus(`✅ 녹화 종료 (${data.duration_sec}s) — 녹화 목록에서 확인하세요`, 'ok');
+  } catch (e) {
+    setStatus(`❌ 녹화 ${wasRecording ? '중지' : '시작'} 실패: ${e.message}`, 'err');
+  }
+}
+
+function formatClipSize(bytes) {
+  if (bytes == null) return '';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)}MB` : `${Math.round(bytes / 1024)}KB`;
+}
+
+// 녹화 목록은 ROI 편집에서 현재 선택된 카메라 하나로 한정되지 않는다 — 등록된
+// 카메라 전체(연결 여부 무관, 예전에 찍어둔 녹화도 볼 수 있어야 하므로)를 필터
+// 후보로 삼는다.
+function _recordingsCameraList() {
+  return cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }];
+}
+
+function populateRecordingsCameraFilter() {
+  const sel = document.getElementById('recordingsCameraFilter');
+  const prev = sel.value;
+  const list = _recordingsCameraList();
+  sel.innerHTML = '<option value="">전체 카메라</option>' +
+    list.map(c => `<option value="${c.port}">${escHtml(c.label || c.id)}</option>`).join('');
+  if (list.some(c => String(c.port) === prev)) sel.value = prev;
+}
+
+async function loadClipList() {
+  clipListEl.innerHTML = '<div class="roi-meta">불러오는 중...</div>';
+  const filterPort = document.getElementById('recordingsCameraFilter').value;
+  const targets = filterPort
+    ? _recordingsCameraList().filter(c => String(c.port) === filterPort)
+    : _recordingsCameraList();
+
+  try {
+    const results = await Promise.all(targets.map(async c => {
+      try {
+        const res  = await fetch(recordingUrlFor(c.port, '/recording/list'));
+        const data = await res.json();
+        return (data.clips || []).map(clip => ({ ...clip, _port: c.port, _camLabel: c.label || c.id }));
+      } catch (e) {
+        return []; // 카메라 하나가 응답 없어도 나머지는 계속 보여준다
+      }
+    }));
+    const clips = results.flat().sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+
+    if (clips.length === 0) {
+      clipListEl.innerHTML = '<div class="roi-meta">아직 녹화된 영상이 없습니다 — 영상 좌상단 "녹화 시작" 버튼으로 시작하세요.</div>';
+      return;
+    }
+    const showCameraLabel = !filterPort && targets.length > 1;
+    clipListEl.innerHTML = clips.map(c => `
+      <div class="clip-item" onclick="playClip('${escAttr(c.id)}', ${c._port})">
+        ${c.has_thumb ? `<img src="${recordingUrlFor(c._port, `/recording/clips/${c.id}.jpg`)}" alt="">` : ''}
+        <div class="clip-meta">
+          ${c.started_at ? escHtml(new Date(c.started_at).toLocaleString()) : escHtml(c.id)}
+          <small>${showCameraLabel ? escHtml(c._camLabel) + ' · ' : ''}${c.duration_sec != null ? c.duration_sec + 's' : ''} · ${formatClipSize(c.size_bytes)}</small>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    clipListEl.innerHTML = `<div class="roi-meta s-err">목록을 불러오지 못했습니다: ${escHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('recordingsCameraFilter').addEventListener('change', loadClipList);
+
+function playClip(clipId, port) {
+  const url = recordingUrlFor(port, `/recording/clips/${clipId}.mp4`);
+  clipPlayer.src = url;
+  clipPlayer.style.display = 'block';
+  clipPlayer.play().catch(() => {});
+
+  // 크로스오리진(카메라 포트) 링크는 <a download>가 브라우저에 따라 무시되고
+  // 그냥 새 탭에서 열려버리는 경우가 있다 — blob으로 받아 로컬 URL을 만들어야
+  // download 속성이 항상 확실히 동작한다.
+  clipDownloadLink.textContent = '⬇ 다운로드 준비 중...';
+  clipDownloadWrap.style.display = 'block';
+  fetch(url)
+    .then(res => res.blob())
+    .then(blob => {
+      const blobUrl = URL.createObjectURL(blob);
+      clipDownloadLink.href = blobUrl;
+      clipDownloadLink.setAttribute('download', `${clipId}.mp4`);
+      clipDownloadLink.textContent = '⬇ 다운로드';
+    })
+    .catch(err => {
+      clipDownloadLink.textContent = `❌ 다운로드 준비 실패: ${err.message}`;
+    });
+}
+
+/* ================================================================
+   상단 탭 전환 — ROI 편집 / 통계 / 녹화 (데모 대시보드의 TopBar 탭 패턴)
+================================================================ */
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === name);
+  });
+  document.querySelectorAll('main > .page').forEach(page => {
+    page.classList.toggle('active', page.id === `page-${name}`);
+  });
+  if (name === 'monitoring') {
+    renderMonitoringView();
+    loadEvents();
+    loadStats();
+    refreshAudioTestOptions();
+  } else if (name === 'roi') {
+    syncSize();
+  } else if (name === 'stats') {
+    loadStatsTimeseries(statsPeriod);
+  } else if (name === 'recordings') {
+    clipPlayer.pause();
+    clipPlayer.style.display = 'none';
+    clipDownloadWrap.style.display = 'none';
+    populateRecordingsCameraFilter();
+    loadClipList();
+  }
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+/* ================================================================
    Utilities
 ================================================================ */
 function setStatus(msg, type) {
   statusEl.textContent = msg;
   statusEl.className = type === 'err' ? 's-err' : type === 'warn' ? 's-warn' : 's-ok';
+}
+
+// 네이티브 confirm() 대체 — 톤을 카드/버튼 스타일과 통일한다.
+function confirmDialog(message) {
+  const overlay = document.getElementById('confirmOverlay');
+  document.getElementById('confirmMessage').textContent = message;
+  overlay.classList.add('active');
+  return new Promise(resolve => {
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+    const cleanup = (result) => {
+      overlay.classList.remove('active');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
 }
 
 function escHtml(s) {
@@ -1257,6 +2112,8 @@ syncSize();
 setInterval(loadStats, 5000);
 loadDeviceStatus();
 setInterval(loadDeviceStatus, 10000);
+loadEvents();
+setInterval(loadEvents, 5000);
 </script>
 </body>
 </html>

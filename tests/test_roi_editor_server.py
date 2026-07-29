@@ -175,3 +175,61 @@ def test_camera_scoped_rois_are_isolated(client):
 def test_unknown_camera_returns_404(client):
     res = client.get("/api/rois", params={"camera": "nonexistent"})
     assert res.status_code == 404
+
+
+def test_stats_timeseries_today_returns_24_hourly_points(client):
+    res = client.get("/api/stats/timeseries", params={"period": "today"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "hour"
+    assert len(body["points"]) == 24
+    assert [p["hour"] for p in body["points"]] == list(range(24))
+
+
+def test_stats_timeseries_7d_returns_7_daily_points(client):
+    res = client.get("/api/stats/timeseries", params={"period": "7d"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "day"
+    assert len(body["points"]) == 7
+
+
+def test_stats_timeseries_30d_returns_30_daily_points(client):
+    res = client.get("/api/stats/timeseries", params={"period": "30d"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "day"
+    assert len(body["points"]) == 30
+
+
+def test_stats_timeseries_rejects_unknown_period(client):
+    res = client.get("/api/stats/timeseries", params={"period": "bogus"})
+    assert res.status_code == 400
+
+
+def test_get_events_empty_by_default(client):
+    res = client.get("/api/events")
+    assert res.status_code == 200
+    assert res.json() == {"events": []}
+
+
+def test_get_audio_file_serves_file_inside_audio_dir(client, tmp_path):
+    (tmp_path / "audio").mkdir(exist_ok=True)
+    f = tmp_path / "audio" / "hello.mp3"
+    f.write_bytes(b"fake-mp3-bytes")
+    res = client.get("/api/audio/file", params={"path": str(f)})
+    assert res.status_code == 200
+    assert res.content == b"fake-mp3-bytes"
+
+
+def test_get_audio_file_rejects_path_outside_audio_dir(client, tmp_path):
+    outside = tmp_path / "outside.mp3"
+    outside.write_bytes(b"nope")
+    res = client.get("/api/audio/file", params={"path": str(outside)})
+    assert res.status_code == 400
+
+
+def test_get_audio_file_404_for_missing_file(client, tmp_path):
+    missing = tmp_path / "audio" / "missing.mp3"
+    res = client.get("/api/audio/file", params={"path": str(missing)})
+    assert res.status_code == 404

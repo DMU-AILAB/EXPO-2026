@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Union
 
@@ -159,3 +159,80 @@ def read_daily_totals(db_path: Union[str, Path], date: Optional[str] = None) -> 
         conn.close()
 
     return {"date": date, "total_count": row[0], "cane_user_count": row[1]}
+
+
+def read_hourly_breakdown(db_path: Union[str, Path], date: Optional[str] = None) -> list[dict]:
+    """지정 날짜(YYYY-MM-DD, 기본 오늘)의 시간대별(0~23시) 집계를 항상 24개 항목으로 반환한다.
+
+    기록이 없는 시간은 0으로 채운다 — 프론트엔드 라인그래프가 빈 구간 없이 0~24시 전체를
+    그릴 수 있어야 하기 때문이다. `read_daily_totals`와 동일한 WAL 읽기전용 연결 패턴을 쓴다.
+    """
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    by_hour: dict[int, tuple[int, int]] = {}
+    try:
+        conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        conn = None
+
+    if conn is not None:
+        try:
+            rows = conn.execute(
+                "SELECT hour_start, total_count, cane_user_count FROM foot_traffic_hourly "
+                "WHERE hour_start LIKE ?",
+                (f"{date}%",),
+            ).fetchall()
+            for hour_start, total, cane in rows:
+                by_hour[int(hour_start[11:13])] = (total, cane)
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            conn.close()
+
+    return [
+        {
+            "hour": h,
+            "total_count": by_hour.get(h, (0, 0))[0],
+            "cane_user_count": by_hour.get(h, (0, 0))[1],
+        }
+        for h in range(24)
+    ]
+
+
+def read_range_daily_totals(db_path: Union[str, Path], days: int) -> list[dict]:
+    """오늘을 포함해 최근 `days`일의 일별 합계를 날짜 오름차순으로 반환한다(0-채움).
+
+    ROI별 집계는 현재 스키마(카메라 단위 시간별 합계만 기록)로는 낼 수 없어 대상 외 —
+    이 함수는 카메라(=db_path) 단위 시계열만 제공한다.
+    """
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=days - 1)
+
+    by_date: dict[str, tuple[int, int]] = {}
+    try:
+        conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        conn = None
+
+    if conn is not None:
+        try:
+            rows = conn.execute(
+                "SELECT substr(hour_start,1,10) AS d, COALESCE(SUM(total_count),0), "
+                "COALESCE(SUM(cane_user_count),0) FROM foot_traffic_hourly "
+                "WHERE hour_start >= ? GROUP BY d",
+                (start_date.strftime("%Y-%m-%dT00:00:00"),),
+            ).fetchall()
+            for d, total, cane in rows:
+                by_date[d] = (total, cane)
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            conn.close()
+
+    result = []
+    for i in range(days):
+        d = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+        total, cane = by_date.get(d, (0, 0))
+        result.append({"date": d, "total_count": total, "cane_user_count": cane})
+    return result
