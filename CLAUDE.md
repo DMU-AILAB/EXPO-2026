@@ -31,8 +31,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `simulator/detector.py` | 시뮬레이터용 탐지기 |
 | `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
 | `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
-| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
-| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — MJPEG 스트림 위에 폴리곤을 그리고(트리거/제외구역 선택), 카메라 여러 대면 선택 드롭다운으로 전환, 카메라별 탐지 모델(v2_640/v3_320) 선택, 헤더에 Pi 기기 상태 표시줄, 오디오는 로컬 파일 선택 시 자동 업로드/적용 |
+| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + `/api/stats/timeseries`(기간별 유동인구 시계열, 아래 참고), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
+| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `EXPO-Dash-demo`와 동일한 라이트 테마 디자인 토큰(accent/good/amber/danger, Pretendard) 적용. MJPEG 스트림 위에 폴리곤을 그리고(트리거/제외구역 선택), 카메라 여러 대면 선택 드롭다운으로 전환, 카메라별 탐지 모델(v2_640/v3_320/v4_320) 선택, 헤더에 Pi 기기 상태 표시줄, 오디오는 로컬 파일 선택 시 자동 업로드/적용. "📊 통계" 패널(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프, 차트 라이브러리 없음)과 "🎬 녹화 목록" 패널(수동 시작/중지 클립 재생·다운로드) 포함 |
+| `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고) |
@@ -83,6 +84,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   인스턴스를 공유해, 거의 동시에 트리거해도 겹쳐 재생(음성 뭉개짐)되지 않고 대기열에 쌓였다가 순서대로
   나온다. 이전 버전은 재생 중 새 요청을 무시(drop)했으나, 여러 카메라 동시 트리거 시 안내가 누락되지
   않도록 큐 방식으로 변경했다.
+
+---
+
+## 영상 녹화 (설계 결정)
+
+- **개인정보 정책 예외**: `docs/시각장애인_음성안내시스템_통합_기능명세서_v2.0.md`(대시보드
+  설계 문서, 미구현)의 리스크 항목은 "공공장소 영상의 개인정보 보호를 위해 원본 영상 저장 금지,
+  BBox/통계만 저장"을 명시하고 있다. `camera_live_pi.py`의 `ClipRecorder`는 이 정책과 정면으로
+  상충하지만, **이 저장소의 데모/전시 범위에서는 사용자 승인으로 예외 적용**한다. 실제 상용 배치
+  전에는 이 정책을 반드시 재검토해야 한다.
+- **녹화는 `camera_live_pi.py`(실제 프레임을 쥐고 있는 프로세스)에서만 구현** — `roi_editor/
+  server.py`는 완전히 별도 프로세스이며 카메라 프레임에 직접 접근할 방법이 없다(공유하는 건
+  `rois.json`/`camera_config.json`/`foot_traffic.db` 파일뿐). 브라우저는 이미 각 카메라의
+  MJPEG 포트에 직접 접속하는 구조(`streamUrlFor(port)` → `http://<host>:<port>/stream.mjpg`,
+  `roi_editor`를 거치지 않음)이므로, 녹화 제어(`/recording/start|stop|status|list|clips/*`)도
+  `MJPEGServer`의 같은 포트에 라우트를 추가해 브라우저가 직접 호출한다 — 별도 프록시나 HTTP
+  클라이언트 의존성이 필요 없다.
+- **녹화 대상 프레임은 `MJPEGServer.push()`가 받는, 이미 회전/탐지오버레이/ROI오버레이가 그려진
+  최종 프레임**이다 — 별도의 raw 프레임 캡처 경로는 두지 않았다(위 정책 예외로 raw/오버레이
+  구분이 실익이 없음).
+- **저장 위치**: `recordings/<camera_id>/`(레거시 단일카메라는 `recordings/legacy/`).
+  `rois.json`/`camera_config.json`과 같은 원칙으로 **git 추적 대상도 rsync 배포 대상도 아니다**
+  (`.gitignore`의 `recordings/`) — Pi 로컬에만 쌓이는 산출물이다.
+- **저장공간 관리**: `ClipRecorder._enforce_quota()`가 클립 개수(기본 30개)/총 용량(기본 2GB)
+  상한 초과 시 카메라별로 가장 오래된 클립(mp4+jpg+json)부터 자동 삭제한다. 실사용 환경에서
+  상한값이 적절한지는 Pi 실기기에서 재검토 필요.
+- **`cv2.VideoWriter`(`mp4v` fourcc)를 새 의존성 없이 그대로 사용** — `requirements-pi.txt`에
+  ffmpeg 파이썬 바인딩이 없어 추가하지 않았다. Pi의 `opencv-python-headless` 빌드가 `mp4v`를
+  지원하는지는 실기기에서 검증 필요(안 되면 `.avi`+`XVID` 폴백 고려).
 
 ---
 

@@ -175,3 +175,33 @@ def test_camera_scoped_rois_are_isolated(client):
 def test_unknown_camera_returns_404(client):
     res = client.get("/api/rois", params={"camera": "nonexistent"})
     assert res.status_code == 404
+
+
+def test_stats_timeseries_today_returns_24_hourly_points(client):
+    res = client.get("/api/stats/timeseries", params={"period": "today"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "hour"
+    assert len(body["points"]) == 24
+    assert [p["hour"] for p in body["points"]] == list(range(24))
+
+
+def test_stats_timeseries_7d_returns_7_daily_points(client):
+    res = client.get("/api/stats/timeseries", params={"period": "7d"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "day"
+    assert len(body["points"]) == 7
+
+
+def test_stats_timeseries_30d_returns_30_daily_points(client):
+    res = client.get("/api/stats/timeseries", params={"period": "30d"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "day"
+    assert len(body["points"]) == 30
+
+
+def test_stats_timeseries_rejects_unknown_period(client):
+    res = client.get("/api/stats/timeseries", params={"period": "bogus"})
+    assert res.status_code == 400

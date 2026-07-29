@@ -5,46 +5,93 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VisionGuide — ROI Editor</title>
 <style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css');
+
+:root {
+  --accent: #2c4be0;
+  --accent-soft: rgba(44, 75, 224, 0.14);
+  --good: #15875a;
+  --good-soft: rgba(21, 135, 90, 0.12);
+  --amber: #d98a2b;
+  --amber-soft: rgba(217, 138, 43, 0.14);
+  --danger: #d3372c;
+  --danger-soft: rgba(211, 55, 44, 0.12);
+
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --ink: #1b1e27;
+  --ink-soft: #6b6f7a;
+  --line: #e7e5df;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --shadow-card: 0 1px 2px rgba(27, 30, 39, 0.04), 0 4px 12px rgba(27, 30, 39, 0.03);
+
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: 'Segoe UI', sans-serif;
-  background: #1a1a2e;
-  color: #eee;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--ink);
   height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ── header ── */
 header {
-  background: #16213e;
+  background: var(--surface);
   padding: 10px 18px;
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 2px solid #0f3460;
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-header h1 { font-size: 16px; color: #e94560; white-space: nowrap; }
-.hint { font-size: 11px; color: #666; margin-left: auto; white-space: nowrap; }
+header h1 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+header h1::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
+}
+.hint { font-size: 11px; color: var(--ink-soft); margin-left: auto; white-space: nowrap; }
 
 /* ── buttons ── */
 .btn {
   padding: 6px 13px;
-  border: none;
-  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  font-family: inherit;
 }
-.btn-save  { background: #27ae60; color: #fff; }
-.btn-save:hover  { background: #2ecc71; }
-.btn-prim  { background: #0f3460; color: #fff; }
-.btn-prim:hover  { background: #1a5490; }
-.btn-danger { background: #c0392b; color: #fff; }
-.btn-danger:hover { background: #e74c3c; }
+.btn:hover { border-color: var(--accent); }
+.btn-save  { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-save:hover  { background: #2540c2; border-color: #2540c2; }
+.btn-prim  { background: var(--surface); color: var(--ink); }
+.btn-prim:hover  { border-color: var(--accent); }
+.btn-danger { background: var(--surface); color: var(--danger); border-color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
 .btn-sm { font-size: 10px; padding: 3px 7px; }
 
 /* ── layout ── */
@@ -52,6 +99,9 @@ main {
   display: flex;
   flex: 1;
   overflow: hidden;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg);
 }
 
 /* ── viewer ── */
@@ -63,6 +113,8 @@ main {
   background: #000;
   overflow: hidden;
   position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
 #canvas-wrap {
   position: relative;
@@ -72,7 +124,7 @@ main {
 #stream {
   display: block;
   max-width: 100%;
-  max-height: calc(100vh - 84px);
+  max-height: calc(100vh - 108px);
 }
 #canvas {
   position: absolute;
@@ -97,10 +149,10 @@ main {
   align-items: stretch;
 }
 .dual-cell .dual-label {
-  color: #eee;
+  color: var(--ink);
   font-size: 12px;
   font-weight: bold;
-  background: #16213e;
+  background: var(--surface);
   padding: 4px 8px;
   border-radius: 4px 4px 0 0;
 }
@@ -108,10 +160,10 @@ main {
   max-width: 46vw;
   max-height: 70vh;
   display: block;
-  border: 1px solid #0f3460;
+  border: 1px solid var(--line);
 }
 #no-stream {
-  color: #555;
+  color: #888;
   font-size: 13px;
   text-align: center;
   padding: 40px;
@@ -120,47 +172,58 @@ main {
 /* ── panel ── */
 #panel {
   width: 270px;
-  background: #16213e;
-  border-left: 2px solid #0f3460;
+  background: var(--bg);
   display: flex;
   flex-direction: column;
+  gap: 12px;
   overflow: hidden;
   flex-shrink: 0;
 }
+#conf-section,
+#camera-section,
+#stats-section,
+#panel-top,
+#roi-list,
+#form-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
 #conf-section {
-  padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
+  padding: 12px;
   flex-shrink: 0;
 }
 #conf-section label {
   font-size: 11px;
-  color: #99a;
+  color: var(--ink-soft);
   display: block;
   margin-bottom: 4px;
 }
 #conf-section input[type="range"] {
   width: 100%;
+  accent-color: var(--accent);
 }
 #camera-section {
-  padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
+  padding: 12px;
   flex-shrink: 0;
 }
 .scan-result-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #0f3460;
+  background: var(--bg);
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 6px 8px;
   margin-top: 6px;
   font-size: 11px;
 }
-.scan-result-item .model { color: #eee; }
-.scan-result-item .already { color: #666; font-size: 10px; }
+.scan-result-item .model { color: var(--ink); }
+.scan-result-item .already { color: var(--ink-soft); font-size: 10px; }
 #camera-section label {
   font-size: 11px;
-  color: #99a;
+  color: var(--ink-soft);
   display: block;
   margin-bottom: 4px;
 }
@@ -169,12 +232,18 @@ main {
 #camera-section input[type="number"] {
   width: 100%;
   padding: 5px 8px;
-  background: #0f3460;
-  border: 1px solid #2a3a60;
-  border-radius: 4px;
-  color: #eee;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
   font-size: 12px;
   margin-bottom: 6px;
+  font-family: inherit;
+}
+#camera-section select:focus,
+#camera-section input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 #camera-section .cam-row {
   display: flex;
@@ -186,7 +255,7 @@ main {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #99a;
+  color: var(--ink-soft);
   margin-bottom: 6px;
 }
 #camForm { display: none; margin-top: 6px; }
@@ -194,39 +263,39 @@ main {
   display: flex;
   gap: 10px;
   font-size: 11px;
-  color: #ccc;
+  color: var(--ink-soft);
 }
 .zone-type-toggle label { display: flex; align-items: center; gap: 4px; margin-bottom: 0; }
 .badge-exclude {
   display: inline-block;
   font-size: 10px;
-  color: #fff;
-  background: #c0392b;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-soft);
   border-radius: 3px;
   padding: 1px 5px;
   margin-left: 5px;
 }
 #stats-section {
-  padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
+  padding: 12px;
   flex-shrink: 0;
 }
 .stats-row {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  color: #99a;
+  color: var(--ink-soft);
   margin-bottom: 3px;
 }
-.stats-row b { color: #eee; font-size: 13px; }
+.stats-row b { color: var(--ink); font-size: 13px; }
 #panel-top {
   padding: 10px 12px;
-  border-bottom: 1px solid #0f3460;
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 13px;
   font-weight: bold;
+  color: var(--ink);
   flex-shrink: 0;
 }
 #roi-list {
@@ -235,8 +304,9 @@ main {
   padding: 8px;
 }
 .roi-item {
-  background: #0f3460;
-  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 9px 10px;
   margin-bottom: 7px;
 }
@@ -253,66 +323,214 @@ main {
   margin-right: 5px;
   flex-shrink: 0;
 }
-.roi-name  { font-weight: bold; font-size: 13px; }
-.roi-meta  { font-size: 11px; color: #99a; margin-top: 2px; }
+.roi-name  { font-weight: bold; font-size: 13px; color: var(--ink); }
+.roi-meta  { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
 
 /* ── form ── */
 #form-section {
-  border-top: 2px solid #0f3460;
   padding: 12px;
   flex-shrink: 0;
 }
 #form-section h3 {
   font-size: 12px;
-  color: #e94560;
+  font-weight: 700;
+  color: var(--ink);
   margin-bottom: 9px;
 }
 .fg { margin-bottom: 8px; }
 .fg label {
   font-size: 10px;
-  color: #99a;
+  color: var(--ink-soft);
   display: block;
   margin-bottom: 3px;
 }
 .fg input {
   width: 100%;
   padding: 5px 8px;
-  background: #0f3460;
-  border: 1px solid #2a3a60;
-  border-radius: 4px;
-  color: #eee;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
   font-size: 12px;
+  font-family: inherit;
 }
-.fg input:focus { outline: none; border-color: #e94560; }
+.fg input:focus { outline: none; border-color: var(--accent); }
 .form-btns { display: flex; gap: 6px; margin-top: 4px; }
 .form-btns .btn { flex: 1; }
 
 /* ── status bar ── */
 #statusbar {
-  background: #0a0a1a;
+  background: var(--surface);
   padding: 5px 16px;
   font-size: 11px;
-  color: #666;
+  color: var(--ink-soft);
   flex-shrink: 0;
-  border-top: 1px solid #0f3460;
+  border-top: 1px solid var(--line);
 }
-.s-ok   { color: #27ae60; }
-.s-warn { color: #f39c12; }
-.s-err  { color: #e74c3c; }
+.s-ok   { color: var(--good); }
+.s-warn { color: var(--amber); }
+.s-err  { color: var(--danger); }
+
+/* ── 통계/녹화 오버레이 패널 (공통) ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 30, 39, 0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-card {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+  width: 720px;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow-y: auto;
+}
+.modal-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* ── 통계 패널 ── */
+.period-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.period-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+}
+.period-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 14px 16px;
+}
+.stat-tile__label { font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
+.stat-tile__value { font-size: 26px; font-weight: 700; color: var(--ink); }
+#statsChart { width: 100%; height: 260px; display: block; }
+
+/* ── 녹화 패널 ── */
+#recordBtn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+#recordBtn.recording { background: var(--danger); }
+#recordBtn .rec-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+#recordBtn.recording .rec-dot { animation: record-blink 1s infinite; }
+@keyframes record-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+.clip-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.clip-item:hover { border-color: var(--accent); }
+.clip-item img { width: 72px; height: 40px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0; }
+.clip-item .clip-meta { font-size: 12px; color: var(--ink); }
+.clip-item .clip-meta small { color: var(--ink-soft); display: block; margin-top: 2px; }
+#clipPlayer { width: 100%; max-height: 50vh; background: #000; border-radius: var(--radius-sm); margin-top: 12px; display: none; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>🦯 VisionGuide ROI Editor</h1>
+  <h1>VisionGuide ROI 편집기</h1>
   <span class="hint">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
   <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-right:12px"></span>
+  <button class="btn btn-prim btn-sm" id="btnShowStats">📊 통계</button>
+  <button class="btn btn-prim btn-sm" id="btnShowRecordings">🎬 녹화 목록</button>
   <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
   <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
 </header>
 
+<div id="statsOverlay" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-hd">
+      <span>📊 유동인구 통계</span>
+      <button class="btn btn-sm" id="btnCloseStats">✕ 닫기</button>
+    </div>
+    <div class="period-tabs">
+      <button class="period-tab active" data-period="today">오늘</button>
+      <button class="period-tab" data-period="7d">7일</button>
+      <button class="period-tab" data-period="30d">30일</button>
+    </div>
+    <div class="stat-tiles">
+      <div class="stat-tile">
+        <div class="stat-tile__label">총 유동인구</div>
+        <div class="stat-tile__value" id="statsTotalVal">-</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile__label">지팡이 사용자 수</div>
+        <div class="stat-tile__value" id="statsCaneVal">-</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile__label">지팡이 사용자 비율</div>
+        <div class="stat-tile__value" id="statsRatioVal">-</div>
+      </div>
+    </div>
+    <canvas id="statsChart" width="640" height="260"></canvas>
+  </div>
+</div>
+
+<div id="recordingsOverlay" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-hd">
+      <span>🎬 녹화 목록</span>
+      <button class="btn btn-sm" id="btnCloseRecordings">✕ 닫기</button>
+    </div>
+    <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
+    <video id="clipPlayer" controls></video>
+    <div id="clipDownloadWrap" style="margin-top:8px; display:none">
+      <a id="clipDownloadLink" class="btn btn-sm" download>⬇ 다운로드</a>
+    </div>
+  </div>
+</div>
+
 <main>
   <div id="viewer">
+    <button id="recordBtn"><span class="rec-dot"></span><span id="recordBtnLabel">녹화 시작</span></button>
     <div id="canvas-wrap">
       <img id="stream" alt="">
       <canvas id="canvas"></canvas>
@@ -479,14 +697,26 @@ const confCaneInput  = document.getElementById('fConfCane');
 const confCaneValueEl = document.getElementById('confCaneValue');
 const confPersonInput  = document.getElementById('fConfPerson');
 const confPersonValueEl = document.getElementById('confPersonValue');
+const recordBtn      = document.getElementById('recordBtn');
+const recordBtnLabel = document.getElementById('recordBtnLabel');
+const recordingsOverlay = document.getElementById('recordingsOverlay');
+const clipListEl     = document.getElementById('clipList');
+const clipPlayer     = document.getElementById('clipPlayer');
+const clipDownloadWrap = document.getElementById('clipDownloadWrap');
+const clipDownloadLink = document.getElementById('clipDownloadLink');
 
 /* ================================================================
    Stream setup
 ================================================================ */
 function streamUrlFor(port) { return `http://${location.hostname}:${port}/stream.mjpg`; }
+function recordingUrlFor(port, path) { return `http://${location.hostname}:${port}${path}`; }
+
+let currentPort = 8080;  // 녹화 제어 API도 이 포트로 직접 호출 — stream.mjpg와 동일한 포트
 
 function setStream(port) {
+  currentPort = port;
   stream.src = streamUrlFor(port);
+  refreshRecordButton();
 }
 
 setStream(8080); // 카메라 프로필이 없는 레거시 단일 카메라 기본값 — loadCameras()가 있으면 덮어씀
@@ -1123,7 +1353,9 @@ document.getElementById('btnClearAll').addEventListener('click', () => {
 document.getElementById('btnSaveAll').addEventListener('click', saveToServer);
 
 function _apiUrl(path) {
-  return activeCameraId ? `${path}?camera=${encodeURIComponent(activeCameraId)}` : path;
+  if (!activeCameraId) return path;
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}camera=${encodeURIComponent(activeCameraId)}`;
 }
 
 async function saveToServer() {
@@ -1193,6 +1425,204 @@ async function loadStats() {
     // 통계는 부가 정보 — 실패해도 조용히 무시
   }
 }
+
+/* ================================================================
+   통계 패널 (기간별 시계열 — 순수 canvas 꺾은선 그래프, 차트 라이브러리 없음)
+================================================================ */
+const statsOverlay = document.getElementById('statsOverlay');
+let statsPeriod = 'today';
+
+function drawLineChart(canvasEl, points, valueKey) {
+  const dctx = canvasEl.getContext('2d');
+  const w = canvasEl.width, h = canvasEl.height;
+  dctx.clearRect(0, 0, w, h);
+  if (!points.length) return;
+
+  const padL = 38, padR = 12, padT = 12, padB = 26;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const values = points.map(p => p[valueKey]);
+  const maxV = Math.max(1, ...values);
+
+  const xFor = i => padL + (points.length === 1 ? 0 : (i / (points.length - 1)) * plotW);
+  const yFor = v => padT + plotH - (v / maxV) * plotH;
+
+  const grad = dctx.createLinearGradient(0, padT, 0, padT + plotH);
+  grad.addColorStop(0, 'rgba(44,75,224,0.22)');
+  grad.addColorStop(1, 'rgba(44,75,224,0.02)');
+  dctx.beginPath();
+  dctx.moveTo(xFor(0), padT + plotH);
+  values.forEach((v, i) => dctx.lineTo(xFor(i), yFor(v)));
+  dctx.lineTo(xFor(values.length - 1), padT + plotH);
+  dctx.closePath();
+  dctx.fillStyle = grad;
+  dctx.fill();
+
+  dctx.beginPath();
+  values.forEach((v, i) => {
+    const x = xFor(i), y = yFor(v);
+    if (i === 0) dctx.moveTo(x, y); else dctx.lineTo(x, y);
+  });
+  dctx.strokeStyle = '#2c4be0';
+  dctx.lineWidth = 2;
+  dctx.stroke();
+
+  dctx.strokeStyle = '#e7e5df';
+  dctx.lineWidth = 1;
+  dctx.beginPath();
+  dctx.moveTo(padL, padT);
+  dctx.lineTo(padL, padT + plotH);
+  dctx.lineTo(padL + plotW, padT + plotH);
+  dctx.stroke();
+
+  dctx.fillStyle = '#6b6f7a';
+  dctx.font = '11px sans-serif';
+  dctx.textAlign = 'center';
+  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  points.forEach((p, i) => {
+    if (i % labelEvery !== 0 && i !== points.length - 1) return;
+    const label = ('hour' in p) ? String(p.hour) : p.date.slice(5);
+    dctx.fillText(label, xFor(i), h - 6);
+  });
+
+  dctx.textAlign = 'right';
+  dctx.fillText(String(maxV), padL - 6, padT + 4);
+  dctx.fillText('0', padL - 6, padT + plotH + 4);
+}
+
+async function loadStatsTimeseries(period) {
+  statsPeriod = period;
+  document.querySelectorAll('.period-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.period === period);
+  });
+  try {
+    const res  = await fetch(_apiUrl(`/api/stats/timeseries?period=${period}`));
+    const data = await res.json();
+    const points = data.points || [];
+    const total  = points.reduce((s, p) => s + p.total_count, 0);
+    const cane   = points.reduce((s, p) => s + p.cane_user_count, 0);
+    document.getElementById('statsTotalVal').textContent = total;
+    document.getElementById('statsCaneVal').textContent  = cane;
+    document.getElementById('statsRatioVal').textContent = total > 0 ? `${((cane / total) * 100).toFixed(1)}%` : '0%';
+    drawLineChart(document.getElementById('statsChart'), points, 'total_count');
+  } catch (e) {
+    setStatus(`❌ 통계 조회 실패: ${e.message}`, 'err');
+  }
+}
+
+document.getElementById('btnShowStats').addEventListener('click', () => {
+  statsOverlay.style.display = 'flex';
+  loadStatsTimeseries(statsPeriod);
+});
+document.getElementById('btnCloseStats').addEventListener('click', () => {
+  statsOverlay.style.display = 'none';
+});
+document.querySelectorAll('.period-tab').forEach(btn => {
+  btn.addEventListener('click', () => loadStatsTimeseries(btn.dataset.period));
+});
+
+/* ================================================================
+   녹화 (수동 시작/중지 클립) — 브라우저가 현재 스트림과 같은 포트로 직접 호출한다
+   (roi_editor 서버를 거치지 않음 — streamUrlFor(port)와 동일한 패턴).
+================================================================ */
+let recordElapsedTimer = null;
+let recordStartedAtMs = null;
+
+function formatElapsed(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function setRecordButtonState(recording, elapsedSec) {
+  recordBtn.classList.toggle('recording', recording);
+  recordBtnLabel.textContent = recording ? `녹화 중지 ${formatElapsed(elapsedSec || 0)}` : '녹화 시작';
+}
+
+async function refreshRecordButton() {
+  clearInterval(recordElapsedTimer);
+  try {
+    const res  = await fetch(recordingUrlFor(currentPort, '/recording/status'));
+    const data = await res.json();
+    if (data.recording) {
+      recordStartedAtMs = Date.now() - data.elapsed_sec * 1000;
+      setRecordButtonState(true, data.elapsed_sec);
+      recordElapsedTimer = setInterval(() => {
+        setRecordButtonState(true, (Date.now() - recordStartedAtMs) / 1000);
+      }, 1000);
+    } else {
+      setRecordButtonState(false, 0);
+    }
+  } catch (e) {
+    setRecordButtonState(false, 0);  // 기기 응답 없음 — 평상시 상태로 표시
+  }
+}
+
+recordBtn.addEventListener('click', async () => {
+  const wasRecording = recordBtn.classList.contains('recording');
+  try {
+    const res  = await fetch(
+      recordingUrlFor(currentPort, wasRecording ? '/recording/stop' : '/recording/start'),
+      { method: 'POST' }
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '요청 실패');
+    await refreshRecordButton();
+    if (wasRecording) setStatus(`✅ 녹화 종료 (${data.duration_sec}s) — 녹화 목록에서 확인하세요`, 'ok');
+  } catch (e) {
+    setStatus(`❌ 녹화 ${wasRecording ? '중지' : '시작'} 실패: ${e.message}`, 'err');
+  }
+});
+
+function formatClipSize(bytes) {
+  if (bytes == null) return '';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)}MB` : `${Math.round(bytes / 1024)}KB`;
+}
+
+async function loadClipList() {
+  clipListEl.innerHTML = '<div class="roi-meta">불러오는 중...</div>';
+  try {
+    const res   = await fetch(recordingUrlFor(currentPort, '/recording/list'));
+    const data  = await res.json();
+    const clips = data.clips || [];
+    if (clips.length === 0) {
+      clipListEl.innerHTML = '<div class="roi-meta">아직 녹화된 영상이 없습니다 — 영상 좌상단 "녹화 시작" 버튼으로 시작하세요.</div>';
+      return;
+    }
+    clipListEl.innerHTML = clips.map(c => `
+      <div class="clip-item" onclick="playClip('${escAttr(c.id)}')">
+        ${c.has_thumb ? `<img src="${recordingUrlFor(currentPort, `/recording/clips/${c.id}.jpg`)}" alt="">` : ''}
+        <div class="clip-meta">
+          ${c.started_at ? escHtml(new Date(c.started_at).toLocaleString()) : escHtml(c.id)}
+          <small>${c.duration_sec != null ? c.duration_sec + 's' : ''} · ${formatClipSize(c.size_bytes)}</small>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    clipListEl.innerHTML = `<div class="roi-meta s-err">목록을 불러오지 못했습니다: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function playClip(clipId) {
+  const url = recordingUrlFor(currentPort, `/recording/clips/${clipId}.mp4`);
+  clipPlayer.src = url;
+  clipPlayer.style.display = 'block';
+  clipPlayer.play().catch(() => {});
+  clipDownloadLink.href = url;
+  clipDownloadLink.setAttribute('download', `${clipId}.mp4`);
+  clipDownloadWrap.style.display = 'block';
+}
+
+document.getElementById('btnShowRecordings').addEventListener('click', () => {
+  recordingsOverlay.style.display = 'flex';
+  clipPlayer.style.display = 'none';
+  clipDownloadWrap.style.display = 'none';
+  loadClipList();
+});
+document.getElementById('btnCloseRecordings').addEventListener('click', () => {
+  recordingsOverlay.style.display = 'none';
+  clipPlayer.pause();
+});
 
 /* ================================================================
    Utilities
