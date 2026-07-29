@@ -488,10 +488,16 @@ class ClipRecorder:
             self.out_dir.mkdir(parents=True, exist_ok=True)
             clip_id = "clip_" + datetime.now().strftime("%Y%m%d_%H%M%S")
             h, w = frame_shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            writer = cv2.VideoWriter(str(self.out_dir / f"{clip_id}.mp4"), fourcc, max(fps, 1.0), (w, h))
+            out_path = str(self.out_dir / f"{clip_id}.mp4")
+            # "avc1"(H.264) — 브라우저 <video> 태그가 실제로 디코드할 수 있는 코덱이어야
+            # 한다. "mp4v" fourcc는 실제로는 MPEG-4 Part 2로 인코딩되는데(ffprobe로 확인),
+            # 이건 어느 브라우저도 재생 못 한다 — 파일은 만들어지고 다운로드도 되지만
+            # "영상이 영상이 아닌 느낌"(재생/미리보기 불가)이 되는 원인이었다.
+            writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"avc1"), max(fps, 1.0), (w, h))
             if not writer.isOpened():
-                return {"ok": False, "error": "VideoWriter를 열 수 없습니다 (mp4v codec 미지원 가능)"}
+                writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), max(fps, 1.0), (w, h))
+            if not writer.isOpened():
+                return {"ok": False, "error": "VideoWriter를 열 수 없습니다 (H.264/mp4v 모두 미지원)"}
             self._writer = writer
             self._clip_id = clip_id
             self._started_at = time.time()

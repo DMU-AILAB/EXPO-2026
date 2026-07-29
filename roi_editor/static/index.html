@@ -70,7 +70,7 @@ header h1::before {
   display: inline-block;
   flex-shrink: 0;
 }
-.hint { font-size: 11px; color: var(--ink-soft); margin-left: auto; white-space: nowrap; }
+.hint { font-size: 12px; color: var(--ink-soft); margin-left: auto; white-space: nowrap; }
 
 /* ── 상단 탭 네비게이션 (TopBar) ── */
 .tabs { display: flex; gap: 28px; margin-left: auto; }
@@ -107,7 +107,7 @@ header h1::before {
 .btn-prim:hover  { border-color: var(--accent); }
 .btn-danger { background: var(--surface); color: var(--danger); border-color: var(--danger); }
 .btn-danger:hover { background: var(--danger-soft); }
-.btn-sm { font-size: 10px; padding: 3px 7px; }
+.btn-sm { font-size: 11px; padding: 3px 7px; }
 
 /* ── layout: 상단 탭으로 전환되는 페이지들 (모니터링/ROI 편집·통계·녹화) ── */
 main {
@@ -147,19 +147,23 @@ main {
 #page-monitoring.active { display: block; overflow-y: auto; padding: 24px 32px; }
 .monitoring-body { display: grid; grid-template-columns: 68% 32%; gap: 16px; align-items: start; }
 .monitoring-side { display: flex; flex-direction: column; gap: 12px; }
-#monitorViewer {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: #000;
+/* 모니터링/ROI 편집 두 페이지가 같은 "카메라 뷰포트" 톤(검은 배경+테두리+둥근
+   모서리)을 공유한다 — #viewer(ROI 편집, 단일 카메라+캔버스)와 #monitorViewWrap
+   (모니터링, 카메라 1~2대) 양쪽에 동일하게 적용. */
+#monitorViewWrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+#monitorViewWrap .dual-cell {
+  flex: 1 1 320px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #000;
 }
-#monitorStream { display: block; max-width: 100%; max-height: 100%; }
-#monitorNoStream { color: #888; font-size: 13px; text-align: center; padding: 20px; }
+#monitorViewWrap .dual-cell img { width: 100%; max-width: none; max-height: none; display: block; border: none; }
+#monitorViewWrap .dual-label { border-radius: 0; }
 .events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .events-table th {
   text-align: left; padding: 8px 12px; color: var(--ink-soft); font-weight: 600;
@@ -237,7 +241,7 @@ main {
 
 /* ── panel ── */
 #panel {
-  width: 270px;
+  width: 320px;
   background: var(--bg);
   display: flex;
   flex-direction: column;
@@ -247,20 +251,26 @@ main {
 }
 #conf-section,
 #camera-section,
-#panel-top,
-#roi-list,
+#roi-list-card,
 #form-section {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
 }
+#roi-list-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 160px;
+  overflow: hidden;
+}
 #conf-section {
   padding: 12px;
   flex-shrink: 0;
 }
 #conf-section label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-soft);
   display: block;
   margin-bottom: 4px;
@@ -282,12 +292,12 @@ main {
   border-radius: 5px;
   padding: 6px 8px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .scan-result-item .model { color: var(--ink); }
-.scan-result-item .already { color: var(--ink-soft); font-size: 10px; }
+.scan-result-item .already { color: var(--ink-soft); font-size: 11px; }
 #camera-section label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-soft);
   display: block;
   margin-bottom: 4px;
@@ -319,7 +329,7 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-soft);
   margin-bottom: 6px;
 }
@@ -327,13 +337,13 @@ main {
 .zone-type-toggle {
   display: flex;
   gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-soft);
 }
 .zone-type-toggle label { display: flex; align-items: center; gap: 4px; margin-bottom: 0; }
 .badge-exclude {
   display: inline-block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--danger);
   background: var(--danger-soft);
@@ -346,10 +356,11 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: bold;
   color: var(--ink);
   flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
 }
 #roi-list {
   flex: 1;
@@ -379,8 +390,8 @@ main {
   margin-right: 5px;
   flex-shrink: 0;
 }
-.roi-name  { font-weight: bold; font-size: 13px; color: var(--ink); }
-.roi-meta  { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+.roi-name  { font-weight: bold; font-size: 14px; color: var(--ink); }
+.roi-meta  { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 
 /* ── form ── */
 #form-section {
@@ -395,7 +406,7 @@ main {
 }
 .fg { margin-bottom: 8px; }
 .fg label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-soft);
   display: block;
   margin-bottom: 3px;
@@ -418,7 +429,7 @@ main {
 #statusbar {
   background: var(--surface);
   padding: 5px 16px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-soft);
   flex-shrink: 0;
   border-top: 1px solid var(--line);
@@ -510,6 +521,25 @@ main {
 .clip-item .clip-meta { font-size: 12px; color: var(--ink); }
 .clip-item .clip-meta small { color: var(--ink-soft); display: block; margin-top: 2px; }
 #clipPlayer { width: 100%; max-height: 50vh; background: #000; border-radius: var(--radius-sm); margin-top: 12px; display: none; }
+
+/* ── 모바일/좁은 화면 대응 ── */
+@media (max-width: 860px) {
+  header { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
+  .tabs { margin-left: 0; gap: 16px; width: 100%; justify-content: space-between; }
+  .roi-body { flex-direction: column; }
+  .roi-toolbar { flex-wrap: wrap; }
+  #panel { width: 100%; }
+  #viewer { min-height: 260px; }
+  .monitoring-body { grid-template-columns: 1fr; }
+  #page-monitoring.active { padding: 16px; }
+  #page-stats.active { padding: 16px; }
+  .stat-tiles { grid-template-columns: 1fr; max-width: none; }
+  .stats-chart-card { max-width: none; }
+  #page-recordings.active { flex-direction: column; padding: 12px; }
+  #recordingsClipCol { width: 100%; max-height: 40vh; }
+  .btn { padding: 9px 14px; } /* 터치 타겟 확대 */
+  .btn-sm { padding: 7px 10px; }
+}
 </style>
 </head>
 <body>
@@ -528,10 +558,7 @@ main {
   <div class="page active" id="page-monitoring">
     <div class="monitoring-body">
       <div>
-        <div id="monitorViewer">
-          <img id="monitorStream" alt="">
-          <div id="monitorNoStream" style="display:none">카메라 스트림에 연결할 수 없습니다.</div>
-        </div>
+        <div id="monitorViewWrap"></div>
         <div class="page-title" style="margin-top:16px">최근 감지 이벤트</div>
         <div class="sum-card" style="padding:0; overflow:hidden">
           <table class="events-table">
@@ -570,7 +597,8 @@ main {
   <div class="page" id="page-roi">
     <div class="roi-toolbar">
       <button class="btn btn-prim btn-sm" id="btnToggleDrawing">+ 새 구역 그리기</button>
-      <span class="hint" id="drawingHint" style="display:none">클릭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭: 완성 &nbsp;|&nbsp; ESC: 취소</span>
+      <button class="btn btn-save btn-sm" id="btnFinishPoly" style="display:none">✓ 완성</button>
+      <span class="hint" id="drawingHint" style="display:none">탭: 꼭짓점 추가 &nbsp;|&nbsp; 더블클릭 또는 [✓ 완성]: 완성 &nbsp;|&nbsp; ESC: 취소</span>
       <span id="deviceStatusBar" style="font-size:11px; white-space:nowrap; margin-left:auto; margin-right:12px"></span>
       <button class="btn btn-prim btn-sm" id="btnDualView">🖥 두 카메라 보기</button>
       <button class="btn btn-save" id="btnSaveAll">💾 전체 저장</button>
@@ -657,12 +685,14 @@ main {
       <label for="fConfPerson">사람 신뢰도: <span id="confPersonValue">0.55</span></label>
       <input type="range" id="fConfPerson" min="0.1" max="0.95" step="0.05" value="0.55">
     </div>
-    <div id="panel-top">
-      <span id="roi-count">ROI 목록 (0)</span>
-      <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
-    </div>
-    <div id="roi-list">
-      <div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>
+    <div id="roi-list-card">
+      <div id="panel-top">
+        <span id="roi-count">ROI 목록 (0)</span>
+        <button class="btn btn-danger btn-sm" id="btnClearAll">전체 삭제</button>
+      </div>
+      <div id="roi-list">
+        <div class="roi-meta" style="padding:4px">등록된 ROI 없음</div>
+      </div>
     </div>
     <div id="form-section" style="display:none">
       <h3 id="formTitle">➕ 새 ROI 정보 입력</h3>
@@ -799,13 +829,9 @@ function recordingUrlFor(port, path) { return `http://${location.hostname}:${por
 
 let currentPort = 8080;  // 녹화 제어 API도 이 포트로 직접 호출 — stream.mjpg와 동일한 포트
 
-const monitorStream = document.getElementById('monitorStream');
-const monitorNoStream = document.getElementById('monitorNoStream');
-
 function setStream(port) {
   currentPort = port;
   stream.src = streamUrlFor(port);
-  monitorStream.src = streamUrlFor(port); // 모니터링 탭도 같은 카메라를 보여준다(읽기 전용 미리보기)
   refreshRecordButton();
 }
 
@@ -817,15 +843,6 @@ stream.onerror = () => {
   noStream.style.display = 'block';
   setStatus('카메라 스트림 연결 실패 — camera_live_pi.py 실행 여부 확인', 'err');
   setCameraStatusBadge(false);
-};
-
-monitorStream.onload = () => {
-  monitorStream.style.display = 'block';
-  monitorNoStream.style.display = 'none';
-};
-monitorStream.onerror = () => {
-  monitorStream.style.display = 'none';
-  monitorNoStream.style.display = 'block';
 };
 
 function setCameraStatusBadge(ok) {
@@ -883,6 +900,7 @@ async function loadCameras() {
     cameras = [];
   }
   renderCameraSelector();
+  renderMonitoringView();
   if (cameras.length > 0) {
     const preferred = cameras.find(c => c.id === activeCameraId) || cameras.find(c => c.enabled) || cameras[0];
     switchCamera(preferred.id);
@@ -1013,16 +1031,30 @@ async function deleteCurrentCamera() {
 ================================================================ */
 let dualViewActive = false;
 const dualViewWrap = document.getElementById('dualViewWrap');
+const monitorViewWrap = document.getElementById('monitorViewWrap');
 const btnDualView  = document.getElementById('btnDualView');
 
-function renderDualView() {
-  const list = cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }];
-  dualViewWrap.innerHTML = list.map(c => `
+function _cameraCellsHtml(list) {
+  return list.map(c => `
     <div class="dual-cell">
       <div class="dual-label">${escHtml(c.label || c.id)}${c.enabled === false ? ' (비활성)' : ''}</div>
       <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}">
     </div>
   `).join('');
+}
+
+function _availableCameraList() {
+  return cameras.length > 0 ? cameras.filter(c => c.enabled !== false) : [{ id: 'legacy', label: '카메라', port: 8080 }];
+}
+
+function renderDualView() {
+  dualViewWrap.innerHTML = _cameraCellsHtml(cameras.length > 0 ? cameras : [{ id: 'legacy', label: '카메라', port: 8080 }]);
+}
+
+// 모니터링 탭 — 카메라가 2대 이상 사용 가능하면(활성 상태) 무조건 전부 동시에 보여준다.
+// ROI 편집 탭은 한 번에 한 카메라만 편집하지만, 모니터링은 감시 목적이라 전체를 봐야 한다.
+function renderMonitoringView() {
+  monitorViewWrap.innerHTML = _cameraCellsHtml(_availableCameraList());
 }
 
 btnDualView.addEventListener('click', () => {
@@ -1186,7 +1218,7 @@ function drawPoly(points, color, alpha, label, closed, dashed = false, lineWidth
   if (label && points.length >= 3) {
     const cx = points.reduce((s, p) => s + p[0], 0) / points.length * canvas.width;
     const cy = points.reduce((s, p) => s + p[1], 0) / points.length * canvas.height;
-    ctx.font = 'bold 13px sans-serif';
+    ctx.font = "bold 13px 'Pretendard Variable', sans-serif";
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#000';
     ctx.strokeText(label, cx - 20, cy + 5);
@@ -1247,6 +1279,7 @@ canvas.addEventListener('mouseleave', () => {
 });
 
 const btnToggleDrawing = document.getElementById('btnToggleDrawing');
+const btnFinishPoly = document.getElementById('btnFinishPoly');
 const drawingHintEl = document.getElementById('drawingHint');
 
 function setDrawingMode(enabled) {
@@ -1254,6 +1287,11 @@ function setDrawingMode(enabled) {
   btnToggleDrawing.textContent = enabled ? '그리기 취소' : '+ 새 구역 그리기';
   btnToggleDrawing.classList.toggle('btn-save', enabled);
   drawingHintEl.style.display = enabled ? 'inline' : 'none';
+  updateFinishButtonVisibility();
+}
+
+function updateFinishButtonVisibility() {
+  btnFinishPoly.style.display = (drawingModeEnabled && drawing.length >= 3) ? 'inline-block' : 'none';
 }
 
 btnToggleDrawing.addEventListener('click', () => {
@@ -1262,27 +1300,11 @@ btnToggleDrawing.addEventListener('click', () => {
   } else {
     if (editingIndex !== null) closeForm(); // 편집 중이던 기존 ROI 폼과 배타적
     setDrawingMode(true);
-    setStatus('캔버스를 클릭해 구역 꼭짓점을 추가하세요', 'warn');
+    setStatus('캔버스를 탭(클릭)해 구역 꼭짓점을 추가하세요', 'warn');
   }
 });
 
-let lastClickTime = 0;
-canvas.addEventListener('click', e => {
-  if (!drawingModeEnabled || pendingPoly) return;
-
-  const now = Date.now();
-  // dblclick fires click×2 → ignore second click within 300ms
-  if (now - lastClickTime < 300) { lastClickTime = now; return; }
-  lastClickTime = now;
-
-  const [cx, cy] = canvasPos(e);
-  drawing.push(toNorm(cx, cy));
-  setStatus(`꼭짓점 ${drawing.length}개 추가됨 — 더블클릭으로 완성 | ESC 취소`, 'warn');
-  redraw();
-});
-
-canvas.addEventListener('dblclick', e => {
-  if (!drawingModeEnabled || pendingPoly) return;
+function finishPolygon() {
   if (drawing.length < 3) {
     setStatus('꼭짓점이 3개 이상 필요합니다', 'err');
     return;
@@ -1298,6 +1320,29 @@ canvas.addEventListener('dblclick', e => {
   document.getElementById('fPriority').value = rois.length + 1;
   setStatus('ROI 정보를 입력하고 [저장]을 누르세요', 'warn');
   redraw();
+}
+
+btnFinishPoly.addEventListener('click', finishPolygon);
+
+let lastClickTime = 0;
+canvas.addEventListener('click', e => {
+  if (!drawingModeEnabled || pendingPoly) return;
+
+  const now = Date.now();
+  // dblclick fires click×2 → ignore second click within 300ms
+  if (now - lastClickTime < 300) { lastClickTime = now; return; }
+  lastClickTime = now;
+
+  const [cx, cy] = canvasPos(e);
+  drawing.push(toNorm(cx, cy));
+  updateFinishButtonVisibility();
+  setStatus(`꼭짓점 ${drawing.length}개 추가됨 — 더블클릭 또는 [✓ 완성]으로 완성 | ESC 취소`, 'warn');
+  redraw();
+});
+
+canvas.addEventListener('dblclick', e => {
+  if (!drawingModeEnabled || pendingPoly) return;
+  finishPolygon();
 });
 
 /* ================================================================
@@ -1655,7 +1700,7 @@ function drawLineChart(canvasEl, points, valueKey) {
   dctx.stroke();
 
   dctx.fillStyle = '#6b6f7a';
-  dctx.font = '11px sans-serif';
+  dctx.font = "11px 'Pretendard Variable', sans-serif";
   dctx.textAlign = 'center';
   const labelEvery = Math.max(1, Math.ceil(points.length / 8));
   points.forEach((p, i) => {
@@ -1778,9 +1823,23 @@ function playClip(clipId) {
   clipPlayer.src = url;
   clipPlayer.style.display = 'block';
   clipPlayer.play().catch(() => {});
-  clipDownloadLink.href = url;
-  clipDownloadLink.setAttribute('download', `${clipId}.mp4`);
+
+  // 크로스오리진(카메라 포트) 링크는 <a download>가 브라우저에 따라 무시되고
+  // 그냥 새 탭에서 열려버리는 경우가 있다 — blob으로 받아 로컬 URL을 만들어야
+  // download 속성이 항상 확실히 동작한다.
+  clipDownloadLink.textContent = '⬇ 다운로드 준비 중...';
   clipDownloadWrap.style.display = 'block';
+  fetch(url)
+    .then(res => res.blob())
+    .then(blob => {
+      const blobUrl = URL.createObjectURL(blob);
+      clipDownloadLink.href = blobUrl;
+      clipDownloadLink.setAttribute('download', `${clipId}.mp4`);
+      clipDownloadLink.textContent = '⬇ 다운로드';
+    })
+    .catch(err => {
+      clipDownloadLink.textContent = `❌ 다운로드 준비 실패: ${err.message}`;
+    });
 }
 
 /* ================================================================
@@ -1794,6 +1853,7 @@ function switchTab(name) {
     page.classList.toggle('active', page.id === `page-${name}`);
   });
   if (name === 'monitoring') {
+    renderMonitoringView();
     loadEvents();
     loadStats();
     refreshAudioTestOptions();
