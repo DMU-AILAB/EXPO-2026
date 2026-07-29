@@ -161,8 +161,18 @@ main {
   border-radius: var(--radius-md);
   overflow: hidden;
   background: #000;
+  display: flex;
+  justify-content: center; /* 세로축(column) 중앙 정렬 — 라벨은 align-items:stretch(기본 상속)로 폭 그대로 */
+  max-height: 45vh;
 }
-#monitorViewWrap .dual-cell img { width: 100%; max-width: none; max-height: none; display: block; border: none; }
+#monitorViewWrap .dual-cell img {
+  max-width: 100%;
+  max-height: 45vh;
+  width: auto;
+  display: block;
+  border: none;
+  align-self: center;
+}
 #monitorViewWrap .dual-label { border-radius: 0; }
 .events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .events-table th {
