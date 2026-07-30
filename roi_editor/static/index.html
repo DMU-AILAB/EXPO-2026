@@ -490,7 +490,7 @@ main {
 .badge__dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .badge--good { color: var(--good); }
 .badge--amber { color: var(--amber); }
-#statsChart { width: 100%; height: 260px; display: block; }
+#statsChart { width: 100%; height: 280px; display: block; cursor: crosshair; }
 
 /* ── 녹화 버튼(영상 위 오버레이) — ROI 편집의 #recordBtn과 모니터링의 카메라별
    .cell-record-btn이 공유한다 ── */
@@ -790,7 +790,16 @@ main {
     </div>
     <div class="stats-chart-card">
       <div class="stats-chart-card__title">시간대별/일별 유동인구</div>
-      <canvas id="statsChart" width="800" height="280"></canvas>
+      <div style="position:relative">
+        <canvas id="statsChart"></canvas>
+        <div id="chartTooltip" style="
+          display:none; position:absolute; pointer-events:none;
+          background:var(--surface); border:1px solid var(--line);
+          border-radius:8px; padding:6px 10px; font-size:12px;
+          color:var(--ink); box-shadow:0 2px 8px rgba(0,0,0,.12);
+          white-space:nowrap; transform:translateX(-50%);
+        "></div>
+      </div>
     </div>
   </div>
 
@@ -1731,62 +1740,149 @@ document.getElementById('btnAudioTest').addEventListener('click', () => {
 ================================================================ */
 let statsPeriod = 'today';
 
+/* HiDPI 대응: CSS 크기는 그대로 두고 물리 픽셀에 맞게 버퍼를 확장한다 */
+function _setupHiDPI(canvasEl) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvasEl.getBoundingClientRect();
+  const cssW = rect.width  || canvasEl.offsetWidth  || 800;
+  const cssH = rect.height || canvasEl.offsetHeight || 280;
+  canvasEl.width  = Math.round(cssW * dpr);
+  canvasEl.height = Math.round(cssH * dpr);
+  canvasEl.style.width  = cssW + 'px';
+  canvasEl.style.height = cssH + 'px';
+  const ctx = canvasEl.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, cssW, cssH, dpr };
+}
+
+/* 베지어 스무딩 — 꺾인 선 대신 부드러운 커브 */
+function _smoothLineTo(ctx, pts) {
+  if (pts.length < 2) return;
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const cpx = (pts[i][0] + pts[i + 1][0]) / 2;
+    const cpy = (pts[i][1] + pts[i + 1][1]) / 2;
+    ctx.quadraticCurveTo(pts[i][0], pts[i][1], cpx, cpy);
+  }
+  ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+}
+
+/* y축 적절한 눈금 최대값 계산 (5/10 단위 반올림) */
+function _niceMax(v) {
+  if (v <= 0) return 10;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const step = v / mag <= 1 ? mag / 5 : v / mag <= 2 ? mag / 2 : v / mag <= 5 ? mag : mag * 2;
+  return Math.ceil(v / step) * step;
+}
+
+let _chartPoints = [];   // 마지막으로 그린 데이터 (툴팁용)
+let _chartMeta   = {};   // { padL, padR, padT, padB, plotW, plotH, maxV, cssW, cssH }
+
 function drawLineChart(canvasEl, points, valueKey) {
-  const dctx = canvasEl.getContext('2d');
-  const w = canvasEl.width, h = canvasEl.height;
-  dctx.clearRect(0, 0, w, h);
-  if (!points.length) return;
+  const { ctx, cssW, cssH } = _setupHiDPI(canvasEl);
+  _chartPoints = points;
 
-  const padL = 38, padR = 12, padT = 12, padB = 26;
-  const plotW = w - padL - padR, plotH = h - padT - padB;
+  if (!points.length) {
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = "13px 'Pretendard Variable', sans-serif";
+    ctx.textAlign = 'center';
+    ctx.fillText('데이터 없음', cssW / 2, cssH / 2);
+    return;
+  }
+
+  const padL = 48, padR = 16, padT = 18, padB = 32;
+  const plotW = cssW - padL - padR, plotH = cssH - padT - padB;
   const values = points.map(p => p[valueKey]);
-  const maxV = Math.max(1, ...values);
+  const rawMax = Math.max(...values);
+  const maxV   = _niceMax(rawMax);
 
-  const xFor = i => padL + (points.length === 1 ? 0 : (i / (points.length - 1)) * plotW);
+  _chartMeta = { padL, padR, padT, padB, plotW, plotH, maxV, cssW, cssH, valueKey };
+
+  const xFor = i => padL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
   const yFor = v => padT + plotH - (v / maxV) * plotH;
+  const linePts = values.map((v, i) => [xFor(i), yFor(v)]);
 
-  const grad = dctx.createLinearGradient(0, padT, 0, padT + plotH);
-  grad.addColorStop(0, 'rgba(44,75,224,0.22)');
-  grad.addColorStop(1, 'rgba(44,75,224,0.02)');
-  dctx.beginPath();
-  dctx.moveTo(xFor(0), padT + plotH);
-  values.forEach((v, i) => dctx.lineTo(xFor(i), yFor(v)));
-  dctx.lineTo(xFor(values.length - 1), padT + plotH);
-  dctx.closePath();
-  dctx.fillStyle = grad;
-  dctx.fill();
+  /* 가로 그리드 (4개) */
+  const GRID_STEPS = 4;
+  ctx.strokeStyle = '#e7e5df';
+  ctx.lineWidth = 0.8;
+  for (let g = 0; g <= GRID_STEPS; g++) {
+    const y = padT + (g / GRID_STEPS) * plotH;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + plotW, y);
+    ctx.stroke();
+    /* y축 레이블 */
+    const val = Math.round(maxV * (1 - g / GRID_STEPS));
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = "10px 'Pretendard Variable', sans-serif";
+    ctx.textAlign = 'right';
+    ctx.fillText(val === 0 ? '0' : val >= 1000 ? (val / 1000).toFixed(1) + 'k' : String(val), padL - 6, y + 3.5);
+  }
 
-  dctx.beginPath();
-  values.forEach((v, i) => {
-    const x = xFor(i), y = yFor(v);
-    if (i === 0) dctx.moveTo(x, y); else dctx.lineTo(x, y);
-  });
-  dctx.strokeStyle = '#2c4be0';
-  dctx.lineWidth = 2;
-  dctx.stroke();
+  /* 채우기 영역 */
+  const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+  grad.addColorStop(0, 'rgba(44,75,224,0.18)');
+  grad.addColorStop(1, 'rgba(44,75,224,0.01)');
+  ctx.beginPath();
+  ctx.moveTo(xFor(0), padT + plotH);
+  _smoothLineTo(ctx, linePts);
+  ctx.lineTo(xFor(values.length - 1), padT + plotH);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
 
-  dctx.strokeStyle = '#e7e5df';
-  dctx.lineWidth = 1;
-  dctx.beginPath();
-  dctx.moveTo(padL, padT);
-  dctx.lineTo(padL, padT + plotH);
-  dctx.lineTo(padL + plotW, padT + plotH);
-  dctx.stroke();
+  /* 선 */
+  ctx.beginPath();
+  _smoothLineTo(ctx, linePts);
+  ctx.strokeStyle = '#2c4be0';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
 
-  dctx.fillStyle = '#6b6f7a';
-  dctx.font = "11px 'Pretendard Variable', sans-serif";
-  dctx.textAlign = 'center';
-  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  /* 축 */
+  ctx.strokeStyle = '#d1d5db';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + plotH);
+  ctx.lineTo(padL + plotW, padT + plotH);
+  ctx.stroke();
+
+  /* x축 레이블 */
+  ctx.fillStyle = '#6b7280';
+  ctx.font = "11px 'Pretendard Variable', sans-serif";
+  ctx.textAlign = 'center';
+  const labelEvery = Math.max(1, Math.ceil(points.length / 10));
   points.forEach((p, i) => {
     if (i % labelEvery !== 0 && i !== points.length - 1) return;
-    const label = ('hour' in p) ? String(p.hour) : p.date.slice(5);
-    dctx.fillText(label, xFor(i), h - 6);
+    const label = ('hour' in p) ? `${p.hour}시` : p.date.slice(5);
+    ctx.fillText(label, xFor(i), cssH - 8);
   });
-
-  dctx.textAlign = 'right';
-  dctx.fillText(String(maxV), padL - 6, padT + 4);
-  dctx.fillText('0', padL - 6, padT + plotH + 4);
 }
+
+/* 툴팁 */
+const _chartTooltip = document.getElementById('chartTooltip');
+document.getElementById('statsChart').addEventListener('mousemove', e => {
+  if (!_chartPoints.length) return;
+  const { padL, padR, padT, plotW, plotH, maxV, cssH, valueKey } = _chartMeta;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  const n = _chartPoints.length;
+  const idx = Math.round((mouseX - padL) / (plotW / Math.max(1, n - 1)));
+  if (idx < 0 || idx >= n) { _chartTooltip.style.display = 'none'; return; }
+  const p = _chartPoints[idx];
+  const xFor = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const label = ('hour' in p) ? `${p.hour}시` : p.date;
+  _chartTooltip.innerHTML = `<b>${label}</b> · 유동인구 ${p.total_count}명 · 지팡이 ${p.cane_user_count}명`;
+  _chartTooltip.style.display = 'block';
+  _chartTooltip.style.left = xFor(idx) + 'px';
+  _chartTooltip.style.top  = (cssH - 28) - plotH + 'px';
+});
+document.getElementById('statsChart').addEventListener('mouseleave', () => {
+  _chartTooltip.style.display = 'none';
+});
 
 async function loadStatsTimeseries(period) {
   statsPeriod = period;
@@ -2014,7 +2110,7 @@ function switchTab(name) {
   } else if (name === 'roi') {
     syncSize();
   } else if (name === 'stats') {
-    loadStatsTimeseries(statsPeriod);
+    requestAnimationFrame(() => loadStatsTimeseries(statsPeriod));
   } else if (name === 'recordings') {
     clipPlayer.pause();
     clipPlayer.style.display = 'none';
