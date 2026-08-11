@@ -142,9 +142,7 @@ main {
 
 /* 통계/녹화 페이지 — 데모 화면3·4와 동일한 카드+그리드 구성, 상시 상주(모달 아님) */
 #page-stats.active { display: block; overflow-y: auto; padding: 24px var(--content-pad-x); }
-#page-recordings.active { display: flex; gap: 16px; padding: 16px var(--content-pad-x); }
-#recordingsClipCol { width: 320px; flex-shrink: 0; overflow-y: auto; }
-#recordingsPlayerCol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#page-recordings.active { display: block; overflow-y: auto; padding: 24px var(--content-pad-x); }
 .page-title { font-size: 16px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
 
 /* 모니터링 페이지 — 좌(최근 감지 이벤트) 68% / 우(상태 카드) 32% */
@@ -490,7 +488,7 @@ main {
 .badge__dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .badge--good { color: var(--good); }
 .badge--amber { color: var(--amber); }
-#statsChart { width: 100%; height: 260px; display: block; }
+#statsChart { width: 100%; height: 280px; display: block; cursor: crosshair; }
 
 /* ── 녹화 버튼(영상 위 오버레이) — ROI 편집의 #recordBtn과 모니터링의 카메라별
    .cell-record-btn이 공유한다 ── */
@@ -526,22 +524,92 @@ main {
 #recordBtn.recording .rec-dot,
 .cell-record-btn.recording .rec-dot { animation: record-blink 1s infinite; }
 @keyframes record-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
-.clip-item {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+/* ── 녹화 그리드 (YouTube 카드 레이아웃) ── */
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+.clip-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  margin-bottom: 8px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
   cursor: pointer;
+  transition: box-shadow .15s, transform .15s;
 }
-.clip-item:hover { border-color: var(--accent); }
-.clip-item img { width: 72px; height: 40px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0; }
-.clip-item .clip-meta { font-size: 12px; color: var(--ink); }
-.clip-item .clip-meta small { color: var(--ink-soft); display: block; margin-top: 2px; }
-#clipPlayer { width: 100%; max-height: 50vh; background: #000; border-radius: var(--radius-sm); margin-top: 12px; display: none; }
+.clip-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,.12);
+  transform: translateY(-2px);
+}
+.clip-card__thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #111;
+  overflow: hidden;
+}
+.clip-card__thumb img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.clip-card__thumb .thumb-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: #555; font-size: 32px;
+}
+.clip-card__badge {
+  position: absolute; bottom: 6px; right: 8px;
+  background: rgba(0,0,0,.72); color: #fff;
+  font-size: 11px; font-weight: 600; padding: 2px 6px;
+  border-radius: 4px; letter-spacing: .02em;
+}
+.clip-card__cam-badge {
+  position: absolute; top: 6px; left: 8px;
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 4px;
+}
+.clip-card__info {
+  padding: 10px 12px 12px;
+}
+.clip-card__title {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.clip-card__meta {
+  font-size: 11px; color: var(--ink-soft); display: flex; gap: 8px; flex-wrap: wrap;
+}
+/* ── 녹화 모달 플레이어 ── */
+#clipModal {
+  display: none; position: fixed; inset: 0;
+  background: rgba(10,10,15,.82); z-index: 300;
+  align-items: center; justify-content: center; padding: 20px;
+}
+#clipModal.active { display: flex; }
+#clipModalInner {
+  background: #0d0d14; border-radius: var(--radius-md);
+  width: min(960px, 100%); max-height: 92vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 8px 48px rgba(0,0,0,.6);
+}
+#clipModalHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid #1f2030;
+}
+#clipModalTitle { font-size: 13px; font-weight: 600; color: #e2e4ee; }
+#clipModalClose {
+  background: none; border: none; color: #888; font-size: 20px;
+  cursor: pointer; padding: 0 4px; line-height: 1;
+}
+#clipModalClose:hover { color: #fff; }
+#clipPlayer {
+  width: 100%; background: #000; display: block; flex-shrink: 0;
+  max-height: calc(92vh - 100px);
+}
+#clipModalFooter {
+  padding: 10px 16px; display: flex; gap: 8px; align-items: center;
+  border-top: 1px solid #1f2030;
+}
 
 /* ── 확인 모달 (네이티브 confirm() 대체) ── */
 .confirm-overlay {
@@ -569,8 +637,8 @@ main {
   #page-stats.active { padding: 16px; }
   .stat-tiles { grid-template-columns: 1fr; max-width: none; }
   .stats-chart-card { max-width: none; }
-  #page-recordings.active { flex-direction: column; padding: 12px; }
-  #recordingsClipCol { width: 100%; max-height: 40vh; }
+  #page-recordings.active { padding: 12px; }
+  .clip-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
   .btn { padding: 9px 14px; } /* 터치 타겟 확대 */
   .btn-sm { padding: 7px 10px; }
 }
@@ -804,22 +872,40 @@ main {
     </div>
     <div class="stats-chart-card">
       <div class="stats-chart-card__title">시간대별/일별 유동인구</div>
-      <canvas id="statsChart" width="800" height="280"></canvas>
+      <div style="position:relative">
+        <canvas id="statsChart"></canvas>
+        <div id="chartTooltip" style="
+          display:none; position:absolute; pointer-events:none;
+          background:var(--surface); border:1px solid var(--line);
+          border-radius:8px; padding:6px 10px; font-size:12px;
+          color:var(--ink); box-shadow:0 2px 8px rgba(0,0,0,.12);
+          white-space:nowrap; transform:translateX(-50%);
+        "></div>
+      </div>
     </div>
   </div>
 
   <div class="page" id="page-recordings">
-    <div id="recordingsClipCol">
-      <div class="page-title">🎬 녹화 목록</div>
-      <select id="recordingsCameraFilter" style="width:100%; margin-bottom:10px; padding:6px 8px; border:1px solid var(--line); border-radius:var(--radius-sm); font-family:inherit; font-size:12px">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
+      <div class="page-title" style="margin-bottom:0">🎬 녹화 목록</div>
+      <select id="recordingsCameraFilter" style="padding:6px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-family:inherit; font-size:12px; min-width:140px">
         <option value="">전체 카메라</option>
       </select>
-      <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
     </div>
-    <div id="recordingsPlayerCol">
+    <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
+  </div>
+
+  <!-- 녹화 영상 모달 플레이어 -->
+  <div id="clipModal" onclick="if(event.target===this)closeClipModal()">
+    <div id="clipModalInner">
+      <div id="clipModalHeader">
+        <span id="clipModalTitle">영상</span>
+        <button id="clipModalClose" onclick="closeClipModal()">✕</button>
+      </div>
       <video id="clipPlayer" controls></video>
-      <div id="clipDownloadWrap" style="margin-top:8px; display:none">
-        <a id="clipDownloadLink" class="btn btn-sm" download>⬇ 다운로드</a>
+      <div id="clipModalFooter">
+        <a id="clipDownloadLink" class="btn btn-sm" download style="display:none">⬇ 다운로드</a>
+        <span id="clipDownloadStatus" style="font-size:12px; color:var(--ink-soft)"></span>
       </div>
     </div>
   </div>
@@ -881,10 +967,10 @@ const confPersonInput  = document.getElementById('fConfPerson');
 const confPersonValueEl = document.getElementById('confPersonValue');
 const recordBtn      = document.getElementById('recordBtn');
 const recordBtnLabel = document.getElementById('recordBtnLabel');
-const clipListEl     = document.getElementById('clipList');
-const clipPlayer     = document.getElementById('clipPlayer');
-const clipDownloadWrap = document.getElementById('clipDownloadWrap');
+const clipListEl       = document.getElementById('clipList');
+const clipPlayer       = document.getElementById('clipPlayer');
 const clipDownloadLink = document.getElementById('clipDownloadLink');
+const clipDownloadStatus = document.getElementById('clipDownloadStatus');
 
 /* ================================================================
    Stream setup
@@ -1468,7 +1554,10 @@ document.querySelectorAll('input[name="fZoneType"]').forEach(radio => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') cancelDrawing();
+  if (e.key === 'Escape') {
+    if (document.getElementById('clipModal').classList.contains('active')) { closeClipModal(); return; }
+    cancelDrawing();
+  }
 });
 
 /* ================================================================
@@ -1775,62 +1864,149 @@ document.getElementById('btnAudioTest').addEventListener('click', () => {
 ================================================================ */
 let statsPeriod = 'today';
 
+/* HiDPI 대응: CSS 크기는 그대로 두고 물리 픽셀에 맞게 버퍼를 확장한다 */
+function _setupHiDPI(canvasEl) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvasEl.getBoundingClientRect();
+  const cssW = rect.width  || canvasEl.offsetWidth  || 800;
+  const cssH = rect.height || canvasEl.offsetHeight || 280;
+  canvasEl.width  = Math.round(cssW * dpr);
+  canvasEl.height = Math.round(cssH * dpr);
+  canvasEl.style.width  = cssW + 'px';
+  canvasEl.style.height = cssH + 'px';
+  const ctx = canvasEl.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, cssW, cssH, dpr };
+}
+
+/* 베지어 스무딩 — 꺾인 선 대신 부드러운 커브 */
+function _smoothLineTo(ctx, pts) {
+  if (pts.length < 2) return;
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const cpx = (pts[i][0] + pts[i + 1][0]) / 2;
+    const cpy = (pts[i][1] + pts[i + 1][1]) / 2;
+    ctx.quadraticCurveTo(pts[i][0], pts[i][1], cpx, cpy);
+  }
+  ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+}
+
+/* y축 적절한 눈금 최대값 계산 (5/10 단위 반올림) */
+function _niceMax(v) {
+  if (v <= 0) return 10;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const step = v / mag <= 1 ? mag / 5 : v / mag <= 2 ? mag / 2 : v / mag <= 5 ? mag : mag * 2;
+  return Math.ceil(v / step) * step;
+}
+
+let _chartPoints = [];   // 마지막으로 그린 데이터 (툴팁용)
+let _chartMeta   = {};   // { padL, padR, padT, padB, plotW, plotH, maxV, cssW, cssH }
+
 function drawLineChart(canvasEl, points, valueKey) {
-  const dctx = canvasEl.getContext('2d');
-  const w = canvasEl.width, h = canvasEl.height;
-  dctx.clearRect(0, 0, w, h);
-  if (!points.length) return;
+  const { ctx, cssW, cssH } = _setupHiDPI(canvasEl);
+  _chartPoints = points;
 
-  const padL = 38, padR = 12, padT = 12, padB = 26;
-  const plotW = w - padL - padR, plotH = h - padT - padB;
+  if (!points.length) {
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = "13px 'Pretendard Variable', sans-serif";
+    ctx.textAlign = 'center';
+    ctx.fillText('데이터 없음', cssW / 2, cssH / 2);
+    return;
+  }
+
+  const padL = 48, padR = 16, padT = 18, padB = 32;
+  const plotW = cssW - padL - padR, plotH = cssH - padT - padB;
   const values = points.map(p => p[valueKey]);
-  const maxV = Math.max(1, ...values);
+  const rawMax = Math.max(...values);
+  const maxV   = _niceMax(rawMax);
 
-  const xFor = i => padL + (points.length === 1 ? 0 : (i / (points.length - 1)) * plotW);
+  _chartMeta = { padL, padR, padT, padB, plotW, plotH, maxV, cssW, cssH, valueKey };
+
+  const xFor = i => padL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
   const yFor = v => padT + plotH - (v / maxV) * plotH;
+  const linePts = values.map((v, i) => [xFor(i), yFor(v)]);
 
-  const grad = dctx.createLinearGradient(0, padT, 0, padT + plotH);
-  grad.addColorStop(0, 'rgba(44,75,224,0.22)');
-  grad.addColorStop(1, 'rgba(44,75,224,0.02)');
-  dctx.beginPath();
-  dctx.moveTo(xFor(0), padT + plotH);
-  values.forEach((v, i) => dctx.lineTo(xFor(i), yFor(v)));
-  dctx.lineTo(xFor(values.length - 1), padT + plotH);
-  dctx.closePath();
-  dctx.fillStyle = grad;
-  dctx.fill();
+  /* 가로 그리드 (4개) */
+  const GRID_STEPS = 4;
+  ctx.strokeStyle = '#e7e5df';
+  ctx.lineWidth = 0.8;
+  for (let g = 0; g <= GRID_STEPS; g++) {
+    const y = padT + (g / GRID_STEPS) * plotH;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + plotW, y);
+    ctx.stroke();
+    /* y축 레이블 */
+    const val = Math.round(maxV * (1 - g / GRID_STEPS));
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = "10px 'Pretendard Variable', sans-serif";
+    ctx.textAlign = 'right';
+    ctx.fillText(val === 0 ? '0' : val >= 1000 ? (val / 1000).toFixed(1) + 'k' : String(val), padL - 6, y + 3.5);
+  }
 
-  dctx.beginPath();
-  values.forEach((v, i) => {
-    const x = xFor(i), y = yFor(v);
-    if (i === 0) dctx.moveTo(x, y); else dctx.lineTo(x, y);
-  });
-  dctx.strokeStyle = '#2c4be0';
-  dctx.lineWidth = 2;
-  dctx.stroke();
+  /* 채우기 영역 */
+  const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+  grad.addColorStop(0, 'rgba(44,75,224,0.18)');
+  grad.addColorStop(1, 'rgba(44,75,224,0.01)');
+  ctx.beginPath();
+  ctx.moveTo(xFor(0), padT + plotH);
+  _smoothLineTo(ctx, linePts);
+  ctx.lineTo(xFor(values.length - 1), padT + plotH);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
 
-  dctx.strokeStyle = '#e7e5df';
-  dctx.lineWidth = 1;
-  dctx.beginPath();
-  dctx.moveTo(padL, padT);
-  dctx.lineTo(padL, padT + plotH);
-  dctx.lineTo(padL + plotW, padT + plotH);
-  dctx.stroke();
+  /* 선 */
+  ctx.beginPath();
+  _smoothLineTo(ctx, linePts);
+  ctx.strokeStyle = '#2c4be0';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
 
-  dctx.fillStyle = '#6b6f7a';
-  dctx.font = "11px 'Pretendard Variable', sans-serif";
-  dctx.textAlign = 'center';
-  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  /* 축 */
+  ctx.strokeStyle = '#d1d5db';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + plotH);
+  ctx.lineTo(padL + plotW, padT + plotH);
+  ctx.stroke();
+
+  /* x축 레이블 */
+  ctx.fillStyle = '#6b7280';
+  ctx.font = "11px 'Pretendard Variable', sans-serif";
+  ctx.textAlign = 'center';
+  const labelEvery = Math.max(1, Math.ceil(points.length / 10));
   points.forEach((p, i) => {
     if (i % labelEvery !== 0 && i !== points.length - 1) return;
-    const label = ('hour' in p) ? String(p.hour) : p.date.slice(5);
-    dctx.fillText(label, xFor(i), h - 6);
+    const label = ('hour' in p) ? `${p.hour}시` : p.date.slice(5);
+    ctx.fillText(label, xFor(i), cssH - 8);
   });
-
-  dctx.textAlign = 'right';
-  dctx.fillText(String(maxV), padL - 6, padT + 4);
-  dctx.fillText('0', padL - 6, padT + plotH + 4);
 }
+
+/* 툴팁 */
+const _chartTooltip = document.getElementById('chartTooltip');
+document.getElementById('statsChart').addEventListener('mousemove', e => {
+  if (!_chartPoints.length) return;
+  const { padL, padR, padT, plotW, plotH, maxV, cssH, valueKey } = _chartMeta;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  const n = _chartPoints.length;
+  const idx = Math.round((mouseX - padL) / (plotW / Math.max(1, n - 1)));
+  if (idx < 0 || idx >= n) { _chartTooltip.style.display = 'none'; return; }
+  const p = _chartPoints[idx];
+  const xFor = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const label = ('hour' in p) ? `${p.hour}시` : p.date;
+  _chartTooltip.innerHTML = `<b>${label}</b> · 유동인구 ${p.total_count}명 · 지팡이 ${p.cane_user_count}명`;
+  _chartTooltip.style.display = 'block';
+  _chartTooltip.style.left = xFor(idx) + 'px';
+  _chartTooltip.style.top  = (cssH - 28) - plotH + 'px';
+});
+document.getElementById('statsChart').addEventListener('mouseleave', () => {
+  _chartTooltip.style.display = 'none';
+});
 
 async function loadStatsTimeseries(period) {
   statsPeriod = period;
@@ -1989,26 +2165,44 @@ async function loadClipList() {
         const res  = await fetch(recordingUrlFor(c.port, '/recording/list'));
         const data = await res.json();
         return (data.clips || []).map(clip => ({ ...clip, _port: c.port, _camLabel: c.label || c.id }));
-      } catch (e) {
-        return []; // 카메라 하나가 응답 없어도 나머지는 계속 보여준다
-      }
+      } catch { return []; }
     }));
     const clips = results.flat().sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
 
     if (clips.length === 0) {
-      clipListEl.innerHTML = '<div class="roi-meta">아직 녹화된 영상이 없습니다 — 영상 좌상단 "녹화 시작" 버튼으로 시작하세요.</div>';
+      clipListEl.innerHTML = `<div style="text-align:center; padding:64px 12px; color:var(--ink-soft)">
+        <div style="font-size:48px; margin-bottom:12px">🎬</div>
+        <div style="font-size:14px; font-weight:600; color:var(--ink)">녹화된 영상이 없습니다</div>
+        <div style="font-size:12px; margin-top:6px">카메라 화면의 "녹화 시작" 버튼으로 시작하세요</div>
+      </div>`;
       return;
     }
+
     const showCameraLabel = !filterPort && targets.length > 1;
-    clipListEl.innerHTML = clips.map(c => `
-      <div class="clip-item" onclick="playClip('${escAttr(c.id)}', ${c._port})">
-        ${c.has_thumb ? `<img src="${recordingUrlFor(c._port, `/recording/clips/${c.id}.jpg`)}" alt="">` : ''}
-        <div class="clip-meta">
-          ${c.started_at ? escHtml(new Date(c.started_at).toLocaleString()) : escHtml(c.id)}
-          <small>${showCameraLabel ? escHtml(c._camLabel) + ' · ' : ''}${c.duration_sec != null ? c.duration_sec + 's' : ''} · ${formatClipSize(c.size_bytes)}</small>
+    clipListEl.innerHTML = `<div class="clip-grid">${clips.map(c => {
+      const thumbUrl = recordingUrlFor(c._port, `/recording/clips/${c.id}.jpg`);
+      const durLabel = c.duration_sec != null
+        ? (c.duration_sec >= 60 ? `${Math.floor(c.duration_sec/60)}:${String(c.duration_sec%60).padStart(2,'0')}` : `0:${String(c.duration_sec).padStart(2,'0')}`)
+        : '';
+      const dateLabel = c.started_at ? new Date(c.started_at).toLocaleString('ko-KR', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : c.id;
+      return `<div class="clip-card" onclick="playClip('${escAttr(c.id)}', ${c._port}, ${JSON.stringify(escHtml(dateLabel))})">
+        <div class="clip-card__thumb">
+          ${c.has_thumb
+            ? `<img src="${thumbUrl}" alt="" loading="lazy" onerror="this.closest('.clip-card__thumb').innerHTML='<div class=\\'thumb-placeholder\\'>▶</div>'">`
+            : '<div class="thumb-placeholder">▶</div>'}
+          ${durLabel ? `<span class="clip-card__badge">${escHtml(durLabel)}</span>` : ''}
+          ${showCameraLabel ? `<span class="clip-card__cam-badge">${escHtml(c._camLabel)}</span>` : ''}
         </div>
-      </div>
-    `).join('');
+        <div class="clip-card__info">
+          <div class="clip-card__title">${escHtml(dateLabel)}</div>
+          <div class="clip-card__meta">
+            ${showCameraLabel ? `<span>${escHtml(c._camLabel)}</span>` : ''}
+            ${durLabel ? `<span>${escHtml(durLabel)}</span>` : ''}
+            <span>${formatClipSize(c.size_bytes)}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join('')}</div>`;
   } catch (e) {
     clipListEl.innerHTML = `<div class="roi-meta s-err">목록을 불러오지 못했습니다: ${escHtml(e.message)}</div>`;
   }
@@ -2016,28 +2210,40 @@ async function loadClipList() {
 
 document.getElementById('recordingsCameraFilter').addEventListener('change', loadClipList);
 
-function playClip(clipId, port) {
+function playClip(clipId, port, dateLabel) {
   const url = recordingUrlFor(port, `/recording/clips/${clipId}.mp4`);
+  document.getElementById('clipModalTitle').textContent = dateLabel || clipId;
   clipPlayer.src = url;
-  clipPlayer.style.display = 'block';
+  clipPlayer.load();
   clipPlayer.play().catch(() => {});
+  document.getElementById('clipModal').classList.add('active');
 
-  // 크로스오리진(카메라 포트) 링크는 <a download>가 브라우저에 따라 무시되고
-  // 그냥 새 탭에서 열려버리는 경우가 있다 — blob으로 받아 로컬 URL을 만들어야
-  // download 속성이 항상 확실히 동작한다.
-  clipDownloadLink.textContent = '⬇ 다운로드 준비 중...';
-  clipDownloadWrap.style.display = 'block';
+  // 다운로드: 크로스오리진 fetch → blob URL
+  clipDownloadLink.style.display = 'none';
+  clipDownloadStatus.textContent = '다운로드 준비 중...';
   fetch(url)
-    .then(res => res.blob())
+    .then(r => r.blob())
     .then(blob => {
+      const prev = clipDownloadLink._blobUrl;
+      if (prev) URL.revokeObjectURL(prev);
       const blobUrl = URL.createObjectURL(blob);
+      clipDownloadLink._blobUrl = blobUrl;
       clipDownloadLink.href = blobUrl;
       clipDownloadLink.setAttribute('download', `${clipId}.mp4`);
-      clipDownloadLink.textContent = '⬇ 다운로드';
+      clipDownloadLink.style.display = '';
+      clipDownloadStatus.textContent = '';
     })
     .catch(err => {
-      clipDownloadLink.textContent = `❌ 다운로드 준비 실패: ${err.message}`;
+      clipDownloadStatus.textContent = `다운로드 준비 실패: ${err.message}`;
     });
+}
+
+function closeClipModal() {
+  document.getElementById('clipModal').classList.remove('active');
+  clipPlayer.pause();
+  clipPlayer.src = '';
+  clipDownloadLink.style.display = 'none';
+  clipDownloadStatus.textContent = '';
 }
 
 /* ================================================================
@@ -2058,11 +2264,9 @@ function switchTab(name) {
   } else if (name === 'roi') {
     syncSize();
   } else if (name === 'stats') {
-    loadStatsTimeseries(statsPeriod);
+    requestAnimationFrame(() => loadStatsTimeseries(statsPeriod));
   } else if (name === 'recordings') {
-    clipPlayer.pause();
-    clipPlayer.style.display = 'none';
-    clipDownloadWrap.style.display = 'none';
+    closeClipModal();
     populateRecordingsCameraFilter();
     loadClipList();
   }
