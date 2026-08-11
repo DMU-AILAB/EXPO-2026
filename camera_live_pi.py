@@ -45,7 +45,8 @@ from urllib.parse import urlsplit
 import cv2
 import numpy as np
 
-from camera_config import CameraProfile, MODEL_VARIANTS, load_camera_config, validate_camera_config
+from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
+                           load_camera_config, validate_camera_config)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 from simple_tracker import SimpleTracker
 
@@ -351,8 +352,15 @@ class CameraNotFoundError(RuntimeError):
 
 
 class _Picamera2Source:
-    def __init__(self, width: int = 640, height: int = 480, camera_num: int = 0) -> None:
+    def __init__(self, width: int = 640, height: int = 480, camera_num: int = 0,
+                 capture_preset: str = "auto") -> None:
         from picamera2 import Picamera2  # type: ignore[import]
+        # capture_preset이 "auto"가 아니면 프리셋 w×h로 오버라이드.
+        # "auto"는 picamera2의 네이티브 센서 해상도 쿼리가 복잡하므로 기본값(640×480) 유지.
+        preset = CAPTURE_PRESETS.get(capture_preset)
+        if preset and preset["w"] is not None:
+            width, height = preset["w"], preset["h"]
+        print(f"[INFO] Picamera2 캡처 해상도: {width}×{height} (preset='{capture_preset}')")
         # camera_num은 듀얼 CSI 카메라(카메라 멀티플렉서 HAT 등)를 위한 것 — 이 저장소에서
         # 검증된 조합은 CSI 카메라 1대 + USB 웹캠 1대뿐이라 실기기 미검증 상태.
         #
@@ -388,12 +396,50 @@ class _Picamera2Source:
         self._cam.close()
 
 
+def _apply_capture_preset(cap: cv2.VideoCapture, preset_key: str, tag: str = "") -> None:
+    """카메라 열기 직후 캡처 해상도를 SD 프리셋으로 낮춘다.
+
+    preset_key="auto": 네이티브 종횡비를 읽어 가장 가까운 SD 프리셋 자동 선택.
+    그 외: CAPTURE_PRESETS의 키로 직접 지정.
+    적용 결과(실제 드라이버가 받아들인 해상도)를 로그로 출력한다.
+    """
+    prefix = f"[{tag}] " if tag else ""
+
+    if preset_key == "auto":
+        native_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        native_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if native_w <= 0 or native_h <= 0:
+            print(f"{prefix}캡처 해상도 자동 선택 실패 — 네이티브 해상도 불명 (드라이버 미지원)")
+            return
+        native_ar = native_w / native_h
+        best_key = min(
+            (k for k in CAPTURE_PRESETS if k != "auto"),
+            key=lambda k: abs(CAPTURE_PRESETS[k]["ar"] - native_ar),
+        )
+        print(f"{prefix}캡처 해상도 자동 선택: 네이티브 {native_w}×{native_h} "
+              f"(AR={native_ar:.3f}) → 프리셋 '{best_key}'")
+        preset_key = best_key
+
+    preset = CAPTURE_PRESETS.get(preset_key)
+    if not preset or preset["w"] is None:
+        return
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  preset["w"])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, preset["h"])
+
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"{prefix}캡처 해상도 적용: {preset['w']}×{preset['h']} 요청 → "
+          f"실제 {actual_w}×{actual_h} (드라이버 적용값)")
+
+
 class _OpenCVSource:
-    def __init__(self, source: str | int) -> None:
+    def __init__(self, source: str | int, capture_preset: str = "auto", tag: str = "") -> None:
         src = int(source) if str(source).isdigit() else source
         self._cap = cv2.VideoCapture(src)
         if not self._cap.isOpened():
             raise CameraNotFoundError(f"카메라/영상을 열 수 없습니다: {source}")
+        _apply_capture_preset(self._cap, capture_preset, tag=tag)
 
     def read(self) -> tuple[bool, np.ndarray]:
         return self._cap.read()
@@ -402,35 +448,39 @@ class _OpenCVSource:
         self._cap.release()
 
 
-def build_camera(source: str, backend: str = "auto") -> _Picamera2Source | _OpenCVSource:
+def build_camera(source: str, backend: str = "auto",
+                 capture_preset: str = "auto", tag: str = "") -> _Picamera2Source | _OpenCVSource:
     """카메라 소스를 선택하여 반환.
 
     backend="auto"(기본값)는 기존 동작 그대로: Linux + 숫자 source면 picamera2를 먼저
     시도하고 실패 시 OpenCV로 폴백한다. backend="opencv"/"picamera2"를 명시하면 해당
     백엔드를 강제한다 — CSI 카메라 + USB 웹캠을 함께 쓸 때, 숫자 source인 USB 웹캠이
     picamera2에 가로채이는 것을 막기 위함(이전엔 강제할 방법이 없었음).
+
+    capture_preset: CAPTURE_PRESETS 키 — "auto"는 네이티브 종횡비 기반 SD 프리셋 자동 선택.
     """
     if backend == "opencv":
-        cam = _OpenCVSource(source)
+        cam = _OpenCVSource(source, capture_preset=capture_preset, tag=tag)
         print(f"[INFO] 카메라: OpenCV VideoCapture (source={source}, 강제 지정)")
         return cam
 
     if backend == "picamera2":
-        cam = _Picamera2Source(camera_num=int(source) if str(source).isdigit() else 0)
+        cam = _Picamera2Source(camera_num=int(source) if str(source).isdigit() else 0,
+                               capture_preset=capture_preset)
         print("[INFO] 카메라: picamera2 (Pi Camera Module, 강제 지정)")
         return cam
 
     is_index = str(source).isdigit()
     if is_index and platform.system() == "Linux":
         try:
-            cam = _Picamera2Source()
+            cam = _Picamera2Source(capture_preset=capture_preset)
             print("[INFO] 카메라: picamera2 (Pi Camera Module)")
             return cam
         except Exception as e:
             print(f"[WARN] picamera2 초기화 실패: {e}")
             print("[WARN] OpenCV VideoCapture로 대체합니다.")
 
-    cam = _OpenCVSource(source)
+    cam = _OpenCVSource(source, capture_preset=capture_preset, tag=tag)
     print(f"[INFO] 카메라: OpenCV VideoCapture (source={source})")
     return cam
 
@@ -1047,7 +1097,8 @@ class CameraPipeline:
         logged_absent = False
         while not (self._local_stop.is_set() or self.shared.stop_event.is_set()):
             try:
-                camera = build_camera(self.profile.source, backend=self.profile.backend)
+                camera = build_camera(self.profile.source, backend=self.profile.backend,
+                                      capture_preset=self.profile.capture_preset, tag=tag)
                 if logged_absent:
                     print(f"[INFO][{tag}] 카메라 연결 감지 — 파이프라인을 시작합니다")
                 return camera
@@ -1221,7 +1272,9 @@ class CameraPipeline:
                             if dispatcher.on_detected(roi.name, now):
                                 print(f"[TRIGGER][{tag}] ROI={roi.name}  audio={roi.audio_file or '없음'}")
                                 if self.shared.audio_player is not None:
-                                    self.shared.audio_player.play(roi.audio_file)
+                                    _roi_name = roi.name
+                                    _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
+                                    self.shared.audio_player.play(roi.audio_file, on_done=_done_cb)
                                 if _EVENTS_AVAILABLE and profile.traffic_db:
                                     log_event(profile.traffic_db, datetime.now().isoformat(),
                                               CLASS_NAMES[CANE_CLASS_ID], roi.name)

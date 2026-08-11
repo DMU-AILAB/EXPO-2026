@@ -32,7 +32,8 @@ from foot_traffic_counter import (  # noqa: E402
 )
 from detection_events import read_recent_events  # noqa: E402
 from camera_config import (  # noqa: E402
-    MODEL_VARIANTS, CameraProfile, load_camera_config, save_camera_config, validate_camera_config,
+    MODEL_VARIANTS, CAPTURE_PRESETS, CameraProfile,
+    load_camera_config, save_camera_config, validate_camera_config,
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
 
@@ -254,6 +255,8 @@ async def get_audio_file(path: str):
 class RoisPayload(BaseModel):
     rois: list
     conf: float | dict[str, float] | None = None
+    cooldown: float | None = None   # 초 단위, None이면 기존값 유지
+    debounce: float | None = None   # 초 단위, None이면 기존값 유지
 
 
 @app.post("/api/rois")
@@ -262,10 +265,15 @@ async def post_rois(payload: RoisPayload, camera: str | None = None):
     errors = _validate_rois(payload.rois) + _validate_conf(payload.conf)
     if errors:
         raise HTTPException(status_code=400, detail=errors)
-    data = {"rois": payload.rois}
-    conf = payload.conf if payload.conf is not None else _load(path).get("conf")
+    existing = _load(path)
+    data: dict = {"rois": payload.rois}
+    conf = payload.conf if payload.conf is not None else existing.get("conf")
     if conf is not None:
         data["conf"] = conf
+    cooldown = payload.cooldown if payload.cooldown is not None else existing.get("cooldown", 10.0)
+    debounce = payload.debounce if payload.debounce is not None else existing.get("debounce", 0.5)
+    data["cooldown"] = max(0.0, cooldown)
+    data["debounce"] = max(0.0, debounce)
     _save(data, path)
     return {"ok": True, "count": len(payload.rois)}
 
@@ -283,6 +291,7 @@ class CameraProfilePayload(BaseModel):
     traffic_db: str = "foot_traffic.db"
     swap_rb: bool = False
     model_variant: str = "v2_640"
+    capture_preset: str = "auto"
 
 
 class CamerasPayload(BaseModel):
@@ -301,6 +310,12 @@ async def get_model_variants():
     유일한 출처라서 UI에 라벨을 하드코딩해도 드리프트가 안 나지만, API로 노출해두면
     새 모델을 추가할 때 index.html을 건드릴 필요가 없다."""
     return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()]}
+
+
+@app.get("/api/capture-presets")
+async def get_capture_presets():
+    """캡처 해상도 프리셋 목록 — SD급 프리셋 + 'auto'(종횡비 자동 매칭)."""
+    return {"presets": [{"key": k, **v} for k, v in CAPTURE_PRESETS.items()]}
 
 
 @app.get("/api/device/status")

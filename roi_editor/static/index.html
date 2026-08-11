@@ -704,6 +704,8 @@ main {
           <input type="number" id="camPort" value="8080">
           <label>탐지 모델</label>
           <select id="camModelVariant"></select>
+          <label>캡처 해상도</label>
+          <select id="camCapturePreset"></select>
           <div class="cam-enabled-row">
             <input type="checkbox" id="camSwapRb"> <span>RGB/BGR 반전 (화면 색이 뒤바뀌어 보이면 체크)</span>
           </div>
@@ -721,6 +723,18 @@ main {
       <input type="range" id="fConfCane" min="0.1" max="0.95" step="0.05" value="0.55">
       <label for="fConfPerson">사람 신뢰도: <span id="confPersonValue">0.55</span></label>
       <input type="range" id="fConfPerson" min="0.1" max="0.95" step="0.05" value="0.55">
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <div style="flex:1">
+          <label for="fCooldown" style="font-size:11px; color:#99a; display:block; margin-bottom:2px">쿨다운 (초)</label>
+          <input type="number" id="fCooldown" min="1" max="300" step="1" value="10"
+                 style="width:100%; background:#0d1b2e; border:1px solid #0f3460; color:#e0e6f0; border-radius:4px; padding:4px 6px; font-size:12px;">
+        </div>
+        <div style="flex:1">
+          <label for="fDebounce" style="font-size:11px; color:#99a; display:block; margin-bottom:2px">디바운스 (초)</label>
+          <input type="number" id="fDebounce" min="0.1" max="5" step="0.1" value="0.5"
+                 style="width:100%; background:#0d1b2e; border:1px solid #0f3460; color:#e0e6f0; border-radius:4px; padding:4px 6px; font-size:12px;">
+        </div>
+      </div>
     </div>
     <div id="roi-list-card">
       <div id="panel-top">
@@ -840,6 +854,8 @@ let pendingAudioPath = ''; // 폼에서 업로드(또는 편집 중인 ROI의 �
 // loadFromServer()에서 두 값에 그대로 채워 넣어 하위호환한다.)
 let confCane = 0.55;
 let confPerson = 0.55;
+let cooldown = 10.0;
+let debounce = 0.5;
 let cameras       = [];   // GET /api/cameras 결과 — 비어있으면 기존 단일 카메라 UI 그대로
 let activeCameraId = null; // 현재 선택된 카메라 id (null = 카메라 프로필 없는 레거시 모드)
 let modelVariants = [];   // GET /api/model-variants 결과 — camera_config.MODEL_VARIANTS와 동기화
@@ -940,6 +956,19 @@ async function loadModelVariants() {
   sel.innerHTML = modelVariants.map(v => `
     <option value="${escAttr(v.key)}">${escHtml(v.label)}</option>
   `).join('');
+}
+
+async function loadCapturePresets() {
+  let presets = [];
+  try {
+    const res = await fetch('/api/capture-presets');
+    const data = await res.json();
+    presets = data.presets || [];
+  } catch (e) { /* 서버 미지원 시 기본값만 표시 */ }
+  const sel = document.getElementById('camCapturePreset');
+  sel.innerHTML = presets.length
+    ? presets.map(p => `<option value="${escAttr(p.key)}">${escHtml(p.label)}</option>`).join('')
+    : '<option value="auto">자동 (종횡비 매칭)</option>';
 }
 
 async function loadCameras() {
@@ -1171,6 +1200,7 @@ function fillCameraForm() {
   document.getElementById('camPort').value = cam.port;
   document.getElementById('camSwapRb').checked = !!cam.swap_rb;
   document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
+  document.getElementById('camCapturePreset').value = cam.capture_preset || 'auto';
 }
 
 cameraSelect.addEventListener('change', e => switchCamera(e.target.value));
@@ -1204,6 +1234,7 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
   cam.port               = parseInt(document.getElementById('camPort').value, 10) || cam.port;
   cam.swap_rb             = document.getElementById('camSwapRb').checked;
   cam.model_variant       = document.getElementById('camModelVariant').value;
+  cam.capture_preset      = document.getElementById('camCapturePreset').value;
 
   try {
     const res = await fetch('/api/cameras', {
@@ -1618,7 +1649,12 @@ async function saveToServer() {
     const res = await fetch(_apiUrl('/api/rois'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rois, conf: { white_cane: confCane, person: confPerson } }),
+      body: JSON.stringify({
+        rois,
+        conf: { white_cane: confCane, person: confPerson },
+        cooldown: parseFloat(document.getElementById('fCooldown').value) || cooldown,
+        debounce: parseFloat(document.getElementById('fDebounce').value) || debounce,
+      }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -1647,6 +1683,14 @@ async function loadFromServer() {
     confCaneValueEl.textContent = confCane.toFixed(2);
     confPersonInput.value = confPerson;
     confPersonValueEl.textContent = confPerson.toFixed(2);
+    if (data.cooldown != null) {
+      cooldown = data.cooldown;
+      document.getElementById('fCooldown').value = cooldown;
+    }
+    if (data.debounce != null) {
+      debounce = data.debounce;
+      document.getElementById('fDebounce').value = debounce;
+    }
     renderList();
     redraw();
     setStatus(`${rois.length}개 ROI 불러옴`, 'ok');
@@ -2102,7 +2146,7 @@ async function loadDeviceStatus() {
 ================================================================ */
 // loadCameras()가 카메라 프로필을 찾으면 switchCamera() 내부에서 loadFromServer()/loadStats()를
 // 이미 호출하므로, 프로필이 없는 레거시 단일 카메라 모드에서만 직접 호출한다.
-loadModelVariants().then(loadCameras).then(() => {
+Promise.all([loadModelVariants(), loadCapturePresets()]).then(loadCameras).then(() => {
   if (cameras.length === 0) {
     loadFromServer();
     loadStats();

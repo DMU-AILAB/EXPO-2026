@@ -47,7 +47,12 @@ class StandaloneDispatcher:
         self._state: dict[str, dict] = {}
 
     def on_detected(self, roi_name: str, now: float) -> bool:
-        """매 프레임 객체가 roi_name 안에 있을 때 호출. 트리거 발생 시 True 반환."""
+        """매 프레임 객체가 roi_name 안에 있을 때 호출. 트리거 발생 시 True 반환.
+
+        트리거가 발생하면 last_triggered를 inf로 설정해 오디오가 끝날 때까지
+        재트리거를 차단한다. 오디오 재생 완료 후 update_last_triggered()가
+        실제 종료 시각으로 덮어써야 쿨다운 카운트다운이 시작된다.
+        """
         s = self._state
         if roi_name not in s:
             s[roi_name] = {"first_seen": now, "last_triggered": 0.0}
@@ -57,15 +62,22 @@ class StandaloneDispatcher:
         if entry["first_seen"] is None:
             entry["first_seen"] = now
 
-        if now - entry["last_triggered"] < self.cooldown:
+        last = entry["last_triggered"]
+        # inf는 오디오 재생 중 — 종료 콜백이 올 때까지 차단
+        if last == float("inf") or (last > 0 and now - last < self.cooldown):
             return False
 
         if now - entry["first_seen"] >= self.debounce:
-            entry["last_triggered"] = now
+            entry["last_triggered"] = float("inf")  # 오디오 종료까지 무한 차단
             entry["first_seen"] = None
             return True
 
         return False
+
+    def update_last_triggered(self, roi_name: str, t: float) -> None:
+        """오디오 재생 완료 후 호출 — 쿨다운 기산점을 오디오 종료 시각으로 갱신."""
+        if roi_name in self._state:
+            self._state[roi_name]["last_triggered"] = t
 
     def on_not_detected(self, roi_name: str) -> None:
         """매 프레임 객체가 roi_name 밖에 있을 때 호출 (디바운스 리셋)."""
@@ -76,7 +88,10 @@ class StandaloneDispatcher:
         """roi_name 의 남은 쿨다운 시간(초). 쿨다운 중이 아니면 0."""
         if roi_name not in self._state:
             return 0.0
-        elapsed = now - self._state[roi_name].get("last_triggered", 0.0)
+        last = self._state[roi_name].get("last_triggered", 0.0)
+        if last == float("inf"):
+            return self.cooldown  # 재생 중 — 최대값 표시
+        elapsed = now - last
         return max(0.0, self.cooldown - elapsed)
 
     def clear(self) -> None:
@@ -109,7 +124,7 @@ class AudioPlayer:
     """
 
     def __init__(self, max_queue: int = 5) -> None:
-        self._queue: "queue.Queue[str]" = queue.Queue(maxsize=max_queue)
+        self._queue: "queue.Queue[tuple]" = queue.Queue(maxsize=max_queue)
         self._lock = threading.Lock()
         self._playing = False
         threading.Thread(target=self._worker, daemon=True).start()
@@ -119,18 +134,22 @@ class AudioPlayer:
         with self._lock:
             return self._playing
 
-    def play(self, path: str) -> None:
-        """재생 큐에 추가. 워커 스레드가 순서대로 재생한다."""
+    def play(self, path: str, on_done: "callable | None" = None) -> None:
+        """재생 큐에 추가. 재생 완료 후 on_done() 호출 (쿨다운 기산점 갱신용)."""
         if not path:
+            if on_done:
+                on_done()
             return
         try:
-            self._queue.put_nowait(path)
+            self._queue.put_nowait((path, on_done))
         except queue.Full:
             print(f"[WARN] 오디오 대기열 초과 — 요청 무시: {path}")
+            if on_done:
+                on_done()
 
     def _worker(self) -> None:
         while True:
-            path = self._queue.get()
+            path, on_done = self._queue.get()
             with self._lock:
                 self._playing = True
             try:
@@ -143,6 +162,11 @@ class AudioPlayer:
             finally:
                 with self._lock:
                     self._playing = False
+                if on_done:
+                    try:
+                        on_done()
+                    except Exception as exc:
+                        print(f"[WARN] AudioPlayer on_done 콜백 오류: {exc}")
 
     def _play_subprocess(self, path: str) -> None:
         if _CLI_PLAYER == "mpg123":

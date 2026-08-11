@@ -23,6 +23,24 @@ _RESERVED_PORTS = {5000}  # roi_editor 웹 UI 포트
 # 경로 하나와 입력 해상도 하나를 한 번에 고르게 해서, 둘이 어긋나는(예: v3_320
 # 가중치인데 input_size=640) 설정 실수를 원천 차단한다. 새 모델을 추가하려면
 # 이 dict에 항목만 추가하면 CameraProfile.model_variant로 바로 선택 가능해진다.
+# 캡처 해상도 프리셋 — SD급(≤480p) 위주, 종횡비별로 10개.
+# "auto"는 카메라를 열고 네이티브 해상도의 종횡비를 읽어 가장 가까운 프리셋을 자동 선택.
+# Pi 4에서 Full HD 이상으로 받으면 추론 전 메모리 전송 자체가 병목 → FPS 급락.
+CAPTURE_PRESETS: dict[str, dict] = {
+    "auto":    {"w": None, "h": None, "ar": None,      "label": "자동 (종횡비 매칭)"},
+    "320x180": {"w": 320,  "h": 180,  "ar": 16/9,      "label": "320×180 (16:9 최저)"},
+    "320x240": {"w": 320,  "h": 240,  "ar": 4/3,       "label": "320×240 (4:3 최저)"},
+    "480x270": {"w": 480,  "h": 270,  "ar": 16/9,      "label": "480×270 (16:9)"},
+    "480x360": {"w": 480,  "h": 360,  "ar": 4/3,       "label": "480×360 (4:3)"},
+    "480x480": {"w": 480,  "h": 480,  "ar": 1.0,       "label": "480×480 (1:1)"},
+    "640x360": {"w": 640,  "h": 360,  "ar": 16/9,      "label": "640×360 (16:9 360p)"},
+    "640x480": {"w": 640,  "h": 480,  "ar": 4/3,       "label": "640×480 (4:3 480p)"},
+    "848x480": {"w": 848,  "h": 480,  "ar": 848/480,   "label": "848×480 (16:9 근사)"},
+    "800x600": {"w": 800,  "h": 600,  "ar": 4/3,       "label": "800×600 (4:3 SVGA)"},
+    "960x540": {"w": 960,  "h": 540,  "ar": 16/9,      "label": "960×540 (16:9 qHD)"},
+}
+_DEFAULT_CAPTURE_PRESET = "auto"
+
 MODEL_VARIANTS = {
     "v2_640": {
         "weights_dir": "runs/white_cane_v2/weights",
@@ -61,6 +79,7 @@ class CameraProfile:
     # 카메라 하드웨어/드라이버 조합에 따라 달라 자동 판별 대신 카메라별 토글로 둔다.)
     model_variant: str = _DEFAULT_MODEL_VARIANT  # MODEL_VARIANTS의 키 — 카메라별로 다른
     # 모델(해상도/정확도-속도 트레이드오프)을 고를 수 있게 한다.
+    capture_preset: str = _DEFAULT_CAPTURE_PRESET  # CAPTURE_PRESETS의 키 — "auto"는 종횡비 자동 매칭
 
 
 def load_camera_config(path: str | Path) -> list[CameraProfile]:
@@ -86,6 +105,7 @@ def load_camera_config(path: str | Path) -> list[CameraProfile]:
                 traffic_db=item.get("traffic_db", "foot_traffic.db"),
                 swap_rb=bool(item.get("swap_rb", False)),
                 model_variant=item.get("model_variant", _DEFAULT_MODEL_VARIANT),
+                capture_preset=item.get("capture_preset", _DEFAULT_CAPTURE_PRESET),
             ))
         except (KeyError, TypeError, ValueError):
             continue
@@ -128,6 +148,9 @@ def validate_camera_config(profiles: list[CameraProfile]) -> list[str]:
         if p.model_variant not in MODEL_VARIANTS:
             errors.append(f"'{p.id}': model_variant 값이 잘못됨 ({p.model_variant}) — "
                           f"{list(MODEL_VARIANTS)} 중 하나여야 함")
+        if p.capture_preset not in CAPTURE_PRESETS:
+            errors.append(f"'{p.id}': capture_preset 값이 잘못됨 ({p.capture_preset}) — "
+                          f"{list(CAPTURE_PRESETS)} 중 하나여야 함")
 
         ids_seen[p.id] = ids_seen.get(p.id, 0) + 1
 
