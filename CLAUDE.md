@@ -37,7 +37,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
-| `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고) |
+| `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/`, `runs/white_cane_v4_320/weights/`, `runs/white_cane_v5b_ft320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v5b_320`** (배경 네거티브 보완, `docs/model_evaluation_report_v2.md`) |
+| `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `extra_data/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
+| `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
+| `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `lookalike_data/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
+| `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
 | `label_tool/server.py` + `label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
 
 ### 미구현 (계획)
@@ -77,6 +81,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   바꾸면 그 카메라에 이미 그려진 ROI/제외구역 폴리곤 좌표계가 안 맞을 수 있다** — 자동 재배치는 하지
   않고 `roi_editor` UI가 경고 후 수동 재작도를 유도한다(90/270도는 가로세로비까지 바뀌어 단순 이동이
   아니라서 자동 변환의 버그 위험이 큼).
+- **사람 동반 필수 조건**(`CameraProfile.require_person_for_trigger`, 기본 False)은 흰 지팡이가
+  항상 사람 손에 들려 있다는 점을 이용한 트리거 게이트다. 켜면 `cane_person_assoc.associate_canes()`가
+  사람 bbox(좌우 15% 확장) 안에 중심이 들어오는 지팡이만 통과시켜, 배경의 선/기둥/나뭇가지처럼
+  **사람 없이 잡힌 지팡이 오탐지를 전면 차단**한다. 정지 억제로는 못 막는 "흔들리거나 움직이는"
+  유사물까지 걸러낸다. 기본값이 False인 이유는 기존 배치 동작을 조용히 바꾸지 않기 위해서다 —
+  트레이드오프는 사람 탐지 실패 시 정상 안내를 놓치는 것인데(test person R=0.920), 디바운스가
+  0.5초라 여러 프레임을 보므로 단발 실패는 흡수된다. 레거시 단일 카메라는 `--require-person`.
+- **오탐지 핫스팟 → 제외구역 제안**(`fp_hotspots.py`): 카메라가 고정이라 같은 지형지물은 항상 같은
+  화면 좌표에 나타난다. 정지 억제로 걸러낸(=배경 오탐지가 거의 확실한) 지팡이 트랙의 위치를
+  32×32 그리드 셀로 누적해두고, `roi_editor`가 `/api/fp-hotspots`로 읽어 "여기에 제외구역을
+  만드시겠습니까?"라고 제안한다. **자동으로 만들지 않고 사람 확인을 거치는 이유**는 지팡이
+  사용자가 늘 같은 지점에서 멈춰 서면 그 위치도 핫스팟으로 잡힐 수 있기 때문이다. 기록은
+  **트랙 id당 1회**만 한다 — 매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다.
 - **감지 제외구역**(`ROI.zone_type="exclude"`)은 지형지물(손잡이/점자블록/기둥 등) 오탐지 대응용. 트래킹
   이후가 아니라 **raw detection 단계**(`backend.predict()` 직후, `tracker.update()` 이전)에서 지팡이+사람
   전체 클래스에 필터링한다 — 트래킹 이후 필터링은 EMA 스무딩/coasting 때문에 구역 경계에서 트랙이
@@ -144,6 +161,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   전혀 없다(cane_only 이미지에 사람이 찍혀 있어도 사람 라벨 없음, 반대도 마찬가지). 이 누락은
   YOLO 학습 시 라벨 안 된 사람 영역을 "배경(사람 아님)"으로 잘못 가르치는 문제를 일으킨다.
   `label_tool/`(아래 표)로 지팡이 데이터셋(cane_only)에 누락된 사람 라벨을 보완 중.
+- **배경(네거티브) 이미지 228장**이 `datasets/train/`에 `bg_XXXX.jpg` + 빈 라벨로 들어가 있다
+  (`prepare_background_dataset.py`가 `extra_data/`에서 생성). YOLO는 빈 라벨 이미지를 배경으로
+  학습해 오탐지를 억제한다. 원본 `extra_data/`와 변환 스테이징 `datasets/background/`는
+  Roboflow 원본과 같은 원칙으로 **커밋 대상이 아니다**(`.gitignore`) — 실제 학습에 쓰이는
+  변환본만 `datasets/train/`에 커밋된다. 이 중 40장은 학습에서 제외하고 오탐지 측정 전용
+  홀드아웃(`datasets/background/holdout.txt`)으로 쓴다. 배경에 사람이 찍힌 4장은
+  `prepare_background_dataset.EXCLUDE`로 제외했다 — 라벨 없이 넣으면 "사람 = 배경"을 가르치게 된다.
+- **유사물 네거티브**는 `prepare_lookalike_dataset.py`가 `lk_XXXX.jpg`로 편입한다. 지팡이
+  유사물이 "지팡이 아님"으로 라벨링된 사례가 데이터셋에 하나도 없어서 모델이 "가늘고 긴 것 =
+  지팡이"만 배웠던 문제를 겨냥한 것이다. `with_person/`(사람이 유사물을 든 사진에 person만
+  라벨링)이 `solo/`(빈 라벨)보다 강한 신호다 — "사람 옆의 이 막대는 지팡이가 아니다"를 직접
+  대비시키기 때문. **유사물 자체에는 어떤 박스도 그리지 않는다.** person 자동 검출이 실패한
+  `with_person` 이미지는 solo로 강등하지 않고 **버린다**(강등하면 라벨 없는 사람을 배경으로
+  가르치게 되어, 이 스크립트가 막으려는 오염이 그대로 발생한다).
 - `*.Zone.Identifier` 파일은 Windows에서 복사된 부산물이며 무시하면 됩니다 (`.gitignore`에 등록됨)
 
 ---

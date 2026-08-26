@@ -4,11 +4,21 @@
 *.cache
 
 # 유동인구 집계 sqlite (기기/세션별 로컬 데이터, 커밋 대상 아님)
+# WAL 모드라 -wal/-shm 부산물이 같이 생긴다
 *.db
+*.db-wal
+*.db-shm
 
 # 수동 녹화 클립 (Pi 로컬 전용 산출물 — rois.json/camera_config.json과 동일 원칙,
 # rsync 배포 대상도 아님. camera_live_pi.py의 ClipRecorder가 생성)
 recordings/
+
+# ROI/카메라 프로필 — 기기마다 다른 런타임 설정이라 커밋도 rsync 배포도 하지 않는다
+# (roi_editor 웹 UI가 Pi 로컬에 생성). 형식 참고용 예시는 rois_example.json /
+# camera_config_example.json 이 따로 있다.
+camera_config.json
+rois.json
+rois.*.json
 
 # label_tool 진행상황 (작업자 로컬 상태 — 커밋 대상 아님)
 label_tool/reviewed.json
@@ -21,6 +31,19 @@ datasets/data_local.yaml
 # 병합 결과만 datasets/train|val|test 에 커밋하고 원본 다운로드는 커밋하지 않음)
 datasets/Human Dataset v2-experiment-yolov8/
 datasets/Pedestrian Detection CCTV yolov8/
+
+# 배경(네거티브) 원본 사진과 변환 스테이징 — Roboflow 원본과 같은 원칙으로 커밋하지 않는다
+# (원본 1GB, HEIC/avif 혼재). prepare_background_dataset.py가 640 jpg로 변환해
+# datasets/train/ 에 넣은 bg_*.jpg 만 커밋된다. holdout/manifest는 재실행하면 동일하게
+# 재생성되므로(seed 고정) 스테이징째로 제외.
+extra_data/
+datasets/background/
+
+# 지팡이 유사물(등산스틱·우산·목발·난간·나뭇가지) 수집 원본과 변환 스테이징 —
+# 위와 같은 원칙. prepare_lookalike_dataset.py가 변환해 datasets/train/ 에 넣은
+# lk_*.jpg 만 커밋된다.
+lookalike_data/
+datasets/lookalike/
 
 # 환경 변수 / 시크릿
 .env

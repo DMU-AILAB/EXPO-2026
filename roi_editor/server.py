@@ -31,6 +31,7 @@ from foot_traffic_counter import (  # noqa: E402
     read_daily_totals, read_hourly_breakdown, read_range_daily_totals,
 )
 from detection_events import read_recent_events  # noqa: E402
+from fp_hotspots import clear_hotspots, read_hotspots  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CAPTURE_PRESETS, CameraProfile,
     load_camera_config, save_camera_config, validate_camera_config,
@@ -235,6 +236,27 @@ async def get_events(camera: str | None = None, limit: int = 8):
     순간)마다 camera_live_pi.py가 기록한 이벤트를 최신순으로 반환한다."""
     path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
     return {"events": read_recent_events(path, limit=limit)}
+
+
+@app.get("/api/fp-hotspots")
+async def get_fp_hotspots(camera: str | None = None, min_count: int = 30, limit: int = 5):
+    """오탐지 다발 지점 — 정지 억제로 걸러낸(= 배경 지형지물이 거의 확실한) 지팡이
+    탐지 위치를 camera_live_pi.py가 누적한 것. ROI 편집 탭이 이걸 읽어 "제외구역으로
+    추가" 제안 배너를 띄운다.
+
+    자동으로 제외구역을 만들지 않고 사람 확인을 거치는 이유: 지팡이 사용자가 늘 같은
+    지점에서 멈춰 서면 그 위치도 핫스팟으로 잡힐 수 있기 때문이다.
+    """
+    path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    return {"hotspots": read_hotspots(path, min_count=min_count, limit=limit)}
+
+
+@app.delete("/api/fp-hotspots")
+async def delete_fp_hotspots(camera: str | None = None):
+    """핫스팟 누적 초기화 — 제외구역을 만들었거나 카메라 위치/회전을 바꾼 뒤 호출."""
+    path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    clear_hotspots(path)
+    return {"ok": True}
 
 
 @app.get("/api/audio/file")

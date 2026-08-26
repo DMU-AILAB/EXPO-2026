@@ -777,6 +777,9 @@ main {
           <div class="cam-enabled-row">
             <input type="checkbox" id="camSwapRb"> <span>RGB/BGR 반전 (화면 색이 뒤바뀌어 보이면 체크)</span>
           </div>
+          <div class="cam-enabled-row">
+            <input type="checkbox" id="camRequirePerson"> <span>사람이 함께 감지될 때만 안내 (권장 — 배경의 선·기둥·나뭇가지 오탐지 차단)</span>
+          </div>
           <div class="form-btns">
             <button class="btn btn-save" id="btnSaveCamera">저장</button>
             <button class="btn btn-danger" id="btnDeleteCamera">삭제</button>
@@ -803,6 +806,16 @@ main {
                  style="width:100%; background:#0d1b2e; border:1px solid #0f3460; color:#e0e6f0; border-radius:4px; padding:4px 6px; font-size:12px;">
         </div>
       </div>
+    </div>
+    <div id="fpHotspotCard" style="display:none; background: var(--amber-soft); border: 1px solid var(--amber);
+         border-radius: var(--radius-md); padding: 12px; margin-bottom: 12px">
+      <div style="font-weight:600; margin-bottom:4px">⚠️ 오탐지 다발 지점 <span id="fpHotspotCount">0</span>곳</div>
+      <div class="roi-meta" style="margin-bottom:8px">
+        움직이지 않는 지팡이가 반복 감지된 위치입니다 — 배경의 선·기둥·난간일 가능성이 높습니다.
+        제외구역으로 지정하면 이 자리의 탐지를 무시합니다.
+      </div>
+      <div id="fpHotspotList"></div>
+      <button class="btn btn-prim btn-sm" id="btnClearHotspots" style="margin-top:8px">기록 초기화</button>
     </div>
     <div id="roi-list-card">
       <div id="panel-top">
@@ -1145,6 +1158,7 @@ async function addCameraFromScan(num, model) {
     port: port,
     traffic_db: `foot_traffic_${newId}.db`,
     swap_rb: false,
+    require_person_for_trigger: false,
     model_variant: 'v2_640',
   };
 
@@ -1285,6 +1299,7 @@ function fillCameraForm() {
   document.getElementById('camInference').value = cam.inference_backend;
   document.getElementById('camPort').value = cam.port;
   document.getElementById('camSwapRb').checked = !!cam.swap_rb;
+  document.getElementById('camRequirePerson').checked = !!cam.require_person_for_trigger;
   document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
   document.getElementById('camCapturePreset').value = cam.capture_preset || 'auto';
 }
@@ -1319,6 +1334,7 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
   cam.inference_backend  = document.getElementById('camInference').value;
   cam.port               = parseInt(document.getElementById('camPort').value, 10) || cam.port;
   cam.swap_rb             = document.getElementById('camSwapRb').checked;
+  cam.require_person_for_trigger = document.getElementById('camRequirePerson').checked;
   cam.model_variant       = document.getElementById('camModelVariant').value;
   cam.capture_preset      = document.getElementById('camCapturePreset').value;
 
@@ -1755,6 +1771,65 @@ async function saveToServer() {
   }
 }
 
+// ── 오탐지 핫스팟 (자동 제외구역 제안) ───────────────────────────────
+// camera_live_pi.py가 정지 억제로 걸러낸 지팡이 탐지 위치를 누적한 것. 자동으로
+// 제외구역을 만들지 않고 여기서 사람 확인을 받는다 — 지팡이 사용자가 늘 같은 자리에
+// 멈춰 서면 그 위치도 핫스팟으로 잡힐 수 있기 때문이다.
+let fpHotspots = [];
+
+async function loadFpHotspots() {
+  const card = document.getElementById('fpHotspotCard');
+  try {
+    const res  = await fetch(_apiUrl('/api/fp-hotspots'));
+    const data = await res.json();
+    fpHotspots = data.hotspots || [];
+  } catch (e) {
+    fpHotspots = [];
+  }
+  if (fpHotspots.length === 0) { card.style.display = 'none'; return; }
+
+  card.style.display = 'block';
+  document.getElementById('fpHotspotCount').textContent = fpHotspots.length;
+  document.getElementById('fpHotspotList').innerHTML = fpHotspots.map((s, i) => `
+    <div style="display:flex; align-items:center; gap:8px; margin-top:4px">
+      <span class="roi-meta" style="flex:1">화면 ${Math.round((s.bbox[0]+s.bbox[2])/2*100)}% / ${Math.round((s.bbox[1]+s.bbox[3])/2*100)}% 지점 · ${s.count}회</span>
+      <button class="btn btn-prim btn-sm" data-hotspot="${i}">제외구역으로 추가</button>
+    </div>
+  `).join('');
+  document.querySelectorAll('#fpHotspotList [data-hotspot]').forEach(btn => {
+    btn.addEventListener('click', () => applyHotspot(fpHotspots[Number(btn.dataset.hotspot)]));
+  });
+}
+
+function applyHotspot(spot) {
+  // bbox를 조금 넉넉하게 잡은 사각 폴리곤으로 폼에 로드한다. 저장은 사용자가 누른다.
+  const m = 0.02;
+  const x1 = Math.max(0, spot.bbox[0] - m), y1 = Math.max(0, spot.bbox[1] - m);
+  const x2 = Math.min(1, spot.bbox[2] + m), y2 = Math.min(1, spot.bbox[3] + m);
+  pendingPoly = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+  drawing = [];
+  setDrawingMode(false);
+  document.querySelector('input[name="fZoneType"][value="exclude"]').checked = true;
+  formSec.style.display = 'block';
+  document.getElementById('formTitle').textContent = '🚫 오탐지 지점 제외구역';
+  document.getElementById('btnDeleteRoiInForm').style.display = 'none';
+  updateZoneTypeFieldsVisibility();
+  document.getElementById('fName').value = `오탐지구역${rois.length + 1}`;
+  document.getElementById('fPriority').value = rois.length + 1;
+  setStatus('위치를 확인하고 [저장]을 누르세요', 'warn');
+  redraw();
+}
+
+document.getElementById('btnClearHotspots').addEventListener('click', async () => {
+  try {
+    await fetch(_apiUrl('/api/fp-hotspots'), { method: 'DELETE' });
+    setStatus('오탐지 기록을 초기화했습니다', 'ok');
+  } catch (e) {
+    setStatus(`초기화 실패: ${e.message}`, 'err');
+  }
+  loadFpHotspots();
+});
+
 async function loadFromServer() {
   try {
     const res  = await fetch(_apiUrl('/api/rois'));
@@ -1782,6 +1857,7 @@ async function loadFromServer() {
     }
     renderList();
     redraw();
+    loadFpHotspots();
     setStatus(`${rois.length}개 ROI 불러옴`, 'ok');
   } catch (e) {
     setStatus('rois.json 불러오기 실패', 'err');
