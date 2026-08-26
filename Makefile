@@ -29,6 +29,10 @@ DEPLOY_PY = \
 	detect.py \
 	edgetpu_infer.py \
 	audio_trigger.py \
+	announcement_router.py \
+	kics_protocol.py \
+	si4432_radio.py \
+	rf_audio_trigger.py \
 	gpio_controls.py \
 	fan_controller.py \
 	yolo_postprocess.py \
@@ -78,6 +82,7 @@ sync:
 	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
 	ssh $(USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
+	rsync -avz --progress rf_config_example.json $(DEST)/
 	for d in $(DEPLOY_MODEL_DIRS); do \
 		rsync -avz --progress $$d/best_int8.tflite $$d/best_int8_edgetpu.tflite $(DEST)/$$d/; \
 	done
@@ -96,7 +101,7 @@ sync-roi-editor:
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
 	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 || true"
-	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert opencv-python-headless numpy shapely pillow gpiozero lgpio"
+	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio"
 
 ## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
 deps-roi-editor:

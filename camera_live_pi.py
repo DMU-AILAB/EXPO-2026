@@ -53,10 +53,18 @@ from simple_tracker import SimpleTracker
 try:
     from simulator.roi_manager import ROIManager
     from audio_trigger import StandaloneDispatcher, AudioPlayer
+    from announcement_router import Announcement, AnnouncementRouter
     _TRIGGER_AVAILABLE = True
 except ImportError as _e:
     _TRIGGER_AVAILABLE = False
     print(f"[WARN] ROI/오디오 기능 비활성 (의존성 누락): {_e}")
+
+try:
+    from rf_audio_trigger import RFConfig, RFAudioTrigger, load_rf_config
+    _RF_AVAILABLE = True
+except ImportError as _e:
+    _RF_AVAILABLE = False
+    print(f"[WARN] SI4432 RF features disabled (missing dependency): {_e}")
 
 try:
     from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate
@@ -382,7 +390,17 @@ class _Picamera2Source:
         )
         self._cam.configure(cfg)
         self._cam.start()
-        time.sleep(0.5)  # 카메라 센서 워밍업
+        time.sleep(2.0)  # 카메라 센서 워밍업 + AF 컨트롤 수용 대기
+        try:
+            from libcamera import controls as lc
+            self._cam.set_controls({
+                "AfMode": lc.AfModeEnum.Continuous,
+                "AfSpeed": lc.AfSpeedEnum.Fast,
+                "AfRange": lc.AfRangeEnum.Full,
+            })
+            print("[INFO] 오토포커스(Continuous) 활성화됨")
+        except Exception as e:
+            print(f"[WARN] 포커스 설정 실패: {e}")
 
     def read(self) -> tuple[bool, np.ndarray]:
         frame = self._cam.capture_array()
@@ -1002,6 +1020,10 @@ def _parse_args() -> argparse.Namespace:
                    help="유동인구 집계 sqlite 경로 (기본값: foot_traffic.db, --camera-config 미지정 시에만 사용)")
     p.add_argument("--disable-traffic-count", action="store_true",
                    help="유동인구(사람 트래킹) 집계 비활성화")
+    p.add_argument("--rf-config", default=None, metavar="PATH",
+                   help="SI4432/KICS RF config JSON (defaults to rf_config.json when present)")
+    p.add_argument("--disable-rf", action="store_true",
+                   help="disable the SI4432 RF receiver and global audio trigger")
     return p.parse_args()
 
 
@@ -1051,6 +1073,7 @@ class SharedResources:
     status_led: "_GPIOLed | None"
     led_heartbeat: dict
     stop_event: threading.Event
+    announcements: "AnnouncementRouter | None" = None
 
 
 class CameraPipeline:
@@ -1271,13 +1294,27 @@ class CameraPipeline:
                             active.add(roi.name)
                             if dispatcher.on_detected(roi.name, now):
                                 print(f"[TRIGGER][{tag}] ROI={roi.name}  audio={roi.audio_file or '없음'}")
-                                if self.shared.audio_player is not None:
-                                    _roi_name = roi.name
-                                    _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
-                                    self.shared.audio_player.play(roi.audio_file, on_done=_done_cb)
-                                if _EVENTS_AVAILABLE and profile.traffic_db:
-                                    log_event(profile.traffic_db, datetime.now().isoformat(),
-                                              CLASS_NAMES[CANE_CLASS_ID], roi.name)
+                                _roi_name = roi.name
+                                _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
+                                announcement = Announcement(
+                                    source="camera",
+                                    trigger_id=roi.name,
+                                    audio_file=roi.audio_file,
+                                    event_db=profile.traffic_db,
+                                    event_class=CLASS_NAMES[CANE_CLASS_ID],
+                                )
+                                if self.shared.announcements is not None:
+                                    self.shared.announcements.submit(announcement, on_done=_done_cb)
+                                else:
+                                    # Backward-compatible path for callers/tests that construct
+                                    # SharedResources directly without the shared router.
+                                    if self.shared.audio_player is not None:
+                                        self.shared.audio_player.play(roi.audio_file, on_done=_done_cb)
+                                    elif _done_cb is not None:
+                                        _done_cb()
+                                    if _EVENTS_AVAILABLE and profile.traffic_db:
+                                        log_event(profile.traffic_db, datetime.now().isoformat(),
+                                                  CLASS_NAMES[CANE_CLASS_ID], roi.name)
                     for r in roi_manager.rois:
                         if r.name not in active:
                             dispatcher.on_not_detected(r.name)
@@ -1354,6 +1391,10 @@ def main() -> None:
     )
 
     audio_player = AudioPlayer() if _TRIGGER_AVAILABLE else None
+    announcements = (
+        AnnouncementRouter(audio_player, log_event if _EVENTS_AVAILABLE else None)
+        if _TRIGGER_AVAILABLE else None
+    )
 
     # 동작 확인 LED — 여러 카메라가 있어도 하나만 존재 (heartbeat는 "적어도 하나의
     # 파이프라인이 살아있음"을 의미하도록 의미가 바뀐다 — _led_watchdog 참고).
@@ -1377,7 +1418,8 @@ def main() -> None:
 
     stop_event = threading.Event()
     shared = SharedResources(audio_player=audio_player, status_led=status_led,
-                             led_heartbeat=led_heartbeat, stop_event=stop_event)
+                             led_heartbeat=led_heartbeat, stop_event=stop_event,
+                             announcements=announcements)
 
     def _on_sigint(sig, frame):
         print("\n[INFO] 종료 신호 수신")
@@ -1392,6 +1434,24 @@ def main() -> None:
 
     # camera_config.json이 있으면 그 프로필들로, 없으면 기존 CLI 인자 그대로 단일
     # 카메라(레거시 모드)를 구성한다 — 레거시 단일카메라 설치는 마이그레이션 불필요.
+    rf_trigger = None
+    if not args.disable_rf and _RF_AVAILABLE and announcements is not None:
+        rf_path = Path(args.rf_config) if args.rf_config else Path("rf_config.json")
+        if rf_path.exists() or args.rf_config:
+            try:
+                rf_config = load_rf_config(rf_path)
+            except (OSError, ValueError) as exc:
+                print(f"[WARN] RF config disabled: {exc}")
+                rf_config = RFConfig()
+            if rf_config.enabled:
+                rf_trigger = RFAudioTrigger(rf_config, announcements)
+                try:
+                    rf_trigger.start()
+                except Exception as exc:
+                    print(f"[WARN] SI4432 RF receiver disabled: {exc}")
+                    rf_trigger.close()
+                    rf_trigger = None
+
     cfg_path = Path(args.camera_config) if args.camera_config else None
     profiles = load_camera_config(cfg_path) if cfg_path is not None else []
     if profiles:
@@ -1469,6 +1529,8 @@ def main() -> None:
     finally:
         for pipeline in pipelines.values():
             pipeline.stop()
+        if rf_trigger is not None:
+            rf_trigger.close()
         if status_led is not None:
             if led_watchdog_stop is not None:
                 led_watchdog_stop.set()

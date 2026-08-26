@@ -26,6 +26,7 @@ datasets/Pedestrian Detection CCTV yolov8/
 .env
 .env.*
 *.env
+rf_config.json
 
 # Python
 __pycache__/
