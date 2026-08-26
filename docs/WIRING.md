@@ -1,8 +1,8 @@
 # VisionGuide — Raspberry Pi 4 배선 가이드
 
-물리 버튼/LED/팬 GPIO 배선만 따로 정리한 문서. 소프트웨어 설정은 `CLAUDE.md`의
+물리 버튼/LED/팬 GPIO와 AS4432-SMD RF 모듈 배선을 정리한 문서. 소프트웨어 설정은 `CLAUDE.md`의
 "물리 버튼 / LED (GPIO)" 절과 각 스크립트(`gpio_controls.py`, `fan_controller.py`,
-`camera_live_pi.py`) 상단 docstring을 참고.
+`camera_live_pi.py`) 상단 docstring 및 [`docs/si4432-kics-integration.md`](si4432-kics-integration.md)를 참고.
 
 > **PoE 어댑터 주의**: 이 Pi는 PoE 어댑터가 40핀 헤더의 **물리 핀 1~6번(3.3V, 5V×2, GND, GPIO2/3)을
 > 점유**하고 있어 사용 불가. 아래 핀 배정은 전부 7번 이후로 재배치했다. 특히 5V 전원은 GPIO 헤더에
@@ -114,3 +114,85 @@ GPIO22 ──[1kΩ 저항]── │ 베이스/게이트 │  (트랜지스터/M
 - 저항 1kΩ × 1 (트랜지스터 베이스/게이트용)
 - 플라이백 다이오드(1N4001/1N4148 등) × 1
 - 점퍼 와이어, 브레드보드 또는 만능기판
+
+---
+
+## 5. AS4432-SMD RF 모듈 — Raspberry Pi SPI/GPIO
+
+### 먼저 확인할 점: 358.5000MHz 호환성
+
+현재 소프트웨어는 KICS `358.5000MHz`를 수신하도록 설정되어 있다. 그러나
+AS4432-SMD V4 제품 사양은 동작 대역을 `425~525MHz`로 명시하고, 기본 스프링
+안테나와 매칭 회로도 433MHz용이다. 따라서 아래 배선이 전기적으로 맞더라도
+이 모듈로 358.5000MHz가 수신된다고 보장할 수 없다. 실제 제품에서는
+358.5MHz용 매칭 네트워크/안테나가 적용된 모듈 또는 해당 대역용 Si4432 RF
+보드를 사용해야 한다. 칩 자체의 주파수 범위만 보고 모듈의 RF 성능을 판단하지
+말고, 공급업체에 358.5MHz 수신 가능 여부를 확인한 뒤 시험한다.
+
+아래 핀 번호는 12-pad `AS4432-SMD` 형식 기준이다. 14-pin Si4432 모듈의
+핀맵과 혼동하지 말고, 실장 전 모듈 실크와 구매처 데이터시트를 대조한다.
+
+### 권장 연결표
+
+| AS4432-SMD 패드 | 신호 | Raspberry Pi BCM | 물리 핀 | 연결 목적 |
+|---:|---|---:|---:|---|
+| 1 | GND | — | 9 | 공통 접지 |
+| 2 | GPIO0 | GPIO23 | 16 | 직접 복조된 RX DATA 입력 |
+| 3 | GPIO1 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
+| 4 | GPIO2 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
+| 5 | VCC | 3.3V | 17 | 모듈 전원 |
+| 6 | MISO/SDO | GPIO9 / SPI0_MISO | 21 | 모듈 → Pi SPI 데이터 |
+| 7 | MOSI/SDI | GPIO10 / SPI0_MOSI | 19 | Pi → 모듈 SPI 데이터 |
+| 8 | SCK/SCLK | GPIO11 / SPI0_SCLK | 23 | SPI 클록 |
+| 9 | nSEL/CS | GPIO8 / SPI0_CE0 | 24 | SPI 칩 선택, active-low |
+| 10 | IRQ | 연결 안 함 | — | 현재 direct-mode 드라이버에서 사용하지 않음 |
+| 11 | SDN | — | 25 | GND에 연결해 모듈을 항상 활성화 |
+| 12 | GND | — | 25 | 공통 접지 |
+
+```text
+AS4432-SMD pad 5 VCC   ───────── Pi 3.3V (physical 17)
+AS4432-SMD pad 1 GND   ───────── Pi GND  (physical 9)
+AS4432-SMD pad 12 GND  ───────── Pi GND  (physical 25)
+AS4432-SMD pad 11 SDN  ───────── GND     (physical 25, active-low)
+
+AS4432-SMD pad 8 SCK   ───────── Pi GPIO11 / physical 23
+AS4432-SMD pad 7 MOSI  ───────── Pi GPIO10 / physical 19
+AS4432-SMD pad 6 MISO  ───────── Pi GPIO9  / physical 21
+AS4432-SMD pad 9 nSEL  ───────── Pi GPIO8  / physical 24 (SPI0 CE0)
+AS4432-SMD pad 2 GPIO0 ───────── Pi GPIO23 / physical 16 (RX DATA)
+```
+
+`GPIO0`은 카메라 ROI와 연결되는 신호가 아니다. SI4432 direct RX 모드에서
+모듈이 출력하는 디지털 데이터 펄스를 GPIO23으로 읽으며, RF 트리거는 전역
+음성 이벤트로 처리된다. 기존 배선의 GPIO4, GPIO17, GPIO22, GPIO24, GPIO25,
+GPIO27과 충돌하지 않는다.
+
+### 전원·신호 안전 수칙
+
+- VCC는 반드시 3.3V로 연결한다. AS4432-SMD의 허용 전원은 1.8~3.6V이며,
+  5V를 VCC나 GPIO에 연결하면 모듈이 손상될 수 있다.
+- 모듈은 수신만 하더라도 전원 변동에 민감하다. VCC와 GND 가까이에
+  `100nF + 10uF` 디커플링을 배치하고, 전원 공급원은 RF 모듈의 순간 전류를
+  감당할 수 있어야 한다. Pi의 3.3V 레일을 사용할 때 다른 장치 부하를 함께
+  확인한다.
+- SDN을 부유 상태로 두지 말고 GND로 고정한다. IRQ, GPIO1, GPIO2는 현재
+  프로그램에서 사용하지 않으므로 연결하지 않는다.
+- 안테나는 금속물과 케이스에서 떨어뜨리고 외부로 세운다. 433MHz용 스프링
+  안테나를 358.5MHz에서 그대로 사용하지 말고, 목표 주파수에 맞는 안테나와
+  50Ω RF 매칭을 사용한다.
+- 전원을 넣기 전 멀티미터로 VCC-GND 단락과 VCC 전압을 확인한다. SPI 신호에
+  5V 레벨 변환기를 연결하지 않는다.
+
+### Raspberry Pi에서 점검
+
+```bash
+sudo raspi-config                 # Interface Options → SPI → Enable
+ls -l /dev/spidev0.0              # SPI0 CE0 장치 확인
+cp rf_config_example.json rf_config.json
+# rf_config.json에서 enabled=true와 audio_file을 설정
+python camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
+```
+
+시작 시 SPI 장치 ID가 읽히지 않으면 전원을 끄고 VCC/GND, MISO/MOSI,
+`nSEL(CE0)`, `SDN`을 먼저 점검한다. SPI가 정상이어도 358.5MHz 수신이 되지
+않으면 안테나/매칭 회로와 모듈의 주파수 사양이 목표 대역에 맞는지 확인한다.
