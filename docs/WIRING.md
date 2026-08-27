@@ -280,3 +280,26 @@ python camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
 시작 시 SPI 장치 ID가 읽히지 않으면 전원을 끄고 VCC/GND, MISO/MOSI,
 `nSEL(CE0)`, `SDN`을 먼저 점검한다. SPI가 정상이어도 358.5MHz 수신이 되지
 않으면 안테나/매칭 회로와 모듈의 주파수 사양이 목표 대역에 맞는지 확인한다.
+
+## 6. USB 스피커 전원 제어
+
+스피커는 USB-A를 전원으로만 사용하고, 음성 신호는 Pi의 3.5mm 오디오 잭으로 출력한다. 음성 재생 순서는 다음과 같다.
+
+```text
+USB 2.0 전원 ON → 0.3초 안정화 → 음성 재생 → 재생 프로세스 종료 즉시 → USB 2.0 전원 OFF
+```
+
+감지나 음성 재생 요청이 없을 때는 서비스 시작 시 USB 전원을 OFF로 초기화하고 계속 OFF 상태를 유지한다.
+
+현재 Pi 서비스는 320×320 `v4_320` 모델의 CPU용 `best_int8.tflite`를 사용한다. `best_int8_edgetpu.tflite`는 Coral TPU 전용 컴파일 파일이므로 TPU를 사용하지 않는 구성에서는 선택하지 않는다.
+
+Pi 4 본체 USB 2.0 포트는 USB 3.0 허브와 전원 그룹을 공유하므로 스피커 포트만 끄는 것이 아니라 USB 2.0/3.0 그룹 전체를 끈다. 현재 구성은 TPU를 사용하지 않으므로 이 방식을 적용한다.
+
+서비스는 `uhubctl`과 `/etc/sudoers.d/visionguide-uhubctl`을 설치하고 다음 환경변수를 사용한다.
+
+```ini
+VISIONGUIDE_USB_AUDIO_HUB=1-1
+VISIONGUIDE_USB_AUDIO_SETTLE=0.3
+```
+
+`sudo uhubctl`로 실제 USB 2.0 허브 위치와 전원 전환 지원 여부를 먼저 확인한다. 전원 제어가 실패해도 음성 재생은 중단하지 않고 경고 로그를 남긴다.

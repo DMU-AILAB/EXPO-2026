@@ -1012,6 +1012,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--camera-config", default=None, metavar="PATH",
                    help="다중 카메라 프로필 JSON 경로 — 지정하면 카메라 1대(위 --source 등)가 아니라 "
                         "이 파일에 정의된 카메라들을 각각 독립 파이프라인으로 동시 구동한다")
+    p.add_argument("--model-variant", choices=tuple(MODEL_VARIANTS), default="v2_640",
+                   help="legacy mode model variant (for example: v4_320)")
     p.add_argument("--status-led", type=int, default=None, metavar="GPIO_PIN",
                    help="탐지 루프 동작 확인용 LED GPIO 핀 (기본값: 비활성)")
     p.add_argument("--led-stall-sec", type=float, default=3.0, metavar="SEC",
@@ -1020,6 +1022,8 @@ def _parse_args() -> argparse.Namespace:
                    help="유동인구 집계 sqlite 경로 (기본값: foot_traffic.db, --camera-config 미지정 시에만 사용)")
     p.add_argument("--disable-traffic-count", action="store_true",
                    help="유동인구(사람 트래킹) 집계 비활성화")
+    p.add_argument("--inference-backend", choices=("auto", "tflite", "pytorch"), default="auto",
+                   help="레거시 단일 카메라의 추론 백엔드 (기본값: auto, TPU 미사용 시 tflite)")
     p.add_argument("--rf-config", default=None, metavar="PATH",
                    help="SI4432/KICS RF config JSON (defaults to rf_config.json when present)")
     p.add_argument("--disable-rf", action="store_true",
@@ -1463,8 +1467,8 @@ def main() -> None:
     else:
         profiles = [CameraProfile(
             id="legacy", enabled=True, backend="auto", source=args.source,
-            rotation=0, inference_backend="auto", roi_config=args.roi_config or "",
-            port=args.port, traffic_db=args.traffic_db,
+            rotation=0, inference_backend=args.inference_backend, roi_config=args.roi_config or "",
+            port=args.port, traffic_db=args.traffic_db, model_variant=args.model_variant,
         )]
 
     pipelines: dict[str, CameraPipeline] = {}

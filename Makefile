@@ -100,7 +100,7 @@ sync-roi-editor:
 ## Pi에 카메라 앱 의존성 설치
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
-	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 || true"
+	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 uhubctl || true"
 	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio"
 
 ## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
@@ -145,10 +145,10 @@ run:
 ## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service $(USER)@$(PI):/tmp/
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-uhubctl.sudoers $(USER)@$(PI):/tmp/
 	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service"
 	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /etc/systemd/system/"
-	ssh $(USER)@$(PI) "sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan"
+	ssh $(USER)@$(PI) "sudo apt-get install -y uhubctl && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."
 	@echo "       확인: ssh $(USER)@$(PI) sudo systemctl status visionguide-device"
 	@echo "       ROI 에디터를 끄고 싶으면: ssh $(USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"

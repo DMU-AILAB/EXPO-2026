@@ -1,0 +1,2 @@
+__USER__ ALL=(root) NOPASSWD: /usr/bin/uhubctl
+__USER__ ALL=(root) NOPASSWD: /usr/sbin/uhubctl

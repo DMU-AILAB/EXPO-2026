@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import queue
 import shutil
@@ -113,6 +114,87 @@ def _detect_player() -> str | None:
 _CLI_PLAYER: str | None = _detect_player()
 
 
+class UsbAudioPower:
+    """Control the Raspberry Pi USB hub that supplies the speaker VBUS.
+
+    The speaker uses USB for power and the 3.5 mm jack for audio.  On a Pi 4
+    the native USB 2.0 ports are commonly ganged, so this intentionally
+    controls the configured USB 2.0 hub group rather than pretending that one
+    physical port can be isolated.
+    """
+
+    def __init__(
+        self,
+        location: str,
+        settle_seconds: float = 1.0,
+        command: str = "uhubctl",
+        use_sudo: bool = True,
+    ) -> None:
+        if not location.strip():
+            raise ValueError("USB audio hub location must not be empty")
+        if settle_seconds < 0:
+            raise ValueError("USB audio settle time must not be negative")
+        self.location = location.strip()
+        self.settle_seconds = settle_seconds
+        self.command = command
+        self.use_sudo = use_sudo
+
+    @classmethod
+    def from_environment(cls) -> "UsbAudioPower | None":
+        """Create a controller only when USB speaker power is configured."""
+        location = os.environ.get("VISIONGUIDE_USB_AUDIO_HUB", "").strip()
+        if not location:
+            return None
+
+        raw_settle = os.environ.get("VISIONGUIDE_USB_AUDIO_SETTLE", "0.3")
+        try:
+            settle_seconds = float(raw_settle)
+        except ValueError:
+            print(
+                "[WARN] 잘못된 VISIONGUIDE_USB_AUDIO_SETTLE 값: "
+                f"{raw_settle!r}; 기본값 0.3초를 사용합니다"
+            )
+            settle_seconds = 0.3
+
+        try:
+            return cls(location=location, settle_seconds=settle_seconds)
+        except ValueError as exc:
+            print(f"[WARN] USB 오디오 전원 제어 비활성화: {exc}")
+            return None
+
+    def _set_power(self, enabled: bool) -> bool:
+        action = "on" if enabled else "off"
+        command = [self.command, "-l", self.location, "-a", action]
+        if self.use_sudo:
+            command = ["sudo", "-n", *command]
+
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            print(f"[WARN] USB 오디오 전원 {action} 실패: {exc}")
+            return False
+
+        if result.returncode != 0:
+            detail = (result.stdout or result.stderr or "").strip()
+            suffix = f" ({detail})" if detail else ""
+            print(f"[WARN] USB 오디오 전원 {action} 실패{suffix}")
+            return False
+        return True
+
+    def power_on(self) -> bool:
+        """Turn on VBUS and report whether uhubctl succeeded."""
+        return self._set_power(True)
+
+    def power_off(self) -> bool:
+        """Turn off VBUS and report whether uhubctl succeeded."""
+        return self._set_power(False)
+
+
 class AudioPlayer:
     """논블로킹 MP3 파일 플레이어.
 
@@ -123,10 +205,18 @@ class AudioPlayer:
     백엔드 우선순위: mpg123 / ffplay (subprocess) → pygame (fallback).
     """
 
-    def __init__(self, max_queue: int = 5) -> None:
+    def __init__(
+        self,
+        max_queue: int = 5,
+        usb_power: UsbAudioPower | None = None,
+    ) -> None:
         self._queue: "queue.Queue[tuple]" = queue.Queue(maxsize=max_queue)
         self._lock = threading.Lock()
         self._playing = False
+        self._usb_power = usb_power if usb_power is not None else UsbAudioPower.from_environment()
+        if self._usb_power is not None:
+            # Leave the speaker unpowered until an announcement is actually queued.
+            self._usb_power.power_off()
         threading.Thread(target=self._worker, daemon=True).start()
 
     @property
@@ -152,7 +242,12 @@ class AudioPlayer:
             path, on_done = self._queue.get()
             with self._lock:
                 self._playing = True
+            usb_powered = False
             try:
+                if self._usb_power is not None:
+                    usb_powered = self._usb_power.power_on()
+                    if usb_powered and self._usb_power.settle_seconds:
+                        time.sleep(self._usb_power.settle_seconds)
                 if _CLI_PLAYER:
                     self._play_subprocess(path)
                 else:
@@ -160,6 +255,8 @@ class AudioPlayer:
             except Exception as exc:
                 print(f"[WARN] AudioPlayer 재생 실패: {exc}")
             finally:
+                if usb_powered:
+                    self._usb_power.power_off()
                 with self._lock:
                     self._playing = False
                 if on_done:
