@@ -36,7 +36,8 @@ DEPLOY_PY = \
 	cane_person_assoc.py \
 	foot_traffic_counter.py \
 	camera_config.py \
-	detection_events.py
+	detection_events.py \
+	fp_hotspots.py
 
 # Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.
 # 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.
@@ -44,7 +45,8 @@ DEPLOY_PY = \
 DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v2/weights \
 	runs/white_cane_v3_320/weights \
-	runs/white_cane_v4_320/weights
+	runs/white_cane_v4_320/weights \
+	runs/white_cane_v5b_ft320/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
         install-edgetpu-py39 setup-pi-python310 install-service \

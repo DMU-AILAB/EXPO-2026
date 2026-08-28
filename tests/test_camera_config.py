@@ -29,6 +29,24 @@ def test_save_load_round_trip(tmp_path):
     assert loaded[0].swap_rb is False  # 기본값 — 기존 CSI 카메라는 반전 불필요
 
 
+def test_require_person_for_trigger_round_trip_and_default(tmp_path):
+    """사람 동반 필수 조건 — 기본값 False(기존 배치 동작 유지), 켜면 왕복 보존."""
+    path = tmp_path / "camera_config.json"
+    profiles = [CameraProfile(id="cam0"),
+                CameraProfile(id="cam1", port=8081, require_person_for_trigger=True)]
+    save_camera_config(path, profiles)
+    loaded = load_camera_config(path)
+    assert loaded[0].require_person_for_trigger is False
+    assert loaded[1].require_person_for_trigger is True
+
+
+def test_legacy_config_without_require_person_field_defaults_false(tmp_path):
+    """필드가 없던 예전 camera_config.json도 그대로 읽혀야 한다(하위호환)."""
+    path = tmp_path / "camera_config.json"
+    path.write_text('{"cameras": [{"id": "cam0", "port": 8080}]}', encoding="utf-8")
+    assert load_camera_config(path)[0].require_person_for_trigger is False
+
+
 def test_validate_accepts_well_formed_single_camera():
     profiles = [CameraProfile(id="cam0")]
     assert validate_camera_config(profiles) == []

@@ -145,7 +145,7 @@ def test_get_model_variants_lists_known_keys(client):
     res = client.get("/api/model-variants")
     assert res.status_code == 200
     keys = {v["key"] for v in res.json()["variants"]}
-    assert keys == {"v2_640", "v3_320", "v4_320"}
+    assert keys == {"v2_640", "v3_320", "v4_320", "v5b_320"}
 
 
 def test_get_device_status_returns_expected_keys(client):
@@ -233,3 +233,28 @@ def test_get_audio_file_404_for_missing_file(client, tmp_path):
     missing = tmp_path / "audio" / "missing.mp3"
     res = client.get("/api/audio/file", params={"path": str(missing)})
     assert res.status_code == 404
+
+
+def test_fp_hotspots_empty_when_nothing_logged(client):
+    res = client.get("/api/fp-hotspots")
+    assert res.status_code == 200
+    assert res.json() == {"hotspots": []}
+
+
+def test_fp_hotspots_returns_logged_spots_and_clear_resets(client, tmp_path):
+    from fp_hotspots import log_suppressed
+
+    db = tmp_path / "foot_traffic.db"
+    for _ in range(6):
+        log_suppressed(db, 0.40, 0.50, 0.45, 0.62)
+
+    spots = client.get("/api/fp-hotspots?min_count=5").json()["hotspots"]
+    assert len(spots) == 1
+    assert spots[0]["count"] == 6
+    assert spots[0]["bbox"] == pytest.approx([0.40, 0.50, 0.45, 0.62])
+
+    # min_count 미달이면 제안하지 않는다
+    assert client.get("/api/fp-hotspots?min_count=10").json()["hotspots"] == []
+
+    assert client.delete("/api/fp-hotspots").status_code == 200
+    assert client.get("/api/fp-hotspots?min_count=1").json()["hotspots"] == []
