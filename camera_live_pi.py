@@ -67,7 +67,7 @@ except ImportError as _e:
     print(f"[WARN] SI4432 RF features disabled (missing dependency): {_e}")
 
 try:
-    from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate
+    from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate, associate_canes
     from foot_traffic_counter import FootTrafficCounter
     _TRAFFIC_AVAILABLE = True
 except ImportError:
@@ -79,6 +79,12 @@ try:
     _EVENTS_AVAILABLE = True
 except ImportError:
     _EVENTS_AVAILABLE = False
+
+try:
+    from fp_hotspots import log_suppressed
+    _HOTSPOTS_AVAILABLE = True
+except ImportError:
+    _HOTSPOTS_AVAILABLE = False
 
 try:
     from gpiozero import LED as _GPIOLed
@@ -1028,6 +1034,10 @@ def _parse_args() -> argparse.Namespace:
                    help="SI4432/KICS RF config JSON (defaults to rf_config.json when present)")
     p.add_argument("--disable-rf", action="store_true",
                    help="disable the SI4432 RF receiver and global audio trigger")
+    p.add_argument("--require-person", action="store_true",
+                   help="사람과 함께 감지된 지팡이만 음성 안내를 트리거 (배경의 선/기둥/나뭇가지 "
+                        "오탐지 억제, --camera-config 미지정 시에만 사용 — 다중 카메라는 "
+                        "카메라별 require_person_for_trigger 설정)")
     return p.parse_args()
 
 
@@ -1172,6 +1182,9 @@ class CameraPipeline:
                 return
 
             tracker = SimpleTracker()
+            # 정지 억제로 걸러낸 지팡이 트랙 id — 핫스팟은 트랙당 1회만 기록한다
+            # (매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다).
+            logged_static: set[int] = set()
 
             if _TRAFFIC_AVAILABLE and not self.disable_traffic_count:
                 foot_counter = FootTrafficCounter(profile.traffic_db)
@@ -1246,11 +1259,36 @@ class CameraPipeline:
                 # 배경의 케이블/문틀 경계선 같은 고정 오탐지 대상은 지팡이와 달리 절대
                 # 움직이지 않는다 — static_frames가 임계값을 넘은 트랙은 ROI 트리거
                 # 대상에서 제외한다(화면 표시는 그대로 두어 디버깅은 가능하게 함).
+                all_cane_tracks = [t for t in tracks if t["class"] == CANE_CLASS_ID]
                 cane_tracks = [
-                    t for t in tracks
-                    if t["class"] == CANE_CLASS_ID
-                    and t.get("static_frames", 0) < STATIC_CANE_SUPPRESS_FRAMES
+                    t for t in all_cane_tracks
+                    if t.get("static_frames", 0) < STATIC_CANE_SUPPRESS_FRAMES
                 ]
+                # 억제된(= 배경 지형지물이 거의 확실한) 위치를 누적해두면 roi_editor가
+                # "여기에 제외구역을 만드시겠습니까?"라고 제안할 수 있다 — 카메라가 고정이라
+                # 같은 지형지물은 항상 같은 화면 좌표에 나타난다.
+                if _HOTSPOTS_AVAILABLE and profile.traffic_db:
+                    fh0, fw0 = frame.shape[:2]
+                    for trk in all_cane_tracks:
+                        if (trk.get("static_frames", 0) >= STATIC_CANE_SUPPRESS_FRAMES
+                                and trk["track_id"] not in logged_static):
+                            logged_static.add(trk["track_id"])
+                            bx1, by1, bx2, by2 = trk["bbox"]
+                            try:
+                                log_suppressed(profile.traffic_db,
+                                               bx1 / fw0, by1 / fh0, bx2 / fw0, by2 / fh0)
+                            except Exception as exc:      # sqlite 오류가 탐지를 멈추면 안 된다
+                                print(f"[WARN][{tag}] 오탐지 핫스팟 기록 실패: {exc}")
+                    # 사라진 트랙 id 정리 — 장시간 가동 시 무한 증가 방지
+                    if len(logged_static) > 256:
+                        alive = {t["track_id"] for t in tracks}
+                        logged_static &= alive
+                # 사람 동반 필수 조건(카메라 설정) — 흰 지팡이는 항상 사람이 들고 다니므로,
+                # 사람 없이 잡힌 지팡이는 배경의 선/기둥/나뭇가지 오탐지일 가능성이 높다.
+                # 정지 억제로는 못 걸러내는 "흔들리거나 움직이는" 유사물까지 막아준다.
+                if profile.require_person_for_trigger and cane_tracks:
+                    with_person = associate_canes(tracks)
+                    cane_tracks = [t for t in cane_tracks if with_person.get(t["track_id"], False)]
                 if foot_counter is not None:
                     person_tracks   = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
                     cane_person_map = associate(tracks)
@@ -1469,6 +1507,7 @@ def main() -> None:
             id="legacy", enabled=True, backend="auto", source=args.source,
             rotation=0, inference_backend=args.inference_backend, roi_config=args.roi_config or "",
             port=args.port, traffic_db=args.traffic_db, model_variant=args.model_variant,
+            require_person_for_trigger=args.require_person,
         )]
 
     pipelines: dict[str, CameraPipeline] = {}
