@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "frequency_mhz": 358.5,
+  "audio_file": "audio/rf_voice_guide.mp3",
+  "event_db": "foot_traffic.db",
+  "spi_bus": 0,
+  "spi_device": 0,
+  "spi_speed_hz": 1000000,
+  "data_pin": 23,
+  "quiet_timeout_sec": 1.0,
+  "pulse_tolerance": 0.15,
+  "expected_address": 0,
+  "valid_data_codes": ["0x20", "0x10"]
+}

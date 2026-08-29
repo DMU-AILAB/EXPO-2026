@@ -49,6 +49,7 @@ datasets/lookalike/
 .env
 .env.*
 *.env
+rf_config.json
 
 # Python
 __pycache__/

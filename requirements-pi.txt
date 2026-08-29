@@ -11,6 +11,7 @@
 # ── Python 3.10 — 메인 앱 (카메라, MJPEG 스트리밍) ──────────────────────
 # ai-edge-litert: Python 3.9~3.13 지원, tflite-runtime 공식 후계 패키지
 ai-edge-litert>=1.0.0
+spidev>=3.6
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
 shapely>=2.0.0
