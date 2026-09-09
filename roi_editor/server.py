@@ -17,8 +17,8 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from shapely.geometry import Polygon
@@ -413,6 +413,97 @@ async def delete_roi(name: str, camera: str | None = None):
         raise HTTPException(status_code=404, detail=f"ROI '{name}' not found")
     _save(data, path)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Network / Wi-Fi onboarding API
+# ---------------------------------------------------------------------------
+import network_manager as _nm  # noqa: E402  (roi_editor/ 디렉토리가 sys.path[0])
+
+
+class _WifiConnectPayload(BaseModel):
+    ssid: str
+    password: str = ""
+
+
+@app.get("/api/network/status")
+async def get_network_status():
+    """현재 wlan0 연결 상태(mode/ssid/ip/hostname)."""
+    return _nm.get_status()
+
+
+@app.get("/api/network/scan")
+async def scan_wifi():
+    """주변 Wi-Fi 네트워크 목록 (신호 강도 내림차순)."""
+    return {"networks": _nm.scan_networks()}
+
+
+@app.post("/api/network/connect")
+async def connect_to_wifi(payload: _WifiConnectPayload):
+    """Wi-Fi 연결 시작. 응답 즉시 반환(3초 딜레이 후 AP 종료)."""
+    if _nm.is_connect_in_progress():
+        raise HTTPException(status_code=409, detail="연결 시도 중입니다. 잠시 후 다시 시도하세요.")
+    if not payload.ssid.strip():
+        raise HTTPException(status_code=400, detail="SSID를 입력하세요.")
+    _nm.connect_wifi(payload.ssid.strip(), payload.password, delay_seconds=_nm.CONNECT_DELAY_S)
+    return {
+        "ok": True,
+        "message": f"연결 시도 중. {_nm.CONNECT_DELAY_S}초 후 '{payload.ssid}' 네트워크로 전환됩니다.",
+        "delay_seconds": _nm.CONNECT_DELAY_S,
+    }
+
+
+@app.get("/api/network/connect-result")
+async def get_connect_result():
+    """connect_wifi() 결과 폴링용. in_progress=True면 아직 연결 중."""
+    return {
+        "in_progress": _nm.is_connect_in_progress(),
+        "result": _nm.get_connect_result(),
+    }
+
+
+@app.post("/api/network/ap")
+async def switch_to_ap():
+    """AP 모드로 전환."""
+    try:
+        _nm.switch_to_ap()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "message": "AP 모드로 전환됐습니다.", "ip": _nm.AP_IP}
+
+
+# ---------------------------------------------------------------------------
+# Captive Portal — iOS / Android / Windows 자동 팝업 트리거
+# ---------------------------------------------------------------------------
+# iptables가 AP 클라이언트의 포트 80 요청을 5000으로 리다이렉트할 때
+# OS별 캡티브 포털 감지 URL이 여기로 들어오면 대시보드로 302 응답.
+_CAPTIVE_REDIRECT = f"http://{_nm.AP_IP}:5000"
+
+
+def _captive():
+    return RedirectResponse(_CAPTIVE_REDIRECT, status_code=302)
+
+
+@app.get("/hotspot-detect.html")       # iOS / macOS
+@app.get("/library/test/success.html") # iOS 구버전
+@app.get("/generate_204")              # Android / Chrome
+@app.get("/gen_204")                   # Android 구버전
+@app.get("/ncsi.txt")                  # Windows NCSI
+@app.get("/connecttest.txt")           # Windows 최신
+@app.get("/canonical.html")            # Ubuntu
+async def captive_portal(request: Request):
+    return _captive()
+
+
+@app.get("/{full_path:path}")
+async def captive_catch_all(full_path: str, request: Request):
+    """iptables 리다이렉트로 들어온 포트 80 요청 처리.
+    Host 헤더가 192.168.4.1:5000이 아니면 캡티브 포털로 판단한다.
+    """
+    host = request.headers.get("host", "")
+    if "192.168.4.1" not in host and "5000" not in host:
+        return _captive()
+    raise HTTPException(status_code=404)
 
 
 # ---------------------------------------------------------------------------
