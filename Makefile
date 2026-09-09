@@ -147,10 +147,10 @@ run:
 ## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-uhubctl.sudoers $(USER)@$(PI):/tmp/
-	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service"
-	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /etc/systemd/system/"
-	ssh $(USER)@$(PI) "sudo apt-get install -y uhubctl && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan"
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-uhubctl.sudoers deploy/auto_ap.sh $(USER)@$(PI):/tmp/
+	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
+	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(USER)/visionguide/deploy/"
+	ssh $(USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."
 	@echo "       확인: ssh $(USER)@$(PI) sudo systemctl status visionguide-device"
 	@echo "       ROI 에디터를 끄고 싶으면: ssh $(USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"
