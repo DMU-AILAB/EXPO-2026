@@ -1,0 +1,10 @@
+# VisionGuide — Wi-Fi 온보딩 및 캡티브 포털 설정용 NOPASSWD 규칙
+# 설치: sudo install -m 440 visionguide-network.sudoers /etc/sudoers.d/visionguide-network
+ailab ALL=(ALL) NOPASSWD: /usr/bin/nmcli
+ailab ALL=(ALL) NOPASSWD: /sbin/iptables
+ailab ALL=(ALL) NOPASSWD: /usr/sbin/iptables
+ailab ALL=(ALL) NOPASSWD: /bin/pkill
+ailab ALL=(ALL) NOPASSWD: /usr/bin/pkill
+ailab ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/NetworkManager/dnsmasq.d/visionguide-captive.conf
+ailab ALL=(ALL) NOPASSWD: /bin/rm -f /etc/NetworkManager/dnsmasq.d/visionguide-captive.conf
+ailab ALL=(ALL) NOPASSWD: /bin/mkdir -p /etc/NetworkManager/dnsmasq.d

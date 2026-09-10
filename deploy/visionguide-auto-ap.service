@@ -1,0 +1,12 @@
+[Unit]
+Description=VisionGuide Auto AP Fallback (부팅 시 Wi-Fi 미연결이면 AP 모드로 전환)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/__USER__/visionguide/deploy/auto_ap.sh
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

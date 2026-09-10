@@ -1,0 +1,16 @@
+[Unit]
+Description=VisionGuide ROI Web Editor (:5000)
+After=network.target visionguide-device.service
+Wants=visionguide-device.service
+
+[Service]
+Type=simple
+User=ailab
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/ailab/visionguide
+ExecStart=python3 /home/ailab/visionguide/roi_editor/server.py --rois /home/ailab/visionguide/rois.json --audio-dir /home/ailab/visionguide/audio --traffic-db /home/ailab/visionguide/foot_traffic.db --port 5000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
