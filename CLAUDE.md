@@ -17,6 +17,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
+> 각 파일이 **Pi 배포 대상인지 / 커밋 대상인지**(런타임 코드 · 로컬 1회성 도구 ·
+> 커밋 안 하는 산출물)는 [`docs/FILE_INVENTORY.md`](docs/FILE_INVENTORY.md)에
+> 따로 정리돼 있다. 아래 표는 기능 설명이다.
+
 ### 구현 완료
 
 | 파일/디렉토리 | 설명 |
@@ -37,9 +41,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
-| `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/`, `runs/white_cane_v4_320/weights/`, `runs/white_cane_v5b_ft320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v5b_320`** (배경 네거티브 보완, `docs/model_evaluation_report_v2.md`) |
+| `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/`, `runs/white_cane_v4_320/weights/`, `runs/white_cane_v5b_ft320/weights/`, `runs/white_cane_v6_ft320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v6_320`** (= `runs/white_cane_v6_ft320/weights`, 유사물 네거티브 보완으로 유사물 오탐지 75→6박스·지팡이 재현율 0.979→0.973, `docs/model_evaluation_report_v2.md` 8장). 이전 권장이던 `v5b_320`도 그대로 선택 가능 |
 | `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `extra_data/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
 | `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
+| `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
+| `lookalike_exclude.txt` | 유사물 네거티브에서 뺄 원본 파일명 + 근거 주석 (`--exclude-file`) — 흰지팡이가 찍힌 사진을 걸러내는 육안 검수 결과 |
 | `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `lookalike_data/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
 | `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
 | `label_tool/server.py` + `label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
@@ -81,13 +87,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   바꾸면 그 카메라에 이미 그려진 ROI/제외구역 폴리곤 좌표계가 안 맞을 수 있다** — 자동 재배치는 하지
   않고 `roi_editor` UI가 경고 후 수동 재작도를 유도한다(90/270도는 가로세로비까지 바뀌어 단순 이동이
   아니라서 자동 변환의 버그 위험이 큼).
-- **사람 동반 필수 조건**(`CameraProfile.require_person_for_trigger`, 기본 False)은 흰 지팡이가
-  항상 사람 손에 들려 있다는 점을 이용한 트리거 게이트다. 켜면 `cane_person_assoc.associate_canes()`가
-  사람 bbox(좌우 15% 확장) 안에 중심이 들어오는 지팡이만 통과시켜, 배경의 선/기둥/나뭇가지처럼
-  **사람 없이 잡힌 지팡이 오탐지를 전면 차단**한다. 정지 억제로는 못 막는 "흔들리거나 움직이는"
-  유사물까지 걸러낸다. 기본값이 False인 이유는 기존 배치 동작을 조용히 바꾸지 않기 위해서다 —
-  트레이드오프는 사람 탐지 실패 시 정상 안내를 놓치는 것인데(test person R=0.920), 디바운스가
-  0.5초라 여러 프레임을 보므로 단발 실패는 흡수된다. 레거시 단일 카메라는 `--require-person`.
+- **지팡이 트리거는 3중 게이트를 통과해야 한다.** 각 게이트가 서로 다른 오탐지 유형을 막으므로
+  하나라도 빼면 그 유형이 통과한다. 순서대로 `camera_live_pi.py`의 `cane_tracks` 필터에 있다.
+
+  | 게이트 | 막는 것 | 통과시키는 것 |
+  |---|---|---|
+  | 정지 억제 (`static_frames < 24`) | 오래 고정된 케이블/문틀 | 방금 생긴 트랙(아래 공백) |
+  | **움직임 게이트** (`max_disp >= 대각선 2%`) | **사람 발치의 기둥/난간** | 흔들리는 나뭇가지 |
+  | 사람 동반 (`require_person_for_trigger`) | **사람 없이 흔들리는 나뭇가지** | 사람이 든 유사물 |
+
+  나머지(사람이 든 등산스틱·우산)는 런타임에서 못 막고 **모델이 구분해야** 한다 —
+  `prepare_lookalike_dataset.py`/`fetch_lvis_lookalikes.py`의 유사물 네거티브가 그 몫이다.
+
+- **움직임 게이트**(`MOVED_MIN_DIAG_RATIO = 0.02`)가 필요한 이유는 정지 억제에 **약 2초의 공백**이
+  있어서다. 새 트랙은 `static_frames = 0`으로 시작하므로(`simple_tracker.py`) 억제가 걸리기까지
+  24프레임(실측 8~9 FPS에서 약 2.7초)이 걸리는데 디바운스는 0.5초라, 배경 기둥에 새 트랙이
+  잡히면 **억제 전에 이미 음성이 나간다**. `max_age = 10`이라 탐지가 11프레임만 끊겨도 트랙이
+  죽고 재생성되며 리셋되므로 반복될 수 있다. "정지가 증명되기 전까지 통과"를 "움직임이
+  증명되기 전까지 억제"로 뒤집어 고정 물체를 프레임 0부터 막는다.
+  - `SimpleTracker`가 `max_disp`(트랙 생성 지점 대비 중심 이동 거리의 최댓값)를 추적한다.
+    **누적 경로 길이가 아니라 원점 대비 최대 변위인 이유**: 누적 경로는 EMA 스무딩 후에도 남는
+    미세 지터가 매 프레임 더해져 고정 물체도 결국 "움직였다"가 된다. 원점 대비 변위는 지터
+    진폭에 bounded돼 고정 물체는 영원히 작다(실측: ±2px 지터로 300프레임 뒤에도 3.9px,
+    이동 물체는 30프레임에 114px).
+  - 임계값이 픽셀 절대값이 아니라 프레임 대각선 비율인 이유는 회전(90/270)으로 가로세로가
+    바뀌어도 같은 기준이 유지되어야 하기 때문이다.
+  - **사람이 동반돼도 면제하지 않는다.** 사람 발치의 기둥/난간이 정확히 그 유형이라(실측
+    오탐지 사례) 면제하면 이 게이트의 존재 이유가 사라진다. 대가는 지팡이 사용자가 트랙
+    생성 시점부터 멈춰 있으면(재시작·가림 해제 직후) 한 걸음 움직일 때까지 안내가 지연되는 것.
+
+- **사람 동반 필수 조건**(`CameraProfile.require_person_for_trigger`, **기본 True**)은 흰 지팡이가
+  항상 사람 손에 들려 있다는 점을 이용한다. `cane_person_assoc.associate_canes()`가 사람과
+  짝지어진 지팡이만 통과시켜, 움직임 게이트가 못 막는
+  "움직이지만 사람이 없는" 유사물(바람에 흔들리는 나뭇가지 등)을 담당한다. **기본값이 True인
+  이유**: Pi의 `camera_config.json`은 rsync 배포 대상이 아니라 필드가 없으면 코드 기본값이
+  그대로 적용되므로, 코드에서 켜는 것이 가장 확실하다(기본값은 `camera_config._DEFAULT_REQUIRE_PERSON`
+  한 곳에만 두어 dataclass 기본값과 로더 폴백이 어긋나지 않게 한다). 트레이드오프는 사람 탐지
+  실패 시 정상 안내를 놓치는 것인데(test person R=0.920), 디바운스 0.5초가 여러 프레임을 보므로
+  단발 실패는 흡수된다. 카메라별로 roi_editor UI에서 끌 수 있고, 레거시 단일 카메라는
+  `--require-person` / `--no-require-person`.
+- **짝짓기 기준은 "두 bbox의 최단거리 ≤ 사람 폭 × 0.15 AND 지팡이 중심 y가 사람 y 범위 안"**
+  이다(`cane_person_assoc._matched_pairs`). 이전에는 "사람 bbox를 좌우 15% 확장한 뒤 지팡이
+  **중심점**이 그 안인가"였는데, **흰 지팡이는 몸 앞으로 비스듬히 뻗어 짚기 때문에 사람과
+  명백히 함께 있어도 중심점이 자주 밖으로 나간다**. PC 실측(사람 1명 + 지팡이 탐지 60프레임)에서
+  옛 기준은 19/60만 통과시켜 **ROI 트리거가 한 번도 발동하지 않았고**(게이트 통과 프레임이
+  띄엄띄엄해 디바운스 0.5초를 못 채움) 유동인구의 지팡이 사용자도 0명으로 집계됐다. 같은
+  표본을 최단거리로 재면 60/60이 거리 0(두 박스가 겹침)이고 중심 y도 60/60이 사람 범위
+  안이다 — 판정 축이 아니라 "중심점 하나로 본다"는 방식이 문제였다. 수정 후 통과 프레임이
+  20 → 78로 늘고 **연속 40프레임**으로 붙어 트리거가 실제로 발동한다(0회 → 7회).
+  - **세로 조건을 남기는 이유**: 빼면 사람 위쪽의 나뭇가지나 아래쪽 난간이 거리만 가까우면
+    통과해 이 게이트의 존재 이유가 없어진다. 실측에서 세로 초과는 한 건도 없었다.
+  - `max_gap_ratio = 0.15`는 분포에서 맞춘 값이 **아니다**(전부 0이라 맞출 게 없다) — 박스가
+    살짝 떨어지는 경우를 위한 여유값이다. 픽셀 절대값이 아니라 사람 폭 대비 비율인 이유는
+    원근에 따라 같은 기준이 유지되어야 하기 때문이다.
+  - 두 박스가 겹치면 거리가 0이라 **옛 기준으로 통과하던 것은 전부 계속 통과한다**(하위호환).
+- **유동인구의 "지팡이 사용자" 판정(`cane_ratio_threshold=0.3`)에는 별개의 결함이 남아 있다.**
+  사람 트랙 프레임 중 지팡이가 동반된 비율로 판정하는데, **트래킹이 좋아질수록 불리해진다** —
+  실측에서 v6는 사람 트랙이 805프레임 전체를 살아남아 분모에 "사람이 멀어 지팡이가 안 잡히는
+  구간"까지 들어가 23.1%로 미달했고, 트랙이 522프레임에서 끊긴 v5b는 30.7%로 통과했다.
+  탐지 품질이 아니라 트랙 길이가 판정을 가르는 구조다(트리거 경로와 무관 — 그쪽은 프레임 단위).
 - **오탐지 핫스팟 → 제외구역 제안**(`fp_hotspots.py`): 카메라가 고정이라 같은 지형지물은 항상 같은
   화면 좌표에 나타난다. 정지 억제로 걸러낸(=배경 오탐지가 거의 확실한) 지팡이 트랙의 위치를
   32×32 그리드 셀로 누적해두고, `roi_editor`가 `/api/fp-hotspots`로 읽어 "여기에 제외구역을
@@ -168,13 +226,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   변환본만 `datasets/train/`에 커밋된다. 이 중 40장은 학습에서 제외하고 오탐지 측정 전용
   홀드아웃(`datasets/background/holdout.txt`)으로 쓴다. 배경에 사람이 찍힌 4장은
   `prepare_background_dataset.EXCLUDE`로 제외했다 — 라벨 없이 넣으면 "사람 = 배경"을 가르치게 된다.
-- **유사물 네거티브**는 `prepare_lookalike_dataset.py`가 `lk_XXXX.jpg`로 편입한다. 지팡이
+- **유사물 네거티브**는 `prepare_lookalike_dataset.py`가 `lk_XXXX.jpg`로 편입한다.
+  bg_*.jpg와 달리 **lk_*.jpg 544장은 저장소에 커밋하지 않는다**(`.gitignore`) — 원본이
+  공개 데이터셋이라 `fetch_lvis_lookalikes.py`/`fetch_openimages_lookalikes.py`로 언제든
+  재수집할 수 있어서다. 대신 clone한 환경에서 그냥 학습하면 유사물 네거티브 없이 학습돼
+  v6가 재현되지 않으니, 수집 절차를 `docs/FILE_INVENTORY.md`에서 먼저 확인할 것. 지팡이
   유사물이 "지팡이 아님"으로 라벨링된 사례가 데이터셋에 하나도 없어서 모델이 "가늘고 긴 것 =
   지팡이"만 배웠던 문제를 겨냥한 것이다. `with_person/`(사람이 유사물을 든 사진에 person만
   라벨링)이 `solo/`(빈 라벨)보다 강한 신호다 — "사람 옆의 이 막대는 지팡이가 아니다"를 직접
   대비시키기 때문. **유사물 자체에는 어떤 박스도 그리지 않는다.** person 자동 검출이 실패한
   `with_person` 이미지는 solo로 강등하지 않고 **버린다**(강등하면 라벨 없는 사람을 배경으로
   가르치게 되어, 이 스크립트가 막으려는 오염이 그대로 발생한다).
+- **유사물 원본 684장은 공개 데이터셋에서 가져왔다** — LVIS 599장(`fetch_lvis_lookalikes.py`)
+  + Open Images `Crutch` 85장(`fetch_openimages_lookalikes.py`). 둘 다 **어노테이션은 색인으로만
+  쓰고 박스는 버린다** — 유사물에 박스를 그리지 않는 것이 이 데이터의 본체이고, person 라벨은
+  COCO yolov8n으로 새로 붙이기 때문이다(LVIS의 person 라벨은 federated 어노테이션이라 신뢰 불가).
+  카테고리 선정에서 뺀 것과 그 이유:
+  - **umbrella** — LVIS 우산은 대부분 펼친 우산/파라솔이라 캐노피가 지팡이와 안 닮고 손잡이 축도
+    가려져 있다(육안 검수). 접힌 것만 고르는 건 LVIS 라벨로 불가능하다
+  - **고정 수직 구조물(pole 등)** — 움직임 게이트가 코드 수준에서 확실히 막으므로, 촬영 시점도
+    다른 COCO 기둥 사진 수백 장보다 그쪽이 저렴하고 확실하다
+  - **나뭇가지·난간** — LVIS 1,203개·Open Images 601개 어디에도 해당 클래스가 없다. 이 둘은
+    학습이 아니라 런타임 게이트(움직임/사람 동반)에 의존한다
+- **흰지팡이 혼입 차단**은 두 겹이다. `fetch_lvis_lookalikes.CANE_RISK`가 `walking_cane`/
+  `walking_stick`이 함께 라벨된 이미지를 다른 카테고리 수집에서 배제하고, 그 두 카테고리 자체는
+  육안 검수해 `lookalike_exclude.txt`(`--exclude-file`)로 3장을 뺐다. 흰지팡이 사진이 네거티브로
+  섞이면 "흰지팡이는 지팡이가 아니다"를 가르쳐 정확히 반대 효과가 난다.
+- **유사물 홀드아웃 136장은 `--classes 0`과 함께 쓴다** (`datasets/lookalike/holdout.txt`).
+  `with_person` 이미지에는 사람이 실제로 찍혀 있어 person 탐지는 오탐지가 아니므로, 지팡이
+  클래스만 세면 홀드아웃 전량을 벤치에 쓸 수 있다 — solo만 쓰면 18장으로 줄어 지표가 둔감해진다.
+  클래스 필터 없이 쓰려면 `holdout_solo.txt`(18장)가 따로 있다.
 - `*.Zone.Identifier` 파일은 Windows에서 복사된 부산물이며 무시하면 됩니다 (`.gitignore`에 등록됨)
 
 ---

@@ -50,7 +50,8 @@ DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v2/weights \
 	runs/white_cane_v3_320/weights \
 	runs/white_cane_v4_320/weights \
-	runs/white_cane_v5b_ft320/weights
+	runs/white_cane_v5b_ft320/weights \
+	runs/white_cane_v6_ft320/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
         install-edgetpu-py39 setup-pi-python310 install-service \

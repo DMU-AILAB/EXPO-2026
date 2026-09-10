@@ -62,6 +62,11 @@ MODEL_VARIANTS = {
         "input_size": 320,
         "label": "white_cane_v5b_320 (320, 배경 오탐지 보완)",
     },
+    "v6_320": {
+        "weights_dir": "runs/white_cane_v6_ft320/weights",
+        "input_size": 320,
+        "label": "white_cane_v6_320 (320, 유사물 오탐지 보완)",
+    },
 }
 _DEFAULT_MODEL_VARIANT = "v2_640"
 # 사람 동반 필수 조건의 기본값 — dataclass 기본값과 load_camera_config()의 폴백이

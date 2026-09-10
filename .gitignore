@@ -62,3 +62,32 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# 발표/전시 자료 — 동영상만 110MB(단일 파일 최대 66MB)라 저장소에 넣으면 clone이 무거워진다.
+# 로컬/외부 공유로 보관하고 저장소는 코드 중심으로 유지한다. docs/FILE_INVENTORY.md 참고.
+docs/presentation/
+
+# YOLO val/predict 실행 산출물 — 재실행하면 재생성되는 파생물
+runs/detect/
+
+# onnx2tf/ultralytics export 중간 산출물. Pi가 실제로 쓰는 건 best_int8.tflite /
+# best_int8_edgetpu.tflite 뿐이라(Makefile의 sync 타겟) 그 둘만 커밋한다.
+# 주의: runs/white_cane_v1-2/weights/best.onnx 는 이미 추적 중이라 아래 규칙이 적용되지
+# 않는다(git은 추적 중인 파일을 gitignore로 무시하지 않음) — 새로 생기는 것만 걸린다.
+runs/*/weights/best_saved_model/
+runs/*/weights/*.onnx
+
+# onnx2tf가 export 중 작업 디렉터리에 떨구는 캘리브레이션 샘플 부산물
+calibration_image_sample_data_*.npy
+
+# pytest 캐시 (__pycache__ 와 같은 성격)
+.pytest_cache/
+
+# 유사물 네거티브 학습 이미지 (lk_*.jpg 544장 / 55MB + 동명 라벨).
+# bg_*.jpg(228장)는 커밋돼 있어 전례와 다르지만, 이쪽은 원본이 공개 데이터셋이라
+# fetch_lvis_lookalikes.py / fetch_openimages_lookalikes.py + prepare_lookalike_dataset.py
+# 로 재생성이 가능하다 — 재현 경로가 스크립트로 남아 있으므로 바이너리는 넣지 않는다.
+# 주의: clone한 환경에서 그냥 학습하면 유사물 네거티브 없이 학습돼 v6가 재현되지 않는다.
+# 수집 절차는 docs/FILE_INVENTORY.md 참고.
+datasets/train/images/lk_*.jpg
+datasets/train/labels/lk_*.txt

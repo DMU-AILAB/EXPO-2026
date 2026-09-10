@@ -153,8 +153,10 @@ def main() -> None:
 
     exclude = set()
     if args.exclude_file:
-        exclude = {line.strip() for line in Path(args.exclude_file).read_text().splitlines()
-                   if line.strip()}
+        # '#' 이후는 주석 — 왜 뺐는지를 파일명 옆에 남길 수 있어야 나중에 판단을 되짚을 수 있다
+        exclude = {line.split("#", 1)[0].strip()
+                   for line in Path(args.exclude_file).read_text().splitlines()}
+        exclude.discard("")
 
     kept, excluded = collect_sources(src_dir, exclude)
     if not kept:
@@ -229,16 +231,23 @@ def main() -> None:
     print(f"카테고리: {counts}")
 
     holdout = stratified_holdout(strata, HOLDOUT_RATIO)
-    # 벤치(eval_background_fp.py)는 "모든 박스가 오탐지"를 전제로 하므로 solo만 넣는다.
+    # 벤치는 홀드아웃 **전량**을 쓴다 — with_person 이미지도 지팡이는 없으므로
+    # `eval_background_fp.py --classes 0`으로 지팡이 오탐지만 세면 그대로 유효하다.
+    # solo만 쓰면 표본이 1/7로 줄어 지표가 둔감해진다.
     bench = sorted(n for n in holdout if manifest[n]["branch"] == "solo")
     train_names = [n for n in names if n not in holdout]
-    print(f"홀드아웃 {len(holdout)}장 (그중 벤치용 solo {len(bench)}장) / train 편입 {len(train_names)}장")
+    print(f"홀드아웃 {len(holdout)}장 (그중 클래스 무관 벤치용 solo {len(bench)}장)"
+          f" / train 편입 {len(train_names)}장")
 
     if args.dry_run:
         print("\n--dry-run: train 복사와 메타데이터 기록을 건너뜁니다.")
         return
 
+    # holdout.txt: 전량 — `--classes 0`(지팡이 오탐지만)과 함께 쓴다
+    # holdout_solo.txt: 사람도 없는 것만 — 클래스 필터 없이 쓸 수 있다
     (stage_dir / "holdout.txt").write_text(
+        "\n".join(str(stage_images / n) for n in sorted(holdout)) + "\n")
+    (stage_dir / "holdout_solo.txt").write_text(
         "\n".join(str(stage_images / n) for n in bench) + "\n")
     (stage_dir / "manifest.json").write_text(
         json.dumps({"images": manifest, "holdout": sorted(holdout), "bench": bench,

@@ -7,9 +7,17 @@ false positive다. 가중치가 달라져도 같은 잣대로 비교할 수 있�
 PT / ONNX / TFLite 등 ultralytics가 로드할 수 있는 형식이면 무엇이든 받는다 —
 int8 양자화 후 오탐지가 되돌아오지 않았는지 확인하는 데도 그대로 쓴다.
 
+`--classes`로 특정 클래스만 오탐지로 셀 수 있다. 유사물 홀드아웃처럼 **사람은 실제로
+찍혀 있고 지팡이만 없는** 이미지도 `--classes 0`을 주면 그대로 벤치에 쓸 수 있다 —
+그러지 않으면 사람이 없는 solo 이미지만 써야 해서 표본이 크게 줄어든다.
+
 사용법:
     python eval_background_fp.py --weights runs/white_cane_v4_320/weights/best.pt \
            --images datasets/background/holdout.txt --imgsz 320
+
+    # 유사물 홀드아웃 — 사람은 정상 탐지이므로 지팡이 오탐지만 센다
+    python eval_background_fp.py --weights <w> \
+           --images datasets/lookalike/holdout.txt --classes 0
 """
 
 from __future__ import annotations
@@ -38,6 +46,8 @@ def main() -> None:
     parser.add_argument("--imgsz", type=int, default=320)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--thresholds", type=float, nargs="+", default=list(DEFAULT_THRESHOLDS))
+    parser.add_argument("--classes", type=int, nargs="+", default=None,
+                        help="오탐지로 셀 클래스 id (기본: 전부). 예: --classes 0 → 지팡이만")
     args = parser.parse_args()
 
     from ultralytics import YOLO
@@ -55,11 +65,16 @@ def main() -> None:
         results = model.predict(images[i:i + batch], imgsz=args.imgsz,
                                 conf=floor, verbose=False)
         for res in results:
-            detections.append([(int(c), float(s))
-                               for c, s in zip(res.boxes.cls.tolist(), res.boxes.conf.tolist())])
+            dets = [(int(c), float(s))
+                    for c, s in zip(res.boxes.cls.tolist(), res.boxes.conf.tolist())]
+            if args.classes is not None:
+                dets = [d for d in dets if d[0] in set(args.classes)]
+            detections.append(dets)
 
     print(f"가중치: {args.weights}")
-    print(f"배경 이미지: {len(images)}장 (imgsz={args.imgsz})\n")
+    counted = ("전부" if args.classes is None
+               else ", ".join(CLASS_NAMES.get(c, str(c)) for c in args.classes))
+    print(f"배경 이미지: {len(images)}장 (imgsz={args.imgsz}, 오탐지로 세는 클래스: {counted})\n")
     header = f"{'conf':>6} {'FP 이미지':>10} {'FP 박스':>8} {'cane':>6} {'person':>7} {'박스/장':>8} {'최고 conf':>10}"
     print(header)
     print("-" * len(header))
