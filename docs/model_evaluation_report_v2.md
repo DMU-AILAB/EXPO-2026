@@ -8,7 +8,7 @@
 
 ## 1. 배경 — 왜 했나
 
-`datasets/raw/background/`(이전 `extra_data/`)에는 흰 지팡이도 사람도 없는 일반 배경 사진이 모여 있다. 이 사진들에 기존
+`datasets/sources/background_photos/`(이전 `extra_data/`)에는 흰 지팡이도 사람도 없는 일반 배경 사진이 모여 있다. 이 사진들에 기존
 `white_cane_v4_320`를 돌려보니(imgsz=320, conf=0.25) **272장 중 78장(28.7%)에서 오탐지**가 났다.
 
 - `white_cane` 오탐지: 32장 / 37박스 (최고 conf 0.77)
@@ -130,7 +130,7 @@ edgetpu_compiler -s runs/white_cane_v5b_ft320/weights/best_saved_model/best_full
 | `eval_background_fp.py` | 신규 — 배경 오탐지 벤치 (PT/TFLite 공통) |
 | `camera_config.py` | `MODEL_VARIANTS`에 `v5b_320` 추가 → ROI 에디터 드롭다운에 자동 노출 |
 | `Makefile` | `DEPLOY_MODEL_DIRS`에 `runs/white_cane_v5b_ft320/weights` 추가 |
-| `.gitignore` | `datasets/raw/`, `datasets/background/` 제외 (변환본만 `datasets/train/`에 커밋) |
+| `.gitignore` | `datasets/sources/`(cane_pool 제외), `datasets/staging/` 제외 (변환본만 `datasets/train/`에 커밋) |
 
 ## 7. 한계 / 후속 작업
 

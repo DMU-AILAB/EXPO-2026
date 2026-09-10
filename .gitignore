@@ -27,23 +27,23 @@ label_tool/reviewed.json
 # 달라서 커밋하면 다른 PC/팀원 환경에서 깨짐 (datasets/data.yaml의 경로 문제와 동일 종류)
 datasets/data_local.yaml
 
-# Roboflow 원본 다운로드 (person 라벨 병합용 소스 — merge_person_dataset.py 참고,
-# 병합 결과만 datasets/train|val|test 에 커밋하고 원본 다운로드는 커밋하지 않음)
-datasets/Human Dataset v2-experiment-yolov8/
-datasets/Pedestrian Detection CCTV yolov8/
+# datasets/sources/ — 외부에서 받은 수집 원본. 학습은 이걸 읽지 않는다(data.yaml은
+# train|val|test 만 가리킴). 변환/병합 결과만 커밋하고 원본 다운로드는 커밋하지 않는다.
+#   background_photos/      배경 사진 966M (HEIC/avif/webp 혼재, 이전 경로: extra_data/)
+#   lookalike_lvis_oi/      유사물 사진 123M (이전 경로: lookalike_data/)
+#   person_pedcctv/         Roboflow, merge_person_dataset.py 가 스플릿에 병합함
+#   person_humanv2_UNUSED/  Roboflow, 어디에도 병합되지 않은 미사용 데이터 578M
+# ⚠️ background_photos 는 직접 촬영본이라 스크립트로 재생성이 불가능한 유일본이다 —
+#    지우지 말 것. 나머지는 fetch_*_lookalikes.py / Roboflow 재다운로드로 복구 가능.
+# 예외: cane_pool/ (스플릿 전 지팡이 원본 풀)은 커밋한다 — 스플릿 비율을 다시 나눌 때의
+#       입력이고, 재다운로드할 외부 출처가 없다.
+datasets/sources/*
+!datasets/sources/cane_pool/
 
-# 수집 원본 전부 — Roboflow 원본과 같은 원칙으로 커밋하지 않는다.
-#   datasets/raw/background/  배경 사진 (966M, HEIC/avif/webp 혼재, 이전 경로: extra_data/)
-#   datasets/raw/lookalike/   유사물 사진 (123M, 이전 경로: lookalike_data/)
-# ⚠️ raw/background 는 직접 촬영본이라 스크립트로 재생성이 불가능한 유일본이다 — 지우지 말 것.
-# raw/lookalike 는 fetch_*_lookalikes.py 로 재수집 가능하다.
-datasets/raw/
-
-# 변환 스테이징 — prepare_*_dataset.py 가 640 jpg로 정규화한 중간 산출물.
+# datasets/staging/ — prepare_*_dataset.py 가 640 jpg로 정규화한 중간 산출물.
 # 실제 학습에 쓰이는 bg_*.jpg 는 datasets/train/ 에 커밋되고(lk_*.jpg 는 아래 참고),
 # holdout/manifest 는 재실행하면 동일하게 재생성되므로(seed 고정) 스테이징째로 제외.
-datasets/background/
-datasets/lookalike/
+datasets/staging/
 
 # 환경 변수 / 시크릿
 .env

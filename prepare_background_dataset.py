@@ -1,6 +1,6 @@
 """prepare_background_dataset.py — 배경 사진을 YOLO 네거티브 샘플로 편입한다.
 
-datasets/raw/background/ 에는 흰 지팡이도 사람도 없는 일반 배경 사진이 모여 있다. YOLO는 라벨 파일이
+datasets/sources/background_photos/ 에는 흰 지팡이도 사람도 없는 일반 배경 사진이 모여 있다. YOLO는 라벨 파일이
 비어 있는 이미지를 배경(negative)으로 학습하므로, 이 사진들을 빈 라벨과 함께 train에
 넣으면 오탐지(false positive)를 줄일 수 있다. 실제로 white_cane_v4_320 모델은 이 폴더의
 272장 중 78장에서 오탐지를 냈다 — 즉 하드 네거티브 모음이다.
@@ -30,8 +30,8 @@ from pathlib import Path
 from dataset_prep import convert, register_heif, sort_key, stratified_holdout
 
 ROOT = Path(__file__).parent
-SRC_DIR = ROOT / "datasets" / "raw" / "background"
-STAGE_DIR = ROOT / "datasets" / "background"
+SRC_DIR = ROOT / "datasets" / "sources" / "background_photos"
+STAGE_DIR = ROOT / "datasets" / "staging" / "background"
 TRAIN_IMAGES = ROOT / "datasets" / "train" / "images"
 TRAIN_LABELS = ROOT / "datasets" / "train" / "labels"
 BASELINE_WEIGHTS = ROOT / "runs" / "white_cane_v4_320" / "weights" / "best.pt"

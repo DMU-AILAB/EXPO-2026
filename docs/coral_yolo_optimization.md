@@ -213,7 +213,7 @@ TFLite INT8 export → EdgeTPU 컴파일 동일 프로세스로 적용 가능.
 python - <<'EOF'
 import cv2, numpy as np, pathlib
 
-for img_path in pathlib.Path('datasets/images').glob('*.jpg'):
+for img_path in pathlib.Path('datasets/sources/cane_pool/images').glob('*.jpg'):
     img = cv2.imread(str(img_path))
     # 감마 보정으로 저조도 시뮬레이션
     gamma = np.random.uniform(0.3, 0.6)

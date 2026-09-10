@@ -113,39 +113,65 @@
 
 ### `datasets/` (2.7G)
 
-모든 데이터는 `datasets/` 안에 모여 있습니다. 최상위에 있던 `extra_data/`와
-`lookalike_data/`는 각각 `datasets/raw/background/`, `datasets/raw/lookalike/`로
-옮겼습니다(경로를 참조하던 `prepare_*_dataset.py`·`fetch_*_lookalikes.py`의 기본값도
-함께 갱신됨 — `--src`/`--dst`로 여전히 덮어쓸 수 있습니다).
-
-3단계 파이프라인이고, **단계마다 같은 이미지의 다른 버전이 남습니다.**
+**모든 데이터는 `datasets/` 안에 있고, 최상위는 6개뿐입니다.** 학습이 읽는 것과
+읽지 않는 것이 이름에서 갈립니다.
 
 ```
-datasets/raw/background/  (966M, 272장)   ┐ 수집 원본
-datasets/raw/lookalike/   (123M, 684장)   ┘ HEIC/webp 혼재, 크기 제각각
-        │  prepare_background_dataset.py / prepare_lookalike_dataset.py
-        │  (EXIF회전 → RGB → 최대변 640 → jpg 재인코딩 → bg_/lk_ 리네임)
-        ▼
-datasets/background/  (22M, 268장)  bg_XXXX.jpg + holdout.txt(40) + manifest.json
-datasets/lookalike/   (85M, 683장)  lk_XXXX.jpg + holdout.txt(136)/holdout_solo.txt(18)
-        │  홀드아웃을 뺀 나머지를 그대로 복사
-        ▼
-datasets/train/images/  ← bg_* 228장 + lk_* 544장
+datasets/
+├── data.yaml                     ← 학습이 읽는 유일한 설정 (train|val|test 만 가리킴)
+├── train/   11,660장             ← 지팡이 10,888 + 배경 네거티브 228 + 유사물 네거티브 544
+├── val/      1,263장
+├── test/     1,099장
+│
+├── sources/                      ← 외부에서 받은 원본. 학습이 읽지 않음
+│   ├── cane_pool/{images,labels}   9,308장 · 338M · 커밋됨 ✅ 스플릿 전 지팡이 원본 풀
+│   ├── background_photos/            272장 · 966M · ⚠️ 직접 촬영 유일본, 재생성 불가
+│   ├── lookalike_lvis_oi/            684장 · 123M · fetch_*_lookalikes.py 로 재수집 가능
+│   ├── person_pedcctv/             7,884장 ·  94M · Roboflow, 스플릿에 병합 완료
+│   └── person_humanv2_UNUSED/     27,304개 · 578M · Roboflow, 어디에도 병합 안 됨
+│
+└── staging/                      ← prepare_*_dataset.py 의 640jpg 정규화 중간 산출물
+    ├── background/  bg_*.jpg 268장 + holdout.txt(40) + manifest.json
+    └── lookalike/   lk_*.jpg 683장 + holdout.txt(136)/holdout_solo.txt(18) + manifest.json
 ```
 
-원본과 스테이징은 **재인코딩되어 바이트가 다르므로** 중복 파일로 잡히지 않습니다.
+학습은 **한 번만 돌리면 됩니다** — `train/`에 세 종류가 이미 다 섞여 있습니다.
+
+```bash
+yolo train data=data.yaml model=yolov8n.pt epochs=100 imgsz=320
+```
+
+#### 3단계 파이프라인
+
+```
+sources/background_photos/  ─┐ prepare_background_dataset.py
+sources/lookalike_lvis_oi/  ─┘ prepare_lookalike_dataset.py
+        (EXIF회전 → RGB → 최대변 640 → jpg 재인코딩 → bg_/lk_ 리네임)
+                ▼
+        staging/{background,lookalike}/
+                │  홀드아웃을 뺀 나머지를 그대로 복사
+                ▼
+        train/images/  ← bg_* 228장 + lk_* 544장
+
+sources/person_pedcctv/  ──[merge_person_dataset.py]──▶  train|val|test  (pedcctv_* 접두사)
+sources/cane_pool/       ──[스플릿]────────────────────▶  train|val|test
+```
+
+원본과 스테이징은 **재인코딩되어 바이트가 다르므로** 중복으로 잡히지 않습니다.
 스테이징과 `train/`은 **바이트 동일 복사본**입니다.
 
 | 커밋됨 ✅ | 무시됨 🚫 |
 |---|---|
-| `datasets/{train,val,test}/{images,labels}` — 실제 학습에 쓰이는 세트 | `datasets/raw/background/` — 배경 원본 사진 (966M, HEIC/avif 혼재) |
-| `datasets/{images,labels}` — 지팡이 전용 원본 풀 (스플릿 전) | `datasets/raw/lookalike/` — 유사물 수집 원본 (123M) |
-| `datasets/data.yaml` | `datasets/background/`, `datasets/lookalike/` — 변환 스테이징 |
-| | `datasets/data_local.yaml` — 로컬 절대경로가 박힌 임시 파일 |
+| `datasets/{train,val,test}/{images,labels}` — 실제 학습 세트 | `datasets/sources/` — 수집 원본 (단 `cane_pool/`은 예외로 커밋) |
+| `datasets/sources/cane_pool/{images,labels}` — 스플릿 전 지팡이 원본 풀 | `datasets/staging/` — 변환 중간 산출물 |
+| `datasets/data.yaml` | `datasets/data_local.yaml` — 로컬 절대경로가 박힌 임시 파일 |
 
 무시되는 쪽은 대체로 **준비 스크립트를 재실행하면 동일하게 재생성**됩니다(seed 고정).
 `lk_*.jpg`도 무시되는 쪽입니다 → 재생성 절차는 [알려진 불일치](#알려진-불일치).
-**예외: `datasets/raw/background/`는 직접 촬영본이라 재생성이 불가능한 유일본입니다.**
+**예외: `sources/background_photos/`는 직접 촬영본이라 재생성이 불가능한 유일본입니다.**
+
+`holdout.txt`에는 **절대경로가 들어갑니다** — 디렉터리를 옮기면 준비 스크립트를 다시
+돌려 재생성해야 합니다(manifest.json 은 경로를 안 담아 그대로 유지됩니다).
 
 #### 알려진 중복 (총 394MB)
 
@@ -154,14 +180,23 @@ datasets/train/images/  ← bg_* 228장 + lk_* 544장
 
 | 중복 구간 | 장수 | 용량 | 성격 |
 |---|---|---|---|
-| `datasets/images` ↔ `train,val,test/images` | 9,308 | 281M | 스플릿 전 지팡이 원본 풀. **풀 전체가 스플릿에 포함**돼 있어 순수 잉여 |
-| `lookalike/images` ↔ `train/images` | 544 | 53M | 스테이징 → 학습 세트 복사본 |
-| `Pedestrian Detection CCTV yolov8/` ↔ 스플릿 | 3,808 | 37M | Roboflow 원본 vs 병합 결과 |
-| `background/images` ↔ `train/images` | 228 | 18M | 스테이징 → 학습 세트 복사본 |
-| `raw/lookalike` 내부 | 5 | 1M | 같은 사진이 두 카테고리에 수집됨(빗자루/삽/대걸레는 LVIS에서 겹침) |
+| `sources/cane_pool/images` ↔ `train,val,test` | 9,308 | 281M | **풀 전체가 스플릿에 포함**돼 있어 순수 잉여. 스플릿 비율을 다시 나눌 때의 입력이라 남겨둠 |
+| `staging/lookalike/images` ↔ `train/images` | 544 | 53M | 스테이징 → 학습 세트 복사본 |
+| `sources/person_pedcctv/` ↔ 스플릿 | 3,808 | 37M | Roboflow 원본 vs 병합 결과 |
+| `staging/background/images` ↔ `train/images` | 228 | 18M | 스테이징 → 학습 세트 복사본 |
+| `sources/lookalike_lvis_oi/` 내부 | 5 | 1M | 같은 사진이 두 카테고리에 수집됨(빗자루/삽/대걸레는 LVIS에서 겹침) |
 
-`datasets/images`·`datasets/labels`는 스플릿을 다시 나눌 때의 입력이므로 남겨둡니다 —
-지우면 `train/val/test` 비율을 바꿀 수 없게 됩니다.
+#### ⚠️ person_humanv2_UNUSED (578M)
+
+`datasets/sources/person_humanv2_UNUSED/`(구 `Human Dataset v2-experiment-yolov8`)는
+**받아만 두고 어디에도 병합되지 않았습니다.** 해시 대조 결과 고유 이미지 13,653장 중
+스플릿에 포함된 것이 **0장(0%)** 입니다. `merge_person_dataset.py`는 `person_pedcctv`만
+읽도록 하드코딩돼 있고(`SRC_ROOT`), 이 데이터셋을 읽는 코드는 저장소 어디에도 없습니다.
+
+지우면 578M을 회수할 수 있고 학습 결과에는 영향이 없습니다. 반대로 병합하려면 클래스
+매핑을 먼저 확인해야 합니다 — 이 데이터셋에는 지팡이 라벨이 없어서, 지팡이가 찍힌
+사진이 섞이면 "지팡이 = 배경"을 가르치는 오염이 생깁니다(기존 지팡이/사람 데이터셋
+병합에서 이미 겪은 문제와 같은 종류).
 
 ### `runs/` (355M)
 

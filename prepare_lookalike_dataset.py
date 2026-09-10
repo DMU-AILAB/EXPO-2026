@@ -7,7 +7,7 @@
 
 수집 원본을 두 갈래로 나눠 넣는다 — 이 구분이 핵심이다:
 
-    datasets/raw/lookalike/
+    datasets/sources/lookalike_lvis_oi/
       solo/<카테고리>/         사람 없이 유사물만       → 빈 라벨(배경)
       with_person/<카테고리>/  사람이 유사물을 들고 있음 → person(class 1)만 라벨
 
@@ -40,8 +40,8 @@ from pathlib import Path
 from dataset_prep import convert, register_heif, sort_key, stratified_holdout
 
 ROOT = Path(__file__).parent
-SRC_DIR = ROOT / "datasets" / "raw" / "lookalike"
-STAGE_DIR = ROOT / "datasets" / "lookalike"
+SRC_DIR = ROOT / "datasets" / "sources" / "lookalike_lvis_oi"
+STAGE_DIR = ROOT / "datasets" / "staging" / "lookalike"
 TRAIN_IMAGES = ROOT / "datasets" / "train" / "images"
 TRAIN_LABELS = ROOT / "datasets" / "train" / "labels"
 COCO_WEIGHTS = ROOT / "yolov8n.pt"

@@ -42,11 +42,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/`, `runs/white_cane_v4_320/weights/`, `runs/white_cane_v5b_ft320/weights/`, `runs/white_cane_v6_ft320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v6_320`** (= `runs/white_cane_v6_ft320/weights`, 유사물 네거티브 보완으로 유사물 오탐지 75→6박스·지팡이 재현율 0.979→0.973, `docs/model_evaluation_report_v2.md` 8장). 이전 권장이던 `v5b_320`도 그대로 선택 가능 |
-| `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/raw/background/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
+| `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
 | `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
 | `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
 | `lookalike_exclude.txt` | 유사물 네거티브에서 뺄 원본 파일명 + 근거 주석 (`--exclude-file`) — 흰지팡이가 찍힌 사진을 걸러내는 육안 검수 결과 |
-| `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `datasets/raw/lookalike/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
+| `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `datasets/sources/lookalike_lvis_oi/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
 | `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
 | `label_tool/server.py` + `label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
 
@@ -211,7 +211,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 데이터셋
 
 - 학습에 실제로 쓰이는 건 `datasets/{train,val,test}/{images,labels}` (`data.yaml`이 참조하는 경로).
-  `datasets/images/`, `datasets/labels/`는 지팡이 전용 원본 풀(스플릿 전)로, `train/val/test`의
+  `datasets/sources/cane_pool/{images,labels}`는 지팡이 전용 원본 풀(스플릿 전)로, `train/val/test`의
   cane_only 이미지 합계와 장수가 일치한다.
 - 라벨 형식: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이, class 1 = 사람
 - **지팡이 데이터셋과 사람 데이터셋은 서로 다른 소스에서 각각 라벨링된 뒤 합쳐졌다**
@@ -220,11 +220,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   YOLO 학습 시 라벨 안 된 사람 영역을 "배경(사람 아님)"으로 잘못 가르치는 문제를 일으킨다.
   `label_tool/`(아래 표)로 지팡이 데이터셋(cane_only)에 누락된 사람 라벨을 보완 중.
 - **배경(네거티브) 이미지 228장**이 `datasets/train/`에 `bg_XXXX.jpg` + 빈 라벨로 들어가 있다
-  (`prepare_background_dataset.py`가 `datasets/raw/background/`에서 생성). YOLO는 빈 라벨 이미지를 배경으로
-  학습해 오탐지를 억제한다. 원본 `datasets/raw/background/`와 변환 스테이징 `datasets/background/`는
+  (`prepare_background_dataset.py`가 `datasets/sources/background_photos/`에서 생성). YOLO는 빈 라벨 이미지를 배경으로
+  학습해 오탐지를 억제한다. 원본 `datasets/sources/background_photos/`와 변환 스테이징 `datasets/staging/background/`는
   Roboflow 원본과 같은 원칙으로 **커밋 대상이 아니다**(`.gitignore`) — 실제 학습에 쓰이는
   변환본만 `datasets/train/`에 커밋된다. 이 중 40장은 학습에서 제외하고 오탐지 측정 전용
-  홀드아웃(`datasets/background/holdout.txt`)으로 쓴다. 배경에 사람이 찍힌 4장은
+  홀드아웃(`datasets/staging/background/holdout.txt`)으로 쓴다. 배경에 사람이 찍힌 4장은
   `prepare_background_dataset.EXCLUDE`로 제외했다 — 라벨 없이 넣으면 "사람 = 배경"을 가르치게 된다.
 - **유사물 네거티브**는 `prepare_lookalike_dataset.py`가 `lk_XXXX.jpg`로 편입한다.
   bg_*.jpg와 달리 **lk_*.jpg 544장은 저장소에 커밋하지 않는다**(`.gitignore`) — 원본이
@@ -252,7 +252,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `walking_stick`이 함께 라벨된 이미지를 다른 카테고리 수집에서 배제하고, 그 두 카테고리 자체는
   육안 검수해 `lookalike_exclude.txt`(`--exclude-file`)로 3장을 뺐다. 흰지팡이 사진이 네거티브로
   섞이면 "흰지팡이는 지팡이가 아니다"를 가르쳐 정확히 반대 효과가 난다.
-- **유사물 홀드아웃 136장은 `--classes 0`과 함께 쓴다** (`datasets/lookalike/holdout.txt`).
+- **유사물 홀드아웃 136장은 `--classes 0`과 함께 쓴다** (`datasets/staging/lookalike/holdout.txt`).
   `with_person` 이미지에는 사람이 실제로 찍혀 있어 person 탐지는 오탐지가 아니므로, 지팡이
   클래스만 세면 홀드아웃 전량을 벤치에 쓸 수 있다 — solo만 쓰면 18장으로 줄어 지표가 둔감해진다.
   클래스 필터 없이 쓰려면 `holdout_solo.txt`(18장)가 따로 있다.

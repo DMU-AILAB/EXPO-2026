@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-DST_ROOT = ROOT / "datasets" / "raw" / "lookalike"
+DST_ROOT = ROOT / "datasets" / "sources" / "lookalike_lvis_oi"
 COCO_WEIGHTS = ROOT / "yolov8n.pt"
 PERSON_CONF = 0.40
 DOWNLOAD_WORKERS = 8
