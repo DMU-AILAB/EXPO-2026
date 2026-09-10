@@ -30,21 +30,25 @@ def test_save_load_round_trip(tmp_path):
 
 
 def test_require_person_for_trigger_round_trip_and_default(tmp_path):
-    """사람 동반 필수 조건 — 기본값 False(기존 배치 동작 유지), 켜면 왕복 보존."""
+    """사람 동반 필수 조건 — 기본값 True, 카메라별로 끄면 왕복 보존."""
     path = tmp_path / "camera_config.json"
     profiles = [CameraProfile(id="cam0"),
-                CameraProfile(id="cam1", port=8081, require_person_for_trigger=True)]
+                CameraProfile(id="cam1", port=8081, require_person_for_trigger=False)]
     save_camera_config(path, profiles)
     loaded = load_camera_config(path)
-    assert loaded[0].require_person_for_trigger is False
-    assert loaded[1].require_person_for_trigger is True
+    assert loaded[0].require_person_for_trigger is True
+    assert loaded[1].require_person_for_trigger is False
 
 
-def test_legacy_config_without_require_person_field_defaults_false(tmp_path):
-    """필드가 없던 예전 camera_config.json도 그대로 읽혀야 한다(하위호환)."""
+def test_legacy_config_without_require_person_field_defaults_true(tmp_path):
+    """필드가 없던 예전 camera_config.json은 기본값(True)이 적용된다.
+
+    Pi의 camera_config.json은 rsync 배포 대상이 아니라 필드가 추가돼도 파일이
+    갱신되지 않는다 — 그래서 코드 기본값이 실제 배치 동작을 결정한다.
+    """
     path = tmp_path / "camera_config.json"
     path.write_text('{"cameras": [{"id": "cam0", "port": 8080}]}', encoding="utf-8")
-    assert load_camera_config(path)[0].require_person_for_trigger is False
+    assert load_camera_config(path)[0].require_person_for_trigger is True
 
 
 def test_validate_accepts_well_formed_single_camera():

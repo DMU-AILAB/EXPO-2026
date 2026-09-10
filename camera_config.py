@@ -64,6 +64,9 @@ MODEL_VARIANTS = {
     },
 }
 _DEFAULT_MODEL_VARIANT = "v2_640"
+# 사람 동반 필수 조건의 기본값 — dataclass 기본값과 load_camera_config()의 폴백이
+# 어긋나면 필드가 없는 기존 파일이 조용히 다른 값으로 로드되므로 한 곳에서만 정의한다.
+_DEFAULT_REQUIRE_PERSON = True
 
 
 @dataclass
@@ -85,11 +88,14 @@ class CameraProfile:
     model_variant: str = _DEFAULT_MODEL_VARIANT  # MODEL_VARIANTS의 키 — 카메라별로 다른
     # 모델(해상도/정확도-속도 트레이드오프)을 고를 수 있게 한다.
     capture_preset: str = _DEFAULT_CAPTURE_PRESET  # CAPTURE_PRESETS의 키 — "auto"는 종횡비 자동 매칭
-    require_person_for_trigger: bool = False  # 켜면 사람과 함께 감지된 지팡이만 ROI 트리거
-    # (음성 안내)를 발생시킨다. 흰 지팡이는 항상 사람이 들고 다니므로, 배경의 선/기둥/
-    # 나뭇가지 같은 유사물 오탐지를 크게 줄인다. 기본값이 False인 이유는 기존 배치 동작을
-    # 조용히 바꾸지 않기 위해서다 — 대신 사람 탐지가 한 프레임 실패해도 디바운스(0.5초)가
-    # 여러 프레임을 보므로 단발 실패는 흡수된다. 오탐지가 문제인 현장에서는 켜는 것을 권장.
+    require_person_for_trigger: bool = _DEFAULT_REQUIRE_PERSON  # 사람과 함께 감지된 지팡이만 ROI 트리거
+    # (음성 안내)를 발생시킨다. 흰 지팡이는 항상 사람이 들고 다니므로, 사람 없이 잡힌
+    # 지팡이는 배경 오탐지일 가능성이 높다 — 특히 camera_live_pi.py의 움직임 게이트가
+    # 못 막는 "움직이지만 사람이 없는" 유사물(바람에 흔들리는 나뭇가지 등)을 담당한다.
+    # 기본값이 True인 이유: Pi의 camera_config.json은 rsync 배포 대상이 아니라 필드가
+    # 없으면 이 기본값이 그대로 적용되므로, 코드에서 켜는 것이 가장 확실하다. 카메라별로
+    # roi_editor UI에서 끌 수 있다. 트레이드오프는 사람 탐지 실패 시 정상 안내를 놓치는
+    # 것인데(test person R=0.920), 디바운스 0.5초가 여러 프레임을 보므로 단발 실패는 흡수된다.
 
 
 def load_camera_config(path: str | Path) -> list[CameraProfile]:
@@ -116,7 +122,8 @@ def load_camera_config(path: str | Path) -> list[CameraProfile]:
                 swap_rb=bool(item.get("swap_rb", False)),
                 model_variant=item.get("model_variant", _DEFAULT_MODEL_VARIANT),
                 capture_preset=item.get("capture_preset", _DEFAULT_CAPTURE_PRESET),
-                require_person_for_trigger=bool(item.get("require_person_for_trigger", False)),
+                require_person_for_trigger=bool(item.get("require_person_for_trigger",
+                                                         _DEFAULT_REQUIRE_PERSON)),
             ))
         except (KeyError, TypeError, ValueError):
             continue

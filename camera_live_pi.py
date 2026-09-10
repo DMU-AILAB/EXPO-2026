@@ -972,6 +972,45 @@ def _draw_rois(frame: np.ndarray, roi_manager: "ROIManager",
 
 # ── 그리기 헬퍼 ────────────────────────────────────────────────────
 
+def _draw_gate_debug(frame, all_cane_tracks: list, passed_ids: set,
+                     moved_min: float, with_person: dict, require_person: bool) -> None:
+    """3중 게이트가 각 지팡이 트랙을 왜 막았는지 화면에 표시한다 (--debug-gates 전용).
+
+    평상시 오버레이는 "탐지됐다"까지만 보여줘서, 트리거가 안 나갈 때 어느 게이트가
+    막았는지 알 수 없다(실제로 그 때문에 연관 로직 결함을 한참 뒤에야 찾았다).
+    판정 순서는 아래 트리거 루프의 필터 순서와 반드시 같아야 한다.
+    """
+    # cv2.putText는 한글을 못 그린다(ROI 이름이 화면에서 깨지는 것과 같은 이유) —
+    # 진단 라벨은 전부 ASCII로 쓴다.
+    fh, fw = frame.shape[:2]
+    counts = {"PASS": 0, "STATIC": 0, "MOVE": 0, "NOPERSON": 0}
+    for trk in all_cane_tracks:
+        tid = trk["track_id"]
+        if tid in passed_ids:
+            color, why, key = (0, 220, 0), "PASS", "PASS"
+        elif trk.get("static_frames", 0) >= STATIC_CANE_SUPPRESS_FRAMES:
+            color, why, key = (0, 0, 255), "STATIC", "STATIC"
+        elif trk.get("max_disp", 0.0) < moved_min:
+            color, key = (0, 140, 255), "MOVE"
+            why = f"MOVE {trk.get('max_disp', 0.0):.0f}/{moved_min:.0f}px"
+        elif require_person and not with_person.get(tid, False):
+            color, why, key = (0, 255, 255), "NO-PERSON", "NOPERSON"
+        else:
+            color, why, key = (0, 220, 0), "PASS", "PASS"
+        counts[key] += 1
+        x1, y1, x2, y2 = (max(0, min(int(v), lim - 1))
+                          for v, lim in zip(trk["bbox"], (fw, fh, fw, fh)))
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+        # 기본 오버레이의 라벨과 겹치지 않게 박스 아래에 쓴다
+        cv2.putText(frame, f"#{tid} {why}", (x1, min(y2 + 22, fh - 4)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
+    hud = (f"GATE  pass {counts['PASS']}  static {counts['STATIC']}  "
+           f"move {counts['MOVE']}  no-person {counts['NOPERSON']}")
+    cv2.rectangle(frame, (0, fh - 44), (fw, fh), (0, 0, 0), -1)
+    cv2.putText(frame, hud, (10, fh - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                (255, 255, 255), 2, cv2.LINE_AA)
+
+
 def _draw_detections(frame: np.ndarray, detections: list[dict]) -> None:
     fh, fw = frame.shape[:2]
     for det in detections:
@@ -1034,10 +1073,14 @@ def _parse_args() -> argparse.Namespace:
                    help="SI4432/KICS RF config JSON (defaults to rf_config.json when present)")
     p.add_argument("--disable-rf", action="store_true",
                    help="disable the SI4432 RF receiver and global audio trigger")
-    p.add_argument("--require-person", action="store_true",
-                   help="사람과 함께 감지된 지팡이만 음성 안내를 트리거 (배경의 선/기둥/나뭇가지 "
-                        "오탐지 억제, --camera-config 미지정 시에만 사용 — 다중 카메라는 "
-                        "카메라별 require_person_for_trigger 설정)")
+    p.add_argument("--debug-gates", action="store_true",
+                   help="3중 게이트가 각 지팡이 트랙을 왜 막았는지 화면에 표시 "
+                        "(초록=통과 / 빨강=정지억제 / 주황=움직임 / 노랑=사람없음)")
+    p.add_argument("--require-person", action=argparse.BooleanOptionalAction, default=True,
+                   help="사람과 함께 감지된 지팡이만 음성 안내를 트리거 (기본 켜짐 — 배경의 "
+                        "선/기둥/나뭇가지 오탐지 억제). 끄려면 --no-require-person. "
+                        "--camera-config 미지정 시에만 사용 — 다중 카메라는 카메라별 "
+                        "require_person_for_trigger 설정")
     return p.parse_args()
 
 
@@ -1073,6 +1116,13 @@ ROI_CHECK_INTERVAL = 2.0
 # 짚고 있는 정상적인 상황보다는 넉넉하게 잡았다.
 STATIC_CANE_SUPPRESS_FRAMES = 24
 
+# 지팡이 트랙이 트리거 자격을 얻으려면 생성 지점 대비 이 비율(프레임 대각선 기준)만큼
+# 움직인 적이 있어야 한다. 픽셀 절대값이 아니라 비율인 이유는 회전(90/270)으로 가로세로가
+# 바뀌어도 같은 기준이 유지되어야 하기 때문이다. 640x480이면 약 16px로, 트래커의 지터
+# 임계값(static_move_px=3.0)의 5배 여유가 있다 — 실측상 고정 물체는 300프레임 뒤에도
+# 원점 대비 4px를 넘지 않고, 이동하는 물체는 30프레임 만에 100px를 넘는다.
+MOVED_MIN_DIAG_RATIO = 0.02
+
 # 파이프라인이 (설정 변경이 아니라) 예기치 않게 죽었을 때 재시작을 시도하는 최소
 # 간격 — 예: 카메라 여러 대가 Coral USB 동글 하나를 동시에 열려다 충돌해서 한쪽이
 # 죽는 경우, 계속 실패하는 원인이 바로 안 없어지면 재시작이 빠르게 반복되는(크래시
@@ -1088,6 +1138,10 @@ class SharedResources:
     led_heartbeat: dict
     stop_event: threading.Event
     announcements: "AnnouncementRouter | None" = None
+    # 3중 게이트 진단 오버레이(--debug-gates). CameraPipeline 생성자가 아니라 여기 둔 이유는
+    # 파이프라인 생성 지점이 세 곳(최초 기동/설정 변경 감지/크래시 재시작)이라 생성자 인자를
+    # 늘리면 세 곳을 모두 고쳐야 하고, 한 곳만 빠뜨려도 재시작 후 조용히 꺼지기 때문이다.
+    debug_gates: bool = False
 
 
 class CameraPipeline:
@@ -1283,12 +1337,33 @@ class CameraPipeline:
                     if len(logged_static) > 256:
                         alive = {t["track_id"] for t in tracks}
                         logged_static &= alive
-                # 사람 동반 필수 조건(카메라 설정) — 흰 지팡이는 항상 사람이 들고 다니므로,
-                # 사람 없이 잡힌 지팡이는 배경의 선/기둥/나뭇가지 오탐지일 가능성이 높다.
-                # 정지 억제로는 못 걸러내는 "흔들리거나 움직이는" 유사물까지 막아준다.
-                if profile.require_person_for_trigger and cane_tracks:
+                # 움직임 게이트 — 한 번이라도 움직인 적이 있는 지팡이 트랙만 통과시킨다.
+                # 위의 정지 억제는 새 트랙의 static_frames가 0에서 시작하는 탓에 임계값
+                # (24프레임 ≈ 2.7초)에 도달하기 전까지 배경 오탐지를 통과시키는데, 디바운스는
+                # 0.5초라 그 사이에 이미 음성이 나간다. "정지가 증명되기 전까지 통과"를
+                # "움직임이 증명되기 전까지 억제"로 뒤집어 그 공백을 닫는다.
+                # 사람이 동반돼도 면제하지 않는다 — 사람 발치의 기둥/난간이 정확히 그
+                # 유형이고(실측 오탐지 사례), 사람 동반 조건만으로는 막히지 않는다.
+                fh_g, fw_g = frame.shape[:2]
+                moved_min = ((fw_g ** 2 + fh_g ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
+                if cane_tracks:
+                    cane_tracks = [t for t in cane_tracks
+                                   if t.get("max_disp", 0.0) >= moved_min]
+
+                # 사람 동반 필수 조건(카메라 설정, 기본 켜짐) — 흰 지팡이는 항상 사람이 들고
+                # 다니므로, 사람 없이 잡힌 지팡이는 배경 오탐지일 가능성이 높다. 움직임
+                # 게이트가 못 막는 "움직이지만 사람이 없는" 유사물(흔들리는 나뭇가지 등)을
+                # 막는다 — 두 게이트는 서로 다른 실패 유형을 담당한다.
+                with_person: dict[int, bool] = {}
+                if profile.require_person_for_trigger and (cane_tracks or self.shared.debug_gates):
                     with_person = associate_canes(tracks)
                     cane_tracks = [t for t in cane_tracks if with_person.get(t["track_id"], False)]
+
+                if self.shared.debug_gates:
+                    _draw_gate_debug(frame, all_cane_tracks,
+                                     {t["track_id"] for t in cane_tracks},
+                                     moved_min, with_person,
+                                     profile.require_person_for_trigger)
                 if foot_counter is not None:
                     person_tracks   = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
                     cane_person_map = associate(tracks)
@@ -1461,7 +1536,8 @@ def main() -> None:
     stop_event = threading.Event()
     shared = SharedResources(audio_player=audio_player, status_led=status_led,
                              led_heartbeat=led_heartbeat, stop_event=stop_event,
-                             announcements=announcements)
+                             announcements=announcements,
+                             debug_gates=args.debug_gates)
 
     def _on_sigint(sig, frame):
         print("\n[INFO] 종료 신호 수신")

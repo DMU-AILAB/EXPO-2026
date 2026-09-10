@@ -778,7 +778,7 @@ main {
             <input type="checkbox" id="camSwapRb"> <span>RGB/BGR 반전 (화면 색이 뒤바뀌어 보이면 체크)</span>
           </div>
           <div class="cam-enabled-row">
-            <input type="checkbox" id="camRequirePerson"> <span>사람이 함께 감지될 때만 안내 (권장 — 배경의 선·기둥·나뭇가지 오탐지 차단)</span>
+            <input type="checkbox" id="camRequirePerson"> <span>사람이 함께 감지될 때만 안내 (기본 켜짐 — 사람 없이 흔들리는 나뭇가지 등의 오탐지 차단)</span>
           </div>
           <div class="form-btns">
             <button class="btn btn-save" id="btnSaveCamera">저장</button>
@@ -1158,7 +1158,7 @@ async function addCameraFromScan(num, model) {
     port: port,
     traffic_db: `foot_traffic_${newId}.db`,
     swap_rb: false,
-    require_person_for_trigger: false,
+    require_person_for_trigger: true,
     model_variant: 'v2_640',
   };
 
