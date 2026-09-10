@@ -8,7 +8,7 @@
 
 ## 1. 배경 — 왜 했나
 
-`extra_data/`에는 흰 지팡이도 사람도 없는 일반 배경 사진이 모여 있다. 이 사진들에 기존
+`datasets/raw/background/`(이전 `extra_data/`)에는 흰 지팡이도 사람도 없는 일반 배경 사진이 모여 있다. 이 사진들에 기존
 `white_cane_v4_320`를 돌려보니(imgsz=320, conf=0.25) **272장 중 78장(28.7%)에서 오탐지**가 났다.
 
 - `white_cane` 오탐지: 32장 / 37박스 (최고 conf 0.77)
@@ -130,11 +130,11 @@ edgetpu_compiler -s runs/white_cane_v5b_ft320/weights/best_saved_model/best_full
 | `eval_background_fp.py` | 신규 — 배경 오탐지 벤치 (PT/TFLite 공통) |
 | `camera_config.py` | `MODEL_VARIANTS`에 `v5b_320` 추가 → ROI 에디터 드롭다운에 자동 노출 |
 | `Makefile` | `DEPLOY_MODEL_DIRS`에 `runs/white_cane_v5b_ft320/weights` 추가 |
-| `.gitignore` | `extra_data/`, `datasets/background/` 제외 (변환본만 `datasets/train/`에 커밋) |
+| `.gitignore` | `datasets/raw/`, `datasets/background/` 제외 (변환본만 `datasets/train/`에 커밋) |
 
 ## 7. 한계 / 후속 작업
 
-- **도메인 불일치**: extra_data는 오페라하우스·거실·해변 같은 일반 사진이라 실제 배치 환경
+- **도메인 불일치**: 배경 원본은 오페라하우스·거실·해변 같은 일반 사진이라 실제 배치 환경
   (지하철 역사, 횡단보도)과 다르다. 일반적 오탐지 억제엔 효과가 확인됐지만, 현장 특유의
   오탐지원(손잡이·점자블록·기둥·우산·청소도구)에는 제한적이다. **가장 가치 높은 네거티브는
   실제 설치 현장을 찍은 배경 사진**이므로, 데모 전 현장 촬영본을 같은 파이프라인
@@ -144,7 +144,7 @@ edgetpu_compiler -s runs/white_cane_v5b_ft320/weights/best_saved_model/best_full
   "사람 비슷한 것"이다. 이를 배경으로 학습시키는 건 의도된 효과지만, 향후 배경을 더 추가할 때마다
   test person recall을 함께 확인해야 한다(현재 0.920, v4 0.923).
 - **유사물 구분은 이 작업의 범위 밖이었다** — 후속 작업으로 진행 중.
-  extra_data는 일반 배경이라 "없는 것을 있다고 하지 않는" 능력만 가르쳤고, 등산스틱·우산·
+  배경 원본은 일반 배경이라 "없는 것을 있다고 하지 않는" 능력만 가르쳤고, 등산스틱·우산·
   난간처럼 **지팡이와 형태가 유사한 물체를 구분하는 능력**은 다루지 못했다. 실제로 v5b가 남긴
   유일한 지팡이 오탐지(`136.JPG`, conf 0.52)도 사람 발치의 가는 금속 기둥이다. 데이터셋에
   유사물이 "지팡이 아님"으로 라벨링된 사례가 하나도 없는 것이 근본 원인이며,

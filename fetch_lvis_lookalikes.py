@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-DST_ROOT = ROOT / "lookalike_data"
+DST_ROOT = ROOT / "datasets" / "raw" / "lookalike"
 COCO_WEIGHTS = ROOT / "yolov8n.pt"
 SEED = 0
 PERSON_CONF = 0.40
@@ -142,7 +142,7 @@ def main() -> None:
                         help="LVIS 어노테이션 JSON 경로 (기본: lvis_v1_train.json)")
     parser.add_argument("--dry-run", action="store_true",
                         help="다운로드 없이 카테고리 매칭과 장수만 출력")
-    parser.add_argument("--dst", default=None, help=f"출력 루트 (기본: {DST_ROOT.name})")
+    parser.add_argument("--dst", default=None, help=f"출력 루트 (기본: {DST_ROOT.relative_to(ROOT)})")
     args = parser.parse_args()
 
     lvis_path = Path(args.lvis)

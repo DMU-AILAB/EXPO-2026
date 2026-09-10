@@ -111,17 +111,57 @@
 
 ## 9. 대용량 데이터 · 모델
 
-### `datasets/` (1.6G)
+### `datasets/` (2.7G)
+
+모든 데이터는 `datasets/` 안에 모여 있습니다. 최상위에 있던 `extra_data/`와
+`lookalike_data/`는 각각 `datasets/raw/background/`, `datasets/raw/lookalike/`로
+옮겼습니다(경로를 참조하던 `prepare_*_dataset.py`·`fetch_*_lookalikes.py`의 기본값도
+함께 갱신됨 — `--src`/`--dst`로 여전히 덮어쓸 수 있습니다).
+
+3단계 파이프라인이고, **단계마다 같은 이미지의 다른 버전이 남습니다.**
+
+```
+datasets/raw/background/  (966M, 272장)   ┐ 수집 원본
+datasets/raw/lookalike/   (123M, 684장)   ┘ HEIC/webp 혼재, 크기 제각각
+        │  prepare_background_dataset.py / prepare_lookalike_dataset.py
+        │  (EXIF회전 → RGB → 최대변 640 → jpg 재인코딩 → bg_/lk_ 리네임)
+        ▼
+datasets/background/  (22M, 268장)  bg_XXXX.jpg + holdout.txt(40) + manifest.json
+datasets/lookalike/   (85M, 683장)  lk_XXXX.jpg + holdout.txt(136)/holdout_solo.txt(18)
+        │  홀드아웃을 뺀 나머지를 그대로 복사
+        ▼
+datasets/train/images/  ← bg_* 228장 + lk_* 544장
+```
+
+원본과 스테이징은 **재인코딩되어 바이트가 다르므로** 중복 파일로 잡히지 않습니다.
+스테이징과 `train/`은 **바이트 동일 복사본**입니다.
 
 | 커밋됨 ✅ | 무시됨 🚫 |
 |---|---|
-| `datasets/{train,val,test}/{images,labels}` — 실제 학습에 쓰이는 세트 | `extra_data/` — 배경 원본 사진 (~1GB, HEIC/avif 혼재) |
-| `datasets/{images,labels}` — 지팡이 전용 원본 풀 (스플릿 전) | `lookalike_data/` — 유사물 수집 원본 |
+| `datasets/{train,val,test}/{images,labels}` — 실제 학습에 쓰이는 세트 | `datasets/raw/background/` — 배경 원본 사진 (966M, HEIC/avif 혼재) |
+| `datasets/{images,labels}` — 지팡이 전용 원본 풀 (스플릿 전) | `datasets/raw/lookalike/` — 유사물 수집 원본 (123M) |
 | `datasets/data.yaml` | `datasets/background/`, `datasets/lookalike/` — 변환 스테이징 |
 | | `datasets/data_local.yaml` — 로컬 절대경로가 박힌 임시 파일 |
 
-무시되는 쪽은 **준비 스크립트를 재실행하면 동일하게 재생성**됩니다(seed 고정).
+무시되는 쪽은 대체로 **준비 스크립트를 재실행하면 동일하게 재생성**됩니다(seed 고정).
 `lk_*.jpg`도 무시되는 쪽입니다 → 재생성 절차는 [알려진 불일치](#알려진-불일치).
+**예외: `datasets/raw/background/`는 직접 촬영본이라 재생성이 불가능한 유일본입니다.**
+
+#### 알려진 중복 (총 394MB)
+
+내용이 완전히 같은 파일이 여러 곳에 있습니다. 전부 **의도된 파이프라인의 부산물**이라
+지금 지워야 할 것은 없지만, 용량을 회수해야 할 때 참고하세요.
+
+| 중복 구간 | 장수 | 용량 | 성격 |
+|---|---|---|---|
+| `datasets/images` ↔ `train,val,test/images` | 9,308 | 281M | 스플릿 전 지팡이 원본 풀. **풀 전체가 스플릿에 포함**돼 있어 순수 잉여 |
+| `lookalike/images` ↔ `train/images` | 544 | 53M | 스테이징 → 학습 세트 복사본 |
+| `Pedestrian Detection CCTV yolov8/` ↔ 스플릿 | 3,808 | 37M | Roboflow 원본 vs 병합 결과 |
+| `background/images` ↔ `train/images` | 228 | 18M | 스테이징 → 학습 세트 복사본 |
+| `raw/lookalike` 내부 | 5 | 1M | 같은 사진이 두 카테고리에 수집됨(빗자루/삽/대걸레는 LVIS에서 겹침) |
+
+`datasets/images`·`datasets/labels`는 스플릿을 다시 나눌 때의 입력이므로 남겨둡니다 —
+지우면 `train/val/test` 비율을 바꿀 수 없게 됩니다.
 
 ### `runs/` (355M)
 
@@ -171,5 +211,5 @@ Pi에 배포되는 모델은 `DEPLOY_MODEL_DIRS`의 5개 디렉터리에서 `bes
    python prepare_lookalike_dataset.py --exclude-file lookalike_exclude.txt
    ```
 
-   `lookalike_data/`(수집 원본)와 `datasets/lookalike/`(변환 스테이징)도 미커밋이지만,
+   `datasets/raw/lookalike/`(수집 원본)와 `datasets/lookalike/`(변환 스테이징)도 미커밋이지만,
    위 세 스크립트가 seed 고정이라 동일하게 재생성됩니다.

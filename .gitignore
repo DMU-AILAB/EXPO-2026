@@ -32,17 +32,17 @@ datasets/data_local.yaml
 datasets/Human Dataset v2-experiment-yolov8/
 datasets/Pedestrian Detection CCTV yolov8/
 
-# 배경(네거티브) 원본 사진과 변환 스테이징 — Roboflow 원본과 같은 원칙으로 커밋하지 않는다
-# (원본 1GB, HEIC/avif 혼재). prepare_background_dataset.py가 640 jpg로 변환해
-# datasets/train/ 에 넣은 bg_*.jpg 만 커밋된다. holdout/manifest는 재실행하면 동일하게
-# 재생성되므로(seed 고정) 스테이징째로 제외.
-extra_data/
-datasets/background/
+# 수집 원본 전부 — Roboflow 원본과 같은 원칙으로 커밋하지 않는다.
+#   datasets/raw/background/  배경 사진 (966M, HEIC/avif/webp 혼재, 이전 경로: extra_data/)
+#   datasets/raw/lookalike/   유사물 사진 (123M, 이전 경로: lookalike_data/)
+# ⚠️ raw/background 는 직접 촬영본이라 스크립트로 재생성이 불가능한 유일본이다 — 지우지 말 것.
+# raw/lookalike 는 fetch_*_lookalikes.py 로 재수집 가능하다.
+datasets/raw/
 
-# 지팡이 유사물(등산스틱·우산·목발·난간·나뭇가지) 수집 원본과 변환 스테이징 —
-# 위와 같은 원칙. prepare_lookalike_dataset.py가 변환해 datasets/train/ 에 넣은
-# lk_*.jpg 만 커밋된다.
-lookalike_data/
+# 변환 스테이징 — prepare_*_dataset.py 가 640 jpg로 정규화한 중간 산출물.
+# 실제 학습에 쓰이는 bg_*.jpg 는 datasets/train/ 에 커밋되고(lk_*.jpg 는 아래 참고),
+# holdout/manifest 는 재실행하면 동일하게 재생성되므로(seed 고정) 스테이징째로 제외.
+datasets/background/
 datasets/lookalike/
 
 # 환경 변수 / 시크릿

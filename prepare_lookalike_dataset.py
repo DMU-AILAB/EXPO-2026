@@ -7,7 +7,7 @@
 
 수집 원본을 두 갈래로 나눠 넣는다 — 이 구분이 핵심이다:
 
-    lookalike_data/
+    datasets/raw/lookalike/
       solo/<카테고리>/         사람 없이 유사물만       → 빈 라벨(배경)
       with_person/<카테고리>/  사람이 유사물을 들고 있음 → person(class 1)만 라벨
 
@@ -40,7 +40,7 @@ from pathlib import Path
 from dataset_prep import convert, register_heif, sort_key, stratified_holdout
 
 ROOT = Path(__file__).parent
-SRC_DIR = ROOT / "lookalike_data"
+SRC_DIR = ROOT / "datasets" / "raw" / "lookalike"
 STAGE_DIR = ROOT / "datasets" / "lookalike"
 TRAIN_IMAGES = ROOT / "datasets" / "train" / "images"
 TRAIN_LABELS = ROOT / "datasets" / "train" / "labels"
@@ -135,9 +135,9 @@ def main() -> None:
     parser.add_argument("--exclude-file", default=None,
                         help="제외할 원본 파일명 목록 txt (한 줄에 하나)")
     parser.add_argument("--src", default=None,
-                        help=f"수집 원본 디렉토리 (기본: {SRC_DIR.name})")
+                        help=f"수집 원본 디렉토리 (기본: {SRC_DIR.relative_to(ROOT)})")
     parser.add_argument("--stage", default=None,
-                        help=f"변환 스테이징 디렉토리 (기본: datasets/{STAGE_DIR.name})")
+                        help=f"변환 스테이징 디렉토리 (기본: {STAGE_DIR.relative_to(ROOT)})")
     args = parser.parse_args()
 
     src_dir = Path(args.src) if args.src else SRC_DIR

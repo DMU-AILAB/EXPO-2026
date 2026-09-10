@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-DST_ROOT = ROOT / "lookalike_data"
+DST_ROOT = ROOT / "datasets" / "raw" / "lookalike"
 COCO_WEIGHTS = ROOT / "yolov8n.pt"
 PERSON_CONF = 0.40
 DOWNLOAD_WORKERS = 8
@@ -104,7 +104,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",
                         help="다운로드 없이 스플릿별 장수만 출력")
-    parser.add_argument("--dst", default=None, help=f"출력 루트 (기본: {DST_ROOT.name})")
+    parser.add_argument("--dst", default=None, help=f"출력 루트 (기본: {DST_ROOT.relative_to(ROOT)})")
     parser.add_argument("--splits", nargs="+", default=["validation", "test", "train"],
                         choices=list(ANN_URLS), help="훑을 스플릿")
     args = parser.parse_args()
