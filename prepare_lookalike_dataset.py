@@ -77,17 +77,25 @@ def collect_sources(src_dir: Path, exclude: set[str]) -> tuple[list[tuple[Path, 
     return kept, excluded
 
 
-def label_people(names: list[str], stage_images: Path) -> dict[str, list[tuple[float, float, float, float]]]:
-    """with_person 이미지에 COCO yolov8n으로 person 박스를 자동 검출 → YOLO 정규화 좌표."""
+def label_people(names: list[str], stage_images: Path,
+                 weights: Path | str = COCO_WEIGHTS,
+                 conf: float = PERSON_CONF) -> dict[str, list[tuple[float, float, float, float]]]:
+    """with_person 이미지에 COCO 모델로 person 박스를 자동 검출 → YOLO 정규화 좌표.
+
+    weights/conf 기본값은 이 스크립트가 lk_*.jpg를 만들 때 쓴 값 그대로다(재현성).
+    `resplit_dataset.relabel_person()`은 더 큰 모델을 넘겨 쓴다 — 지팡이 데이터셋의
+    사람 라벨 보완에서는 yolov8n이 명백히 보이는 사람도 놓치는 사례가 있었고,
+    yolov8l이 같은 임계값에서 11% 더 찾았다(530 → 588박스).
+    """
     from ultralytics import YOLO
 
-    model = YOLO(str(COCO_WEIGHTS))
+    model = YOLO(str(weights))
     boxes: dict[str, list[tuple[float, float, float, float]]] = {}
     batch = 16
     for i in range(0, len(names), batch):
         chunk = names[i:i + batch]
         results = model.predict([str(stage_images / n) for n in chunk],
-                                imgsz=640, conf=PERSON_CONF, classes=[0], verbose=False)
+                                imgsz=640, conf=conf, classes=[0], verbose=False)
         for name, res in zip(chunk, results):
             boxes[name] = [tuple(b) for b in res.boxes.xywhn.tolist()]
     return boxes

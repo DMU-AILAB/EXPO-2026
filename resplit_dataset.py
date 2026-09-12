@@ -53,6 +53,23 @@ OUT_DIR = ROOT / "datasets" / "v2"
 DATA_YAML = ROOT / "datasets" / "data_v2.yaml"
 MANIFEST = OUT_DIR / "split_manifest.json"
 
+# 사람 라벨을 보완한 라벨 파일을 따로 둔다. 원본 datasets/{train,val,test}/labels는
+# 커밋된 데이터라 건드리지 않고, datasets/v2는 원본의 하드링크라 거기에 쓰면 원본이
+# 같이 바뀐다 — 그래서 제3의 위치에 쓰고 _label_path()가 이쪽을 우선한다.
+RELABEL_DIR = ROOT / "datasets" / "staging" / "person_relabel"
+
+# 사람 라벨 보완에 쓰는 COCO 모델. lk_ 네거티브를 만들 때 쓴 yolov8n보다 큰 모델을
+# 쓰는 이유는, 여기서는 **놓친 사람 하나가 곧 오염**이기 때문이다 — 자동 라벨은
+# 검출된 사람만 라벨하고 못 찾은 사람은 배경으로 남겨두므로, 재현율이 낮으면 고치려던
+# 문제가 그대로 남는다. 실측(cane_only 426장, conf 0.40): yolov8n 530박스 /
+# yolov8m 569 / yolov8l 588. 로컬 1회성 작업이라 큰 모델의 추론 비용은 문제가 안 된다.
+RELABEL_WEIGHTS = ROOT / "yolov8l.pt"
+# 임계값 0.25는 yolov8l 스윕에서 정했다 — 0.40에서 588박스, 0.25에서 598, 0.15에서
+# 618로 곡선이 0.25 아래에서 평평해진다. 더 낮추면 얻는 건 적고 오탐(사람 아닌 것을
+# 사람으로 라벨) 위험만 커진다. yolov8n으로는 conf 0.40에서 명백히 보이는 보행자를
+# 놓친 사례가 있었다(35_jpg: 0.10까지 낮춰야 검출).
+RELABEL_CONF = 0.25
+
 TEST_RATIO = 0.15
 VAL_RATIO = 0.15
 
@@ -182,7 +199,10 @@ def _pack_aihub(sessions: dict[str, list[str]]) -> dict[str, str]:
 
 
 def _label_path(name: str) -> Path:
-    """이미지 파일명 → 원본 라벨 경로 (어느 split에 있든 찾는다)."""
+    """이미지 파일명 → 라벨 경로. 사람 라벨 보완본이 있으면 그것을 우선한다."""
+    fixed = RELABEL_DIR / (Path(name).stem + ".txt")
+    if fixed.exists():
+        return fixed
     for s in SRC_SPLITS:
         p = ROOT / "datasets" / s / "labels" / (Path(name).stem + ".txt")
         if p.exists():
@@ -225,6 +245,61 @@ def audit_labels(names: list[str]) -> list[str]:
         if len(rows) != len(set(rows)):
             problems.append(f"{n} 완전 중복 박스")
     return problems
+
+
+def relabel_person(names: list[str], review: bool = False) -> dict[str, int]:
+    """지팡이만 라벨된 이미지에 빠진 사람 라벨을 COCO yolov8n으로 보완한다.
+
+    ## 왜 필요한가
+
+    지팡이 데이터셋과 사람 데이터셋은 서로 다른 소스에서 각각 라벨링된 뒤 합쳐졌다
+    (`merge_person_dataset.py`). 대부분은 병합 과정에서 양쪽 라벨을 갖게 됐지만
+    (both 8,877장), **class 0만 있는 426장이 남아 있다.** 그중 344장(80.8%)에는
+    실제로 사람이 찍혀 있어, YOLO가 그 영역을 "배경(사람 아님)"으로 학습한다 —
+    `prepare_background_dataset.py`가 사람 찍힌 배경 4장을 굳이 제외한 것과
+    정확히 같은 종류의 오염이다.
+
+    `label_tool/`이 바로 이 작업을 위해 만들어졌으나 한 번도 쓰이지 않았다
+    (`label_tool/reviewed.json`이 없다 = 검토 0건).
+
+    ## 사람이 안 잡히는 이미지는 버리지 않는다
+
+    `prepare_lookalike_dataset.py`는 person 미검출 이미지를 버리는데, 그쪽은 "사람이
+    유사물을 든 사진"이라 사람이 반드시 있어야 하기 때문이다. 여기는 다르다 —
+    흰 지팡이 단독 카탈로그 사진이 실제로 섞여 있다. 실측: conf 0.40에서 사람이 안
+    잡힌 82장 중 임계값을 0.15까지 낮춰도 잡히는 건 2장뿐이고, 육안 확인 결과 흰
+    배경의 제품 사진/클로즈업이었다. 버리면 진짜 지팡이 학습 데이터를 잃는다.
+    """
+    from prepare_lookalike_dataset import label_people, write_review_sheets
+
+    targets = []
+    for n in names:
+        rows = [l.split() for l in _label_path(n).read_text().splitlines() if l.split()]
+        if rows and all(r[0] == "0" for r in rows):
+            targets.append(n)
+
+    rel = {n: str(_image_path(n).relative_to(ROOT)) for n in targets}
+    boxes = label_people(sorted(rel.values()), ROOT,
+                         weights=RELABEL_WEIGHTS, conf=RELABEL_CONF)
+
+    RELABEL_DIR.mkdir(parents=True, exist_ok=True)
+    added = 0
+    for n in targets:
+        found = boxes.get(rel[n], [])
+        if not found:
+            continue
+        src = _label_path(n).read_text().rstrip("\n")
+        lines = [src] if src else []
+        lines += [f"1 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}" for cx, cy, w, h in found]
+        (RELABEL_DIR / (Path(n).stem + ".txt")).write_text("\n".join(lines) + "\n",
+                                                          encoding="utf-8")
+        added += 1
+
+    if review:
+        write_review_sheets({v: boxes.get(v, []) for v in rel.values()},
+                            ROOT, RELABEL_DIR / "review")
+    return {"cane_only": len(targets), "relabeled": added,
+            "kept_as_is": len(targets) - added}
 
 
 def summarize(assign: dict[str, str], groups: dict[str, list[str]],
@@ -291,12 +366,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="누수 없는 train/val/test 재분할")
     ap.add_argument("--dry-run", action="store_true", help="검사/요약만 출력, 파일은 만들지 않음")
     ap.add_argument("--skip-audit", action="store_true", help="라벨 기하 검사 생략(빠른 확인용)")
+    ap.add_argument("--relabel-person", action="store_true",
+                    help="지팡이만 라벨된 이미지에 빠진 사람 라벨을 COCO yolov8n으로 보완")
+    ap.add_argument("--review", action="store_true",
+                    help="--relabel-person의 결과를 검수용 컨택트시트로 출력")
     args = ap.parse_args()
 
     names: list[str] = []
     for s in SRC_SPLITS:
         names += os.listdir(ROOT / "datasets" / s / "images")
     names.sort()
+
+    if args.relabel_person:
+        r = relabel_person(names, review=args.review)
+        print(f"사람 라벨 보완: cane_only {r['cane_only']}장 중 {r['relabeled']}장에 person 추가, "
+              f"{r['kept_as_is']}장은 사람이 없어 그대로 둠 → {RELABEL_DIR}\n")
 
     sessions = build_aihub_sessions(names)
     groups: dict[str, list[str]] = defaultdict(list)

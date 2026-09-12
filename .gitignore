@@ -96,3 +96,6 @@ datasets/train/labels/lk_*.txt
 # 원본이 커밋돼 있으면 언제든 재생성된다(python resplit_dataset.py).
 datasets/v2/
 datasets/data_v2.yaml
+
+# resplit_dataset.py --relabel-person 산출물 (재생성 가능)
+datasets/staging/person_relabel/
