@@ -186,7 +186,11 @@ def collect_detections(args, min_conf: float) -> tuple[list[list[dict]], tuple[i
 
     cap.release()
     backend.close()
-    return frames, shape, fps
+    # stride로 프레임을 건너뛰었다면 실효 프레임레이트도 그만큼 내려간다. 이 값이
+    # 디바운스(0.5초)를 몇 프레임으로 환산할지를 정하므로 반드시 보정해야 한다 —
+    # Pi 실측은 8~9 FPS라 디바운스가 4~5프레임인데, 60fps 영상 기준 30프레임으로
+    # 재면 실제보다 7배 엄격한 조건이 되어 트리거가 과소 집계된다.
+    return frames, shape, fps / max(1, args.stride)
 
 
 def _unmap(dets: list[dict], mode: str, size: int, w: int, h: int) -> list[dict]:
