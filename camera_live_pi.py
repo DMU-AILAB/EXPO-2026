@@ -237,10 +237,11 @@ class _TFLiteBackend:
         self._interp.allocate_tensors()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
-        set_input(self._interp, frame, input_size=self.input_size)
+        lb = set_input(self._interp, frame, input_size=self.input_size)
         self._interp.invoke()
         h, w = frame.shape[:2]
-        return postprocess_multiclass(get_output(self._interp), self.conf, w, h)
+        return postprocess_multiclass(get_output(self._interp), self.conf, w, h,
+                                      letterbox=lb)
 
     def update_conf(self, conf: float | dict[str, float]) -> None:
         """다음 predict() 호출부터 바로 반영된다 — 별도 프로세스가 아니라
@@ -918,6 +919,71 @@ def _load_rois(path: str) -> tuple:
     return mgr, cfg.get("debounce", 0.5), cfg.get("cooldown", 10.0), cfg.get("conf")
 
 
+# ROI 크롭 추론이 최소한 이만큼은 프레임을 줄여야 켤 가치가 있다. 크롭이 프레임과
+# 비슷한 크기면 배율 이득은 없이 크롭 밖 사람만 놓치는 순손실이 된다.
+ROI_CROP_MAX_AREA_RATIO = 0.75
+
+
+def _roi_crop_box(roi_manager: "ROIManager | None", w: int, h: int,
+                  margin: float = 0.10) -> tuple[int, int, int, int] | None:
+    """trigger 구역들의 합집합 bbox를 정사각으로 넓혀 픽셀 좌표로 반환.
+
+    카메라가 고정이고 ROI가 이미 정의돼 있다는 구조를 이용한다 — ROI 밖은 어차피
+    트리거 대상이 아니므로, 그 영역만 잘라 추론하면 같은 입력 해상도로 객체의 픽셀
+    밀도를 높일 수 있다.
+
+    **정사각으로 넓히는 것이 핵심이다.** 모델 입력이 정사각(예: 320x320)이라, 크롭이
+    가로로 길면 레터박스 패딩이 캔버스의 절반 이상을 먹어 배율 이득이 사라진다 —
+    실측에서 2.18:1 크롭은 크롭하지 않은 것보다 오히려 나빴다(95 vs 108프레임).
+    짧은 변을 긴 변에 맞춰 넓히고, 프레임 경계에 막히면 반대쪽으로 민다.
+
+    제외구역(zone_type="exclude")은 계산에 넣지 않는다 — 트리거가 일어날 수 없는
+    영역이라 포함할 이유가 없다. trigger 구역이 없거나 크롭이 충분히 작지 않으면
+    None을 반환해 호출부가 전체 프레임을 그대로 쓰게 한다.
+    """
+    if roi_manager is None:
+        return None
+    pts: list = []
+    for roi in roi_manager.rois:
+        if roi.zone_type != "exclude" and len(roi.points) >= 3:
+            pts.extend(roi.points)
+    if not pts:
+        return None
+
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    x0, x1 = max(0.0, min(xs)), min(1.0, max(xs))
+    y0, y1 = max(0.0, min(ys)), min(1.0, max(ys))
+    mx, my = (x1 - x0) * margin, (y1 - y0) * margin
+    px0, px1 = max(0.0, x0 - mx) * w, min(1.0, x1 + mx) * w
+    py0, py1 = max(0.0, y0 - my) * h, min(1.0, y1 + my) * h
+
+    side = max(px1 - px0, py1 - py0)
+
+    def _expand(a: float, b: float, limit: float) -> tuple[float, float]:
+        need = side - (b - a)
+        if need <= 0:
+            return a, b
+        a -= need / 2
+        b += need / 2
+        if a < 0:
+            b = min(limit, b - a)
+            a = 0.0
+        if b > limit:
+            a = max(0.0, a - (b - limit))
+            b = limit
+        return a, b
+
+    px0, px1 = _expand(px0, px1, float(w))
+    py0, py1 = _expand(py0, py1, float(h))
+    bx0, by0, bx1, by1 = int(px0), int(py0), int(px1), int(py1)
+    if bx1 - bx0 < 16 or by1 - by0 < 16:
+        return None
+    if (bx1 - bx0) * (by1 - by0) > w * h * ROI_CROP_MAX_AREA_RATIO:
+        return None
+    return bx0, by0, bx1, by1
+
+
 def _filter_excluded(dets: list[dict], roi_manager: "ROIManager | None",
                       frame: np.ndarray) -> list[dict]:
     """제외구역(zone_type="exclude") 안에 bbox 중심이 있는 detection을 트래킹 이전에
@@ -1240,6 +1306,10 @@ class CameraPipeline:
             # (매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다).
             logged_static: set[int] = set()
 
+            # ROI 크롭 추론 상태 — ROI가 바뀌면 dirty로 표시해 다음 프레임에 재계산한다.
+            roi_crop: tuple[int, int, int, int] | None = None
+            roi_crop_dirty = True
+
             if _TRAFFIC_AVAILABLE and not self.disable_traffic_count:
                 foot_counter = FootTrafficCounter(profile.traffic_db)
 
@@ -1289,8 +1359,33 @@ class CameraPipeline:
                 frame = _apply_rotation(frame, profile.rotation)
                 frame = _apply_channel_swap(frame, profile.swap_rb)
 
+                # ROI 크롭 추론 — 카메라가 고정이라 trigger 구역은 항상 같은 화면
+                # 좌표에 있다. 그 영역만 잘라 넣으면 같은 입력 해상도로 객체 픽셀
+                # 밀도가 올라간다(실측: 지팡이 탐지 108 → 148프레임/805). 크롭 박스는
+                # ROI가 바뀔 때만 다시 계산한다 — 매 프레임 폴리곤을 훑을 이유가 없다.
+                if profile.roi_crop_inference and roi_crop_dirty:
+                    fh_c, fw_c = frame.shape[:2]
+                    roi_crop = _roi_crop_box(roi_manager, fw_c, fh_c)
+                    roi_crop_dirty = False
+                    if roi_crop:
+                        print(f"[INFO][{tag}] ROI 크롭 추론: "
+                              f"x{roi_crop[0]}~{roi_crop[2]}, y{roi_crop[1]}~{roi_crop[3]} "
+                              f"(원본 {fw_c}x{fh_c})")
+                    else:
+                        print(f"[INFO][{tag}] ROI 크롭 추론 비활성 — trigger 구역이 없거나 "
+                              f"크롭이 프레임에 비해 충분히 작지 않음")
+
                 try:
-                    dets = backend.predict(frame)
+                    if roi_crop:
+                        cx0, cy0, cx1, cy1 = roi_crop
+                        dets = backend.predict(frame[cy0:cy1, cx0:cx1])
+                        # 좌표를 원본 프레임 기준으로 되돌린다 — 이후의 ROI 판별과
+                        # 움직임 게이트가 전체 프레임 좌표계를 전제한다.
+                        for d in dets:
+                            bx1, by1, bx2, by2 = d["bbox"]
+                            d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
+                    else:
+                        dets = backend.predict(frame)
                 except Exception as e:
                     print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
                     break
@@ -1385,6 +1480,7 @@ class CameraPipeline:
                         try:
                             roi_manager, debounce, cooldown, conf = _load_rois(profile.roi_config)
                             dispatcher = StandaloneDispatcher(debounce, cooldown)
+                            roi_crop_dirty = True   # 구역이 바뀌면 크롭 박스도 다시 잡는다
                             if conf is not None:
                                 backend.update_conf(conf)
                             print(f"[INFO][{tag}] ROI 설정 변경 감지 — 자동 반영 완료 "

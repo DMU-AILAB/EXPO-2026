@@ -34,6 +34,7 @@ from detection_events import read_recent_events  # noqa: E402
 from fp_hotspots import clear_hotspots, read_hotspots  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CAPTURE_PRESETS, CameraProfile,
+    _DEFAULT_REQUIRE_PERSON, _DEFAULT_ROI_CROP_INFERENCE,
     load_camera_config, save_camera_config, validate_camera_config,
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
@@ -314,6 +315,12 @@ class CameraProfilePayload(BaseModel):
     swap_rb: bool = False
     model_variant: str = "v2_640"
     capture_preset: str = "auto"
+    # 아래 두 필드는 CameraProfile의 기본값을 그대로 따라간다 — 여기에 값을 다시
+    # 적으면 두 곳이 어긋날 수 있다. pydantic은 선언되지 않은 필드를 model_dump()에서
+    # 버리므로, 이 목록에서 빠진 필드는 UI에서 아무리 바꿔도 저장되지 않고 조용히
+    # 기본값으로 되돌아간다(require_person_for_trigger가 실제로 그 상태였다).
+    require_person_for_trigger: bool = _DEFAULT_REQUIRE_PERSON
+    roi_crop_inference: bool = _DEFAULT_ROI_CROP_INFERENCE
 
 
 class CamerasPayload(BaseModel):

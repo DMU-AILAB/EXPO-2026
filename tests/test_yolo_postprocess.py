@@ -62,3 +62,66 @@ def test_empty_result_when_all_below_threshold():
     output = _make_output([(0.5, 0.5, 0.2, 0.2, 0.2, 0.2)])
     dets = postprocess_multiclass(output, {"white_cane": 0.9, "person": 0.9}, IMG_W, IMG_H)
     assert dets == []
+
+
+# ---------------------------------------------------------------------------
+# letterbox 좌표 역보정
+#
+# 배포 추론이 종횡비를 뭉개는 스쿼시를 쓰고 있어 흰 지팡이(얇고 비스듬한 객체)가
+# 학습 분포 밖으로 나가던 것을 레터박스로 고쳤다. set_input이 돌려준
+# (scale, pad_x, pad_y)를 후처리에 넘겨 좌표를 원본 프레임으로 되돌리는데,
+# 이 역보정이 틀리면 박스가 조용히 어긋난다(탐지 개수는 멀쩡해 보인다).
+# ---------------------------------------------------------------------------
+def _letterbox_params(img_w: int, img_h: int, size: int) -> tuple[float, float, float]:
+    """set_input(letterbox=True)와 같은 규칙으로 (scale, pad_x, pad_y)를 만든다."""
+    scale = size / max(img_h, img_w)
+    nh, nw = round(img_h * scale), round(img_w * scale)
+    return scale, (size - nw) / 2.0, (size - nh) / 2.0
+
+
+def test_letterbox_roundtrip_recovers_original_box_on_wide_frame():
+    """16:9 프레임의 알려진 박스가 레터박스를 거쳐도 제자리로 돌아와야 한다."""
+    img_w, img_h, size = 1920, 1080, 320
+    scale, pad_x, pad_y = _letterbox_params(img_w, img_h, size)
+
+    # 원본 좌표계의 목표 박스 → 레터박스 입력 텐서의 정규화 좌표로 변환
+    x1, y1, x2, y2 = 800.0, 500.0, 1000.0, 700.0
+    cx = ((x1 + x2) / 2 * scale + pad_x) / size
+    cy = ((y1 + y2) / 2 * scale + pad_y) / size
+    bw = (x2 - x1) * scale / size
+    bh = (y2 - y1) * scale / size
+
+    dets = postprocess_multiclass(
+        _make_output([(cx, cy, bw, bh, 0.9, 0.0)]), 0.3, img_w, img_h,
+        letterbox=(scale, pad_x, pad_y))
+
+    assert len(dets) == 1
+    got = dets[0]["bbox"]
+    assert got == [round(x1), round(y1), round(x2), round(y2)], got
+
+
+def test_letterbox_none_keeps_legacy_squash_mapping():
+    """letterbox=None이면 기존(정규화 × img_w/img_h) 계산이 그대로 유지된다 —
+    하위호환이 깨지면 옛 호출부가 조용히 틀린 좌표를 받는다."""
+    dets = postprocess_multiclass(
+        _make_output([(0.5, 0.5, 0.2, 0.2, 0.9, 0.0)]), 0.3, 1920, 1080)
+    assert dets[0]["bbox"] == [768, 432, 1152, 648], dets[0]["bbox"]
+
+
+def test_squash_distorts_aspect_ratio_but_letterbox_preserves_it():
+    """이 수정의 본질 — 스쿼시는 객체의 종횡비를 뭉갠다.
+
+    모델이 정사각(w==h) 박스를 냈을 때, 레터박스 경로는 원본에서도 정사각으로
+    복원되지만 스쿼시 경로는 16:9 비율만큼 납작해진다(384x384 vs 384x216).
+    흰 지팡이처럼 얇고 비스듬한 객체가 학습 분포 밖으로 나가던 이유이자,
+    두 경로를 섞어 쓰면 안 되는 이유다.
+    """
+    img_w, img_h, size = 1920, 1080, 320
+    lb = _letterbox_params(img_w, img_h, size)
+    out = _make_output([(0.5, 0.5, 0.2, 0.2, 0.9, 0.0)])
+
+    a = postprocess_multiclass(out, 0.3, img_w, img_h, letterbox=lb)[0]["bbox"]
+    b = postprocess_multiclass(out, 0.3, img_w, img_h)[0]["bbox"]
+
+    assert (a[2] - a[0]) == (a[3] - a[1]), a          # 레터박스: 정사각 유지
+    assert (b[2] - b[0]) > (b[3] - b[1]) * 1.7, b     # 스쿼시: 16:9만큼 납작

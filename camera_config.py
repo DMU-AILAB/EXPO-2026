@@ -73,6 +73,11 @@ _DEFAULT_MODEL_VARIANT = "v2_640"
 # 어긋나면 필드가 없는 기존 파일이 조용히 다른 값으로 로드되므로 한 곳에서만 정의한다.
 _DEFAULT_REQUIRE_PERSON = True
 
+# ROI 크롭 추론의 기본값. require_person과 달리 기본 False인 이유는 동작 범위를
+# 바꾸기 때문이다 — 크롭 밖의 사람은 탐지되지 않아 유동인구 집계 범위가 ROI 주변으로
+# 좁아진다. 기존 설치의 통계가 조용히 달라지면 안 되므로 명시적으로 켜게 한다.
+_DEFAULT_ROI_CROP_INFERENCE = False
+
 
 @dataclass
 class CameraProfile:
@@ -101,6 +106,13 @@ class CameraProfile:
     # 없으면 이 기본값이 그대로 적용되므로, 코드에서 켜는 것이 가장 확실하다. 카메라별로
     # roi_editor UI에서 끌 수 있다. 트레이드오프는 사람 탐지 실패 시 정상 안내를 놓치는
     # 것인데(test person R=0.920), 디바운스 0.5초가 여러 프레임을 보므로 단발 실패는 흡수된다.
+    roi_crop_inference: bool = _DEFAULT_ROI_CROP_INFERENCE  # trigger 구역만 잘라 추론한다.
+    # 카메라가 고정이고 ROI가 이미 정의돼 있다는 구조를 이용해, 같은 입력 해상도(320)로
+    # 객체의 픽셀 밀도를 높인다 — 흰 지팡이는 폭 2~3px의 얇은 막대라 320 입력의 stride-8
+    # 헤드에서 소실되기 쉬운데, 전체 프레임을 640으로 올리면(실측 탐지율 17%→41%) Pi CPU가
+    # 감당하지 못한다. 크롭은 연산량을 그대로 두고 그 이득의 일부를 가져온다(실측 18%).
+    # 트레이드오프: 크롭 밖의 사람은 탐지되지 않아 유동인구 집계 범위가 ROI 주변으로
+    # 좁아진다. ROI가 프레임 대부분을 덮으면 이득도 없다 — 그래서 기본값이 False다.
 
 
 def load_camera_config(path: str | Path) -> list[CameraProfile]:
@@ -129,6 +141,8 @@ def load_camera_config(path: str | Path) -> list[CameraProfile]:
                 capture_preset=item.get("capture_preset", _DEFAULT_CAPTURE_PRESET),
                 require_person_for_trigger=bool(item.get("require_person_for_trigger",
                                                          _DEFAULT_REQUIRE_PERSON)),
+                roi_crop_inference=bool(item.get("roi_crop_inference",
+                                                 _DEFAULT_ROI_CROP_INFERENCE)),
             ))
         except (KeyError, TypeError, ValueError):
             continue

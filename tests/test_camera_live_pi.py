@@ -243,3 +243,76 @@ def test_clip_recorder_segments_long_recording_and_keeps_session_elapsed(tmp_pat
     final_clips = {c["id"] for c in rec.list_clips()}
     assert first_clip_id in final_clips
     assert second_clip_id in final_clips
+
+
+# ---------------------------------------------------------------------------
+# ROI 크롭 추론 (_roi_crop_box)
+#
+# 흰 지팡이는 폭 2~3px의 얇은 막대라 320 입력에서 소실되기 쉽다. 카메라가 고정이고
+# trigger 구역이 이미 정의돼 있다는 구조를 이용해 그 영역만 잘라 넣으면, 연산량을
+# 그대로 두고 객체 픽셀 밀도를 올릴 수 있다. 다만 **정사각으로 넓히지 않으면
+# 역효과**(가로로 긴 크롭은 레터박스 패딩이 캔버스를 먹어 배율 이득이 사라짐)라,
+# 그 기하 계산을 여기서 못박는다.
+# ---------------------------------------------------------------------------
+class _FakeROI:
+    def __init__(self, points, zone_type="trigger"):
+        self.points = points
+        self.zone_type = zone_type
+
+
+class _FakeROIManager:
+    def __init__(self, rois):
+        self.rois = rois
+
+
+def test_roi_crop_box_expands_to_square_to_fill_model_canvas():
+    """가로로 긴 ROI라도 크롭은 정사각이어야 한다 — 안 그러면 레터박스 패딩이
+    캔버스의 절반 이상을 먹어 크롭하지 않느니만 못해진다(실측 95 vs 108프레임)."""
+    rm = _FakeROIManager([_FakeROI([[0.1, 0.4], [0.5, 0.4], [0.5, 0.5], [0.1, 0.5]])])
+    box = m._roi_crop_box(rm, 1920, 1080)
+    assert box is not None
+    w, h = box[2] - box[0], box[3] - box[1]
+    assert abs(w - h) <= 2, box
+
+
+def test_roi_crop_box_fills_frame_height_when_square_does_not_fit():
+    """정사각이 프레임 높이를 넘으면 넓힐 수 있는 만큼만 넓힌다(높이를 꽉 채움).
+    잘라낼 수 없는 것을 잘라내려 하면 좌표가 프레임 밖으로 나간다."""
+    rm = _FakeROIManager([_FakeROI([[0.1, 0.4], [0.6, 0.4], [0.6, 0.5], [0.1, 0.5]])])
+    box = m._roi_crop_box(rm, 1920, 1080)
+    assert box is not None
+    assert box[1] == 0 and box[3] == 1080, box       # 높이는 프레임 전체
+    assert box[2] - box[0] >= box[3] - box[1], box   # 가로가 더 길거나 같음
+    assert box[2] <= 1920, box
+
+
+def test_roi_crop_box_ignores_exclude_zones():
+    """제외구역은 트리거가 일어날 수 없는 영역이라 크롭 범위에 넣을 이유가 없다."""
+    rm = _FakeROIManager([
+        _FakeROI([[0.40, 0.40], [0.50, 0.40], [0.50, 0.50], [0.40, 0.50]]),
+        _FakeROI([[0.00, 0.00], [0.99, 0.00], [0.99, 0.99], [0.00, 0.99]], "exclude"),
+    ])
+    box = m._roi_crop_box(rm, 1920, 1080)
+    assert box is not None
+    assert (box[2] - box[0]) * (box[3] - box[1]) < 1920 * 1080 * 0.5, box
+
+
+def test_roi_crop_box_declines_when_roi_covers_most_of_frame():
+    """ROI가 프레임 대부분을 덮으면 배율 이득은 없이 크롭 밖 사람만 놓친다 —
+    그럴 땐 크롭하지 않는 게 맞다."""
+    rm = _FakeROIManager([_FakeROI([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])])
+    assert m._roi_crop_box(rm, 1920, 1080) is None
+
+
+def test_roi_crop_box_returns_none_without_trigger_zones():
+    assert m._roi_crop_box(_FakeROIManager([]), 1920, 1080) is None
+    assert m._roi_crop_box(None, 1920, 1080) is None
+
+
+def test_roi_crop_box_stays_inside_frame_when_roi_touches_edge():
+    """경계에 붙은 ROI를 정사각으로 넓힐 때 프레임 밖으로 나가면 안 된다."""
+    rm = _FakeROIManager([_FakeROI([[0.0, 0.80], [0.30, 0.80], [0.30, 1.0], [0.0, 1.0]])])
+    box = m._roi_crop_box(rm, 1920, 1080)
+    assert box is not None
+    assert 0 <= box[0] < box[2] <= 1920, box
+    assert 0 <= box[1] < box[3] <= 1080, box

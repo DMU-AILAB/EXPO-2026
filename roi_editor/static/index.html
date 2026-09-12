@@ -840,6 +840,9 @@ main {
           <div class="cam-enabled-row">
             <input type="checkbox" id="camRequirePerson"> <span>사람이 함께 감지될 때만 안내 (기본 켜짐 — 사람 없이 흔들리는 나뭇가지 등의 오탐지 차단)</span>
           </div>
+          <div class="cam-enabled-row">
+            <input type="checkbox" id="camRoiCrop"> <span>안내 구역만 잘라서 인식 (먼 곳의 지팡이 인식률 향상 — 구역 밖 사람은 유동인구 집계에서 빠짐)</span>
+          </div>
           <div class="form-btns">
             <button class="btn btn-save" id="btnSaveCamera">저장</button>
             <button class="btn btn-danger" id="btnDeleteCamera">삭제</button>
@@ -1219,6 +1222,7 @@ async function addCameraFromScan(num, model) {
     traffic_db: `foot_traffic_${newId}.db`,
     swap_rb: false,
     require_person_for_trigger: true,
+    roi_crop_inference: false,
     model_variant: 'v2_640',
   };
 
@@ -1360,6 +1364,7 @@ function fillCameraForm() {
   document.getElementById('camPort').value = cam.port;
   document.getElementById('camSwapRb').checked = !!cam.swap_rb;
   document.getElementById('camRequirePerson').checked = !!cam.require_person_for_trigger;
+  document.getElementById('camRoiCrop').checked = !!cam.roi_crop_inference;
   document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
   document.getElementById('camCapturePreset').value = cam.capture_preset || 'auto';
 }
@@ -1395,6 +1400,7 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
   cam.port               = parseInt(document.getElementById('camPort').value, 10) || cam.port;
   cam.swap_rb             = document.getElementById('camSwapRb').checked;
   cam.require_person_for_trigger = document.getElementById('camRequirePerson').checked;
+  cam.roi_crop_inference  = document.getElementById('camRoiCrop').checked;
   cam.model_variant       = document.getElementById('camModelVariant').value;
   cam.capture_preset      = document.getElementById('camCapturePreset').value;
 
