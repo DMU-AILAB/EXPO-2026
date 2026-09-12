@@ -13,11 +13,11 @@ int8 양자화 후 오탐지가 되돌아오지 않았는지 확인하는 데도
 
 사용법:
     python eval_background_fp.py --weights runs/white_cane_v4_320/weights/best.pt \
-           --images datasets/background/holdout.txt --imgsz 320
+           --images datasets/staging/background/holdout.txt --imgsz 320
 
     # 유사물 홀드아웃 — 사람은 정상 탐지이므로 지팡이 오탐지만 센다
     python eval_background_fp.py --weights <w> \
-           --images datasets/lookalike/holdout.txt --classes 0
+           --images datasets/staging/lookalike/holdout.txt --classes 0
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def load_image_list(spec: str) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--weights", required=True)
-    parser.add_argument("--images", default="datasets/background/holdout.txt",
+    parser.add_argument("--images", default="datasets/staging/background/holdout.txt",
                         help="이미지 목록 txt 또는 디렉토리")
     parser.add_argument("--imgsz", type=int, default=320)
     parser.add_argument("--batch", type=int, default=16)
