@@ -105,3 +105,8 @@ datasets/staging/person_relabel/
 datasets/train/images/lkc_*.jpg
 datasets/train/labels/lkc_*.txt
 datasets/staging/stick_cctv/
+
+# 합성 야간 평가셋 / lkc 대조군 — 스크립트로 재생성 가능
+datasets/v2_night/
+datasets/v2_nolkc/
+datasets/data_v2_nolkc.yaml
