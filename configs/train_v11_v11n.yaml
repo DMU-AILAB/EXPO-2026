@@ -17,7 +17,7 @@ task: detect
 mode: train
 
 model: yolo11n.pt
-data: datasets/data_v2.yaml
+data: datasets/data_v2_nolkc.yaml
 
 epochs: 100
 patience: 30
@@ -30,7 +30,7 @@ deterministic: true
 amp: true
 
 project: /home/ubuntu/expo/runs
-name: white_cane_v10_v11n
+name: white_cane_v11_v11n
 
 # --- 증강 A안 -------------------------------------------------------------
 # v3~v8 전 실험이 ultralytics 기본값 그대로였다. 한 번도 손대지 않은 영역이라
