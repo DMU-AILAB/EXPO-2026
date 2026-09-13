@@ -99,3 +99,9 @@ datasets/data_v2.yaml
 
 # resplit_dataset.py --relabel-person 산출물 (재생성 가능)
 datasets/staging/person_relabel/
+
+# CCTV 각도 유사물 네거티브 (lkc_*.jpg) — lk_와 같은 원칙으로 커밋하지 않는다
+# (원본이 공개 Roboflow 데이터셋이라 prepare_stick_cctv_dataset.py로 재생성 가능)
+datasets/train/images/lkc_*.jpg
+datasets/train/labels/lkc_*.txt
+datasets/staging/stick_cctv/

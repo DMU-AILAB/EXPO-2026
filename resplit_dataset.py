@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import os
 import re
 import sys
@@ -46,7 +47,6 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from dataset_prep import stratified_holdout  # noqa: E402
 
 SRC_SPLITS = ("train", "val", "test")
 OUT_DIR = ROOT / "datasets" / "v2"
@@ -104,6 +104,8 @@ def stratum_of(name: str) -> str:
     """
     if name.startswith("bg_"):
         return "bg"
+    if name.startswith("lkc_"):
+        return "lkc"      # CCTV 각도 유사물 — lk_(웹 사진 각도)와 도메인이 달라 층을 나눈다
     if name.startswith("lk_"):
         return "lk"
     if name.startswith("pedcctv_"):
@@ -151,24 +153,34 @@ def build_aihub_sessions(names: list[str]) -> dict[int, int]:
 def split_groups(groups: dict[str, list[str]], strata: dict[str, str]) -> dict[str, str]:
     """그룹 → split. 층별로 비율을 맞춰 test → val 순으로 뽑는다.
 
-    `dataset_prep.stratified_holdout()`을 그대로 재사용한다 — 이 함수는
-    `{이름: 층}`을 받아 층별 표본을 뽑는데, **이름 자리에 파일명 대신 그룹키를
-    넣으면 그대로 그룹 단위 분할기가 된다.** sklearn 의존성이 필요 없다.
+    층별로 그룹키 해시 순서대로 앞 15%를 test, 다음 15%를 val로 자른다. 무작위
+    추출과 통계적으로 같으면서 **결정적이고, 다른 층의 변경에 영향받지 않는다**
+    (자세한 근거는 아래 주석).
 
-    AIHub만 예외로 greedy bin-packing을 쓴다. 세션이 8개뿐이고 크기가 43~1936장으로
-    45배 차이나서, 비율 표본(0.15면 1개)으로는 목표 비율을 전혀 못 맞추기 때문이다.
-
-    `order`를 명시적으로 고정하는 이유는 stratified_holdout이 하나의 RNG를 층마다
-    이어 쓰기 때문이다 — 순서가 바뀌면 뽑히는 표본 자체가 달라진다(docstring 경고).
+    AIHub만 예외로 best-fit bin-packing을 쓴다. 세션이 8개뿐이고 크기가 43~1936장으로
+    45배 차이나서, 비율로 자르면 목표 비율을 전혀 못 맞추기 때문이다.
     """
-    fine = {g: s for g, s in strata.items() if s != "aihub_cane"}
-    order = ("bg", "lk", "pedcctv", "roboflow_cane")
+    assign: dict[str, str] = {}
+    by_stratum: dict[str, list[str]] = {}
+    for g, st in strata.items():
+        if st != "aihub_cane":
+            by_stratum.setdefault(st, []).append(g)
 
-    test_g = stratified_holdout(fine, TEST_RATIO, order=order)
-    rest = {g: s for g, s in fine.items() if g not in test_g}
-    val_g = stratified_holdout(rest, VAL_RATIO / (1.0 - TEST_RATIO), order=order)
-
-    assign = {g: ("test" if g in test_g else "val" if g in val_g else "train") for g in fine}
+    for st, gs in by_stratum.items():
+        # 그룹키 해시로 정렬해 앞에서부터 자른다. 무작위 추출과 통계적으로 같지만
+        # **어떤 층이 추가/제거돼도 다른 층의 배정이 바뀌지 않는다**는 성질이 있다.
+        #
+        # 처음에는 dataset_prep.stratified_holdout()을 썼는데, 그 함수는 하나의 RNG를
+        # 층마다 이어 쓰기 때문에(그 docstring이 경고하는 바로 그 문제) 층을 하나
+        # 추가하자 기존 층의 표본이 통째로 달라졌다 — 실측: lkc 층을 넣었을 뿐인데
+        # 14,022장 중 2,418장(17.2%)이 split을 옮겼고, 새 test의 20.6%가 이전 train
+        # 이었다. 그러면 이전에 학습한 모델을 새 test로 평가할 수 없다.
+        ordered = sorted(gs, key=lambda g: hashlib.md5(g.encode()).hexdigest())
+        n = len(ordered)
+        n_test = round(n * TEST_RATIO)
+        n_val = round(n * VAL_RATIO)
+        for i, g in enumerate(ordered):
+            assign[g] = "test" if i < n_test else "val" if i < n_test + n_val else "train"
     assign.update(_pack_aihub({g: groups[g] for g, s in strata.items() if s == "aihub_cane"}))
     return assign
 
