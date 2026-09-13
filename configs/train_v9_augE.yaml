@@ -1,0 +1,67 @@
+# v9 기준선 — 누수 없는 분할(datasets/v2) 위에서 처음 학습하는 모델.
+#
+# 증강은 ultralytics 기본값 그대로다. v3~v8이 전부 이 값으로 학습됐으므로, 이 런이
+# "데이터만 바뀌었을 때" 어떻게 되는지를 보여주는 대조군이 된다. 증강 변경 효과는
+# train_v9_augA.yaml과의 차이로만 읽는다.
+#
+# 백본은 yolov8n — 이 단계에서 백본은 통제변수다. 목적은 데이터/증강 효과 측정이고
+# 그 효과는 어느 백본에서도 같은 방향으로 나타난다. yolov8n을 쓰는 실무적 이유는
+# 학습이 20% 빠르고(3,374s vs yolo11n 4,050s) v1~v6과 같은 계보라 비교가 되기
+# 때문이다. 백본 우열은 데이터·증강이 확정된 뒤 3종 공정 비교로 가린다.
+#
+# 기존의 "100ep 학습 → best.pt에서 40ep 파인튜닝" 2단계를 쓰지 않는다. 두 단계가
+# 같은 데이터라 전이학습의 정당성이 없고(실질 140ep + LR 재가열), args.yaml의
+# model:이 다른 run을 가리켜 계보 추적이 번거로워진다.
+
+task: detect
+mode: train
+
+model: yolov8n.pt
+data: datasets/data_v2.yaml
+
+epochs: 100
+patience: 30
+batch: 64
+imgsz: 320          # 학습 이미지 원본이 지팡이 416² / 사람 224²라 그 이상은 업샘플링이다
+device: 0
+workers: 8
+seed: 0
+deterministic: true
+amp: true
+
+project: /home/ubuntu/expo/runs
+name: white_cane_v9_augE
+
+# --- 증강 C안 = A안에서 degrees와 multi_scale을 뺀 것 --------------------------
+# A안(6개 변경 묶음)이 base보다 모든 축에서 나빴다(실영상 455→248프레임, 배경 FP
+# 3→4, 유사물 2→5, cane recall 0.948→0.939). 묶음이라 원인을 못 가리므로, 가장
+# 의심스러운 둘을 빼고 나머지를 남겨 재확인한다.
+#
+# **degrees를 뺀 이유 — A안의 근거가 틀렸다.** "지팡이 박스 종횡비가 모든 각도에
+# 분포하니 회전 증강이 필요하다"고 봤는데, 그 각도 변화는 **똑바로 선 장면 안에서
+# 지팡이의 자세**가 만드는 것이지 장면 자체의 회전이 아니다. degrees는 이미지 전체를
+# 돌려 지평선과 사람까지 기울이는데, 고정 설치된 CCTV는 기울어진 지평선을 절대 보지
+# 않는다 — 배포에 없는 변형을 가르친 셈이다.
+#
+# **multi_scale을 뺀 이유**: 224~352로 입력 크기를 흔드는데 추론은 320 고정이다.
+# 파라미터 3M짜리 모델의 용량을 쓰지도 않을 스케일에 나눠 쓰게 된다(GPU 메모리도
+# 2.6G → 5.5G로 뛰었다).
+#
+# 남긴 것들은 전부 **장면 안에서 실제로 일어나는 변화**다: 거리(scale), 위치
+# (translate), 조도(hsv_v).
+
+scale: 0.7
+translate: 0.2
+hsv_v: 0.6
+close_mosaic: 20
+
+mixup: 0.1
+# --- E안 = C안 + mixup — 실측으로 예측한 최적 조합 ----------------------------
+# 실영상 지팡이 탐지(conf 0.25, 805프레임 중)로 원인이 분리됐다:
+#   base 455 / augA 248 / augC 569 / augB 617
+#   augA = base + {degrees, multi_scale, scale, translate, hsv_v, close_mosaic}
+#   augC = augA - {degrees, multi_scale}          → 248 → 569 (해로운 둘을 제거)
+#   augB = augA + {mixup}                          → 248 → 617 (mixup이 이로움)
+# 즉 **해로운 것은 degrees와 multi_scale**(고정 CCTV에 없는 변형: 기울어진 지평선,
+# 추론에 쓰지 않는 입력 크기), **이로운 것은 scale/translate/hsv_v와 mixup**이다.
+# 그렇다면 해로운 둘을 뺀 C안에 mixup을 더한 것이 최적이어야 한다.
