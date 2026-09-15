@@ -3,11 +3,11 @@ import { Scan, Bell, LayoutGrid, Cpu, Video, BarChart3, Search } from 'lucide-re
 import { mockDevices } from '../data/mockData'
 
 const tabs = [
-  { label: 'Overview', path: '/', icon: LayoutGrid },
-  { label: 'Devices', path: '/devices', icon: Cpu, badge: String(mockDevices.length) },
-  { label: 'Live Streams', path: '/streams', icon: Video, live: true },
-  { label: 'Statistics', path: '/stats', icon: BarChart3 },
-  { label: 'Pi 탐색', path: '/scan', icon: Search },
+  { label: '관제 현황', path: '/', icon: LayoutGrid },
+  { label: '디바이스', path: '/devices', icon: Cpu, badge: String(mockDevices.length) },
+  { label: '실시간 스트림', path: '/streams', icon: Video, live: true },
+  { label: '통계', path: '/stats', icon: BarChart3 },
+  { label: '디바이스 탐색', path: '/scan', icon: Search },
 ] as const
 
 export default function Header() {
@@ -74,7 +74,7 @@ export default function Header() {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600" />
             </span>
             <span className="text-xs font-bold text-emerald-700 tracking-tight">
-              {onlineCount} / {mockDevices.length} Online
+              {onlineCount} / {mockDevices.length} 온라인
             </span>
           </div>
 
