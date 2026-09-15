@@ -8,6 +8,15 @@ import StatusBadge from '../components/StatusBadge'
 import { mockDevices, mockEvents, MOCK_AUDIO_FILES } from '../data/mockData'
 import type { Device, DetectionEvent, Roi } from '../types'
 
+const STREAM_IMAGES = [
+  '/streams/entrance.jpg',
+  '/streams/hall.jpg',
+  '/streams/street.jpg',
+  '/streams/campus.jpg',
+  '/streams/night.jpg',
+  '/streams/elevator.jpg',
+]
+
 // ─── CPU Gauge ────────────────────────────────────────────────────────────────
 function CpuGauge({ value }: { value: number }) {
   const r = 40, circ = 2 * Math.PI * r
@@ -166,118 +175,175 @@ function RoiTab({ device }: { device: Device }) {
   const inputCls = 'w-full border border-slate-200 rounded-xl px-3 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2c4be0] focus:ring-2 focus:ring-[#2c4be0]/10 transition'
   const labelCls = 'text-xs font-bold text-slate-600 mb-1 block'
 
+  const activeCam = device.cameras[selectedCam]
+  const imgSrc = activeCam
+    ? STREAM_IMAGES[(activeCam.imageIndex ?? activeCam.id) % STREAM_IMAGES.length]
+    : null
+
   return (
-    <div className="glass-panel p-5">
-      <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-200/70">
-        <h2 className="text-sm font-bold text-slate-700">ROI 구역 관리</h2>
-        <button onClick={openNew} className="glass-btn-brand px-3 py-1.5 rounded-xl text-xs gap-1.5 flex items-center">
-          <Plus className="w-3.5 h-3.5" />새 구역 추가
-        </button>
-      </div>
-      {device.cameras.length > 1 && (
-        <div className="flex gap-1 mb-4">
-          {device.cameras.map((cam, idx) => (
-            <button key={cam.id} onClick={() => setSelectedCam(idx)}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${selectedCam === idx ? 'bg-[#2c4be0] text-white' : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200'}`}>
-              CAM {cam.id}
-            </button>
-          ))}
-        </div>
-      )}
-      {rois.length === 0 ? (
-        <div className="py-12 text-center text-slate-400 text-sm">ROI 구역이 없습니다. 새 구역을 추가하세요.</div>
-      ) : (
-        <div className="space-y-2">
-          {rois.map((roi) => (
-            <div key={roi.id} className={`p-3 rounded-xl border transition ${roi.isActive ? 'bg-slate-50/80 border-slate-200/80' : 'bg-slate-100/40 border-slate-200/40 opacity-60'}`}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${roi.isActive ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                <span className="text-sm font-semibold text-slate-800">{roi.name}</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${roi.zoneType === 'trigger' ? 'bg-[#2c4be0]/8 text-[#2c4be0] border-[#2c4be0]/25' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                  {roi.zoneType === 'trigger' ? '안내 구역' : '제외 구역'}
-                </span>
-                <span className="text-[10px] text-slate-400">우선순위 {roi.priority}</span>
-                {roi.audioFile && <span className="text-[10px] text-slate-400 italic ml-auto">{roi.audioFile}</span>}
-                <div className="flex gap-1.5 ml-auto">
-                  <button onClick={() => toggleActive(roi.id)}
-                    className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold transition ${roi.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
-                    {roi.isActive ? '활성' : '비활성'}
-                  </button>
-                  <button onClick={() => openEdit(roi)} className="glass-btn p-1.5 rounded-lg">
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-              {roi.announcementText && <p className="text-xs text-slate-500 mt-1.5 ml-4">"{roi.announcementText}"</p>}
-
-              {editingId === roi.id && (
-                <div className="mt-3 pt-3 border-t border-slate-200/70 grid grid-cols-2 gap-3">
-                  <div className="col-span-2"><label className={labelCls}>이름</label><input className={inputCls} value={form.name ?? ''} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} /></div>
-                  <div>
-                    <label className={labelCls}>구역 유형</label>
-                    <div className="flex gap-1.5">
-                      {(['trigger', 'exclude'] as const).map(t => (
-                        <button key={t} onClick={() => setForm(p => ({ ...p, zoneType: t }))}
-                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition ${form.zoneType === t ? (t === 'trigger' ? 'bg-[#2c4be0] text-white' : 'bg-slate-700 text-white') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                          {t === 'trigger' ? '안내 구역' : '제외 구역'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div><label className={labelCls}>우선순위</label><input type="number" min={0} max={10} className={inputCls} value={form.priority ?? 1} onChange={e => setForm(p => ({ ...p, priority: Number(e.target.value) }))} /></div>
-                  <div className="col-span-2"><label className={labelCls}>오디오 파일</label>
-                    <select className={inputCls} value={form.audioFile ?? ''} onChange={e => setForm(p => ({ ...p, audioFile: e.target.value }))}>
-                      <option value="">— 없음 —</option>
-                      {MOCK_AUDIO_FILES.map(f => <option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-span-2"><label className={labelCls}>안내 텍스트</label><textarea rows={2} className={`${inputCls} resize-none`} value={form.announcementText ?? ''} onChange={e => setForm(p => ({ ...p, announcementText: e.target.value }))} /></div>
-                  <div className="col-span-2 flex items-center gap-2 text-xs">
-                    <input type="checkbox" id={`active-${roi.id}`} checked={form.isActive ?? true} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="accent-[#2c4be0]" />
-                    <label htmlFor={`active-${roi.id}`} className="font-medium text-slate-700 cursor-pointer">활성화</label>
-                  </div>
-                  <div className="col-span-2 flex justify-end gap-2">
-                    <button onClick={closeForm} className="glass-btn px-4 py-1.5 rounded-xl text-xs">취소</button>
-                    <button onClick={saveForm} className="bg-[#2c4be0] text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] transition">저장</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {editingId === 'new' && (
-        <div className="mt-4 glass-panel-subtle p-4">
-          <p className="text-xs font-bold text-slate-700 mb-3">새 ROI 구역</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><label className={labelCls}>이름</label><input className={inputCls} value={form.name ?? ''} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="구역 이름" /></div>
-            <div>
-              <label className={labelCls}>구역 유형</label>
-              <div className="flex gap-1.5">
-                {(['trigger', 'exclude'] as const).map(t => (
-                  <button key={t} onClick={() => setForm(p => ({ ...p, zoneType: t }))}
-                    className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition ${form.zoneType === t ? (t === 'trigger' ? 'bg-[#2c4be0] text-white' : 'bg-slate-700 text-white') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                    {t === 'trigger' ? '안내 구역' : '제외 구역'}
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      {/* 좌: 카메라 스트림 */}
+      <div className="lg:col-span-2">
+        <div className="glass-panel p-4">
+          <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-200/70">
+            <h2 className="text-sm font-bold text-slate-700">카메라 스트림</h2>
+            {device.cameras.length > 1 && (
+              <div className="flex gap-1">
+                {device.cameras.map((cam, idx) => (
+                  <button key={cam.id} onClick={() => setSelectedCam(idx)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${selectedCam === idx ? 'bg-[#2c4be0] text-white' : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200'}`}>
+                    CAM {cam.id}
                   </button>
                 ))}
               </div>
+            )}
+          </div>
+
+          {device.status === 'offline' || !activeCam ? (
+            <div className="aspect-video bg-slate-900/90 rounded-xl flex flex-col items-center justify-center border border-slate-700/50">
+              <Camera className="w-8 h-8 text-slate-600 mb-2" />
+              <p className="text-xs font-semibold text-slate-500">오프라인 — 스트림 없음</p>
             </div>
-            <div><label className={labelCls}>우선순위</label><input type="number" min={1} max={10} className={inputCls} value={form.priority ?? 1} onChange={e => setForm(p => ({ ...p, priority: Number(e.target.value) }))} /></div>
-            <div className="col-span-2"><label className={labelCls}>오디오 파일</label>
-              <select className={inputCls} value={form.audioFile ?? ''} onChange={e => setForm(p => ({ ...p, audioFile: e.target.value }))}>
-                <option value="">— 없음 —</option>
-                {MOCK_AUDIO_FILES.map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
+          ) : (
+            <div className="relative aspect-video rounded-xl overflow-hidden border border-emerald-500/40 shadow-[0_0_14px_rgba(16,185,129,0.12)]">
+              <img src={imgSrc!} alt="" className="w-full h-full object-cover" draggable={false} />
+              {/* 상단 HUD */}
+              <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
+                style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.65), transparent)' }}>
+                <span className="text-[10.5px] font-bold text-white">{device.name} — CAM {activeCam.id}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
+                  </span>
+                  <span className="text-[10px] font-bold text-white/90 tracking-wider">LIVE</span>
+                </div>
+              </div>
+              {/* 하단 정보 */}
+              <div className="absolute bottom-0 left-0 right-0 px-3 py-2"
+                style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.60), transparent)' }}>
+                <div className="flex items-center justify-between text-[10px] text-white/80">
+                  <span>{activeCam.resolution} · {activeCam.fps}fps</span>
+                  <span>ROI {activeCam.roiCount}개</span>
+                </div>
+              </div>
             </div>
-            <div className="col-span-2"><label className={labelCls}>안내 텍스트</label><textarea rows={2} className={`${inputCls} resize-none`} value={form.announcementText ?? ''} onChange={e => setForm(p => ({ ...p, announcementText: e.target.value }))} /></div>
-            <div className="col-span-2 flex justify-end gap-2">
-              <button onClick={closeForm} className="glass-btn px-4 py-1.5 rounded-xl text-xs">취소</button>
-              <button onClick={saveForm} className="bg-[#2c4be0] text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] transition">추가</button>
+          )}
+
+          {activeCam && (
+            <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
+              <span className="font-mono text-slate-700 font-semibold">{device.ip}:{activeCam.port}</span>
+              <span>·</span>
+              <span>오늘 탐지 <strong className="text-slate-800">{activeCam.todayDetections}건</strong></span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 우: ROI 목록 */}
+      <div className="lg:col-span-3 glass-panel p-5">
+        <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-200/70">
+          <h2 className="text-sm font-bold text-slate-700">ROI 구역 관리</h2>
+          <button onClick={openNew} className="glass-btn-brand px-3 py-1.5 rounded-xl text-xs gap-1.5 flex items-center">
+            <Plus className="w-3.5 h-3.5" />새 구역 추가
+          </button>
+        </div>
+
+        {rois.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 text-sm">ROI 구역이 없습니다. 새 구역을 추가하세요.</div>
+        ) : (
+          <div className="space-y-2">
+            {rois.map((roi) => (
+              <div key={roi.id} className={`p-3 rounded-xl border transition ${roi.isActive ? 'bg-slate-50/80 border-slate-200/80' : 'bg-slate-100/40 border-slate-200/40 opacity-60'}`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${roi.isActive ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                  <span className="text-sm font-semibold text-slate-800">{roi.name}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${roi.zoneType === 'trigger' ? 'bg-[#2c4be0]/8 text-[#2c4be0] border-[#2c4be0]/25' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                    {roi.zoneType === 'trigger' ? '안내 구역' : '제외 구역'}
+                  </span>
+                  <span className="text-[10px] text-slate-400">우선순위 {roi.priority}</span>
+                  {roi.audioFile && <span className="text-[10px] text-slate-400 italic">{roi.audioFile}</span>}
+                  <div className="flex gap-1.5 ml-auto">
+                    <button onClick={() => toggleActive(roi.id)}
+                      className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold transition ${roi.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                      {roi.isActive ? '활성' : '비활성'}
+                    </button>
+                    <button onClick={() => openEdit(roi)} className="glass-btn p-1.5 rounded-lg">
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                {roi.announcementText && <p className="text-xs text-slate-500 mt-1.5 ml-4">"{roi.announcementText}"</p>}
+
+                {editingId === roi.id && (
+                  <div className="mt-3 pt-3 border-t border-slate-200/70 grid grid-cols-2 gap-3">
+                    <div className="col-span-2"><label className={labelCls}>이름</label><input className={inputCls} value={form.name ?? ''} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} /></div>
+                    <div>
+                      <label className={labelCls}>구역 유형</label>
+                      <div className="flex gap-1.5">
+                        {(['trigger', 'exclude'] as const).map(t => (
+                          <button key={t} onClick={() => setForm(p => ({ ...p, zoneType: t }))}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition ${form.zoneType === t ? (t === 'trigger' ? 'bg-[#2c4be0] text-white' : 'bg-slate-700 text-white') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                            {t === 'trigger' ? '안내 구역' : '제외 구역'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div><label className={labelCls}>우선순위</label><input type="number" min={0} max={10} className={inputCls} value={form.priority ?? 1} onChange={e => setForm(p => ({ ...p, priority: Number(e.target.value) }))} /></div>
+                    <div className="col-span-2"><label className={labelCls}>오디오 파일</label>
+                      <select className={inputCls} value={form.audioFile ?? ''} onChange={e => setForm(p => ({ ...p, audioFile: e.target.value }))}>
+                        <option value="">— 없음 —</option>
+                        {MOCK_AUDIO_FILES.map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-2"><label className={labelCls}>안내 텍스트</label><textarea rows={2} className={`${inputCls} resize-none`} value={form.announcementText ?? ''} onChange={e => setForm(p => ({ ...p, announcementText: e.target.value }))} /></div>
+                    <div className="col-span-2 flex items-center gap-2 text-xs">
+                      <input type="checkbox" id={`active-${roi.id}`} checked={form.isActive ?? true} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="accent-[#2c4be0]" />
+                      <label htmlFor={`active-${roi.id}`} className="font-medium text-slate-700 cursor-pointer">활성화</label>
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                      <button onClick={closeForm} className="glass-btn px-4 py-1.5 rounded-xl text-xs">취소</button>
+                      <button onClick={saveForm} className="bg-[#2c4be0] text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] transition">저장</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {editingId === 'new' && (
+          <div className="mt-4 glass-panel-subtle p-4">
+            <p className="text-xs font-bold text-slate-700 mb-3">새 ROI 구역</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2"><label className={labelCls}>이름</label><input className={inputCls} value={form.name ?? ''} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="구역 이름" /></div>
+              <div>
+                <label className={labelCls}>구역 유형</label>
+                <div className="flex gap-1.5">
+                  {(['trigger', 'exclude'] as const).map(t => (
+                    <button key={t} onClick={() => setForm(p => ({ ...p, zoneType: t }))}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition ${form.zoneType === t ? (t === 'trigger' ? 'bg-[#2c4be0] text-white' : 'bg-slate-700 text-white') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                      {t === 'trigger' ? '안내 구역' : '제외 구역'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div><label className={labelCls}>우선순위</label><input type="number" min={1} max={10} className={inputCls} value={form.priority ?? 1} onChange={e => setForm(p => ({ ...p, priority: Number(e.target.value) }))} /></div>
+              <div className="col-span-2"><label className={labelCls}>오디오 파일</label>
+                <select className={inputCls} value={form.audioFile ?? ''} onChange={e => setForm(p => ({ ...p, audioFile: e.target.value }))}>
+                  <option value="">— 없음 —</option>
+                  {MOCK_AUDIO_FILES.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2"><label className={labelCls}>안내 텍스트</label><textarea rows={2} className={`${inputCls} resize-none`} value={form.announcementText ?? ''} onChange={e => setForm(p => ({ ...p, announcementText: e.target.value }))} /></div>
+              <div className="col-span-2 flex justify-end gap-2">
+                <button onClick={closeForm} className="glass-btn px-4 py-1.5 rounded-xl text-xs">취소</button>
+                <button onClick={saveForm} className="bg-[#2c4be0] text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] transition">추가</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
