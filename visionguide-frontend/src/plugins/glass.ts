@@ -199,12 +199,5 @@ export default plugin(function ({ addComponents }) {
       zIndex: '0',
     },
 
-    '.stream-scanlines': {
-      background: [
-        'linear-gradient(rgba(15, 23, 42, 0.02) 50%, rgba(15, 23, 42, 0.25) 50%)',
-        'linear-gradient(90deg, rgba(44, 75, 224, 0.03), rgba(16, 185, 129, 0.02), rgba(44, 75, 224, 0.03))',
-      ].join(', '),
-      backgroundSize: '100% 3px, 6px 100%',
-    },
   })
 })

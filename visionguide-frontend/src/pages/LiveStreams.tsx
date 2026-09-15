@@ -57,12 +57,6 @@ function StreamCell({ item }: { item: StreamItem }) {
         draggable={false}
       />
 
-      {/* 다크 오버레이 */}
-      <div className="absolute inset-0 bg-slate-900/30" />
-
-      {/* 스캔라인 */}
-      <div className="absolute inset-0 stream-scanlines opacity-35" />
-
       {/* 상단 그라데이션 바 */}
       <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
         style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.70), transparent)' }}>

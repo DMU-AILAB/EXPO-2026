@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ChevronLeft, Activity, Thermometer, Clock, Wifi, Camera, Video,
-  MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle,
+  MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle, CalendarClock, Trash2,
 } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
 import { mockDevices, mockEvents, MOCK_AUDIO_FILES } from '../data/mockData'
@@ -285,11 +285,37 @@ function RoiTab({ device }: { device: Device }) {
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
 type CamForm = { resolution: string; fps: number; modelVariant: string; rotation: number; requirePerson: boolean }
 
+type ScheduleEntry = { id: number; days: number[]; hour: number; enabled: boolean }
+const DAY_LABELS = ['일', '월', '화', '수', '목', '금', '토']
+
 function SettingsTab({ device }: { device: Device }) {
   const [selectedCam, setSelectedCam] = useState(0)
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reboot' | null>(null)
   const [actionDone, setActionDone] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  // 예약 재부팅
+  const [schedules, setSchedules] = useState<ScheduleEntry[]>([
+    { id: 1, days: [1], hour: 3, enabled: true },
+  ])
+  const [newDays, setNewDays] = useState<number[]>([])
+  const [newHour, setNewHour] = useState(3)
+  const [scheduleSaved, setScheduleSaved] = useState(false)
+
+  const toggleDay = (d: number) =>
+    setNewDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort())
+
+  const addSchedule = () => {
+    if (newDays.length === 0) return
+    const id = Math.max(0, ...schedules.map(s => s.id)) + 1
+    setSchedules(prev => [...prev, { id, days: newDays, hour: newHour, enabled: true }])
+    setNewDays([]); setNewHour(3)
+    setScheduleSaved(true); setTimeout(() => setScheduleSaved(false), 2000)
+  }
+
+  const removeSchedule = (id: number) => setSchedules(prev => prev.filter(s => s.id !== id))
+  const toggleSchedule = (id: number) =>
+    setSchedules(prev => prev.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s))
 
   const initForms = (): Record<number, CamForm> =>
     Object.fromEntries(device.cameras.map(c => [c.id, { resolution: c.resolution, fps: c.fps, modelVariant: 'v5b_ft320', rotation: 0, requirePerson: false }]))
@@ -314,7 +340,7 @@ function SettingsTab({ device }: { device: Device }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Camera settings */}
-      <div className="lg:col-span-2 glass-panel p-5">
+      <div className="lg:col-span-2 glass-panel p-5 self-start">
         <h2 className="text-sm font-bold text-slate-700 mb-4 pb-3 border-b border-slate-200/70">카메라 설정</h2>
         {device.cameras.length === 0 ? (
           <p className="text-xs text-slate-400 text-center py-8">오프라인 상태 — 카메라 없음</p>
@@ -371,7 +397,8 @@ function SettingsTab({ device }: { device: Device }) {
         )}
       </div>
 
-      {/* Restart / Power */}
+      {/* Restart / Power + 예약 재부팅 */}
+      <div className="flex flex-col gap-5">
       <div className="glass-panel p-5">
         <h2 className="text-sm font-bold text-slate-700 mb-4 pb-3 border-b border-slate-200/70">재시작 / 전원</h2>
         <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-50/80 border border-slate-200/60 mb-4">
@@ -433,6 +460,75 @@ function SettingsTab({ device }: { device: Device }) {
             <CheckCircle className="w-3.5 h-3.5" />명령이 전송되었습니다 (목 동작)
           </div>
         )}
+      </div>
+
+      {/* 예약 재부팅 */}
+      <div className="glass-panel p-5">
+        <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-200/70">
+          <CalendarClock className="w-4 h-4 text-[#2c4be0]" />
+          <h2 className="text-sm font-bold text-slate-700">예약 재부팅</h2>
+        </div>
+
+        {/* 기존 스케줄 목록 */}
+        <div className="space-y-2 mb-4">
+          {schedules.length === 0 && (
+            <p className="text-xs text-slate-400 text-center py-3">등록된 예약 없음</p>
+          )}
+          {schedules.map(s => (
+            <div key={s.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition ${s.enabled ? 'bg-slate-50/80 border-slate-200/80' : 'bg-slate-100/40 border-slate-200/40 opacity-50'}`}>
+              <span className="font-mono font-bold text-slate-800 w-10 text-center">{String(s.hour).padStart(2, '0')}:00</span>
+              <div className="flex gap-0.5 flex-1">
+                {DAY_LABELS.map((label, idx) => (
+                  <span key={idx} className={`w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${s.days.includes(idx) ? 'bg-[#2c4be0] text-white' : 'text-slate-300'}`}>{label}</span>
+                ))}
+              </div>
+              <button onClick={() => toggleSchedule(s.id)}
+                className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold transition ${s.enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                {s.enabled ? '활성' : '비활성'}
+              </button>
+              <button onClick={() => removeSchedule(s.id)} className="glass-btn p-1 rounded-lg text-red-400 hover:text-red-600 hover:border-red-200">
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* 새 스케줄 추가 */}
+        <div className="pt-3 border-t border-slate-200/70">
+          <p className="text-[11px] font-bold text-slate-500 mb-2">새 예약 추가</p>
+          <div className="mb-2">
+            <p className="text-[10px] text-slate-400 mb-1.5">요일 선택</p>
+            <div className="flex gap-1">
+              {DAY_LABELS.map((label, idx) => (
+                <button key={idx} onClick={() => toggleDay(idx)}
+                  className={`w-7 h-7 rounded-lg text-[11px] font-bold transition ${newDays.includes(idx) ? 'bg-[#2c4be0] text-white shadow-sm shadow-[#2c4be0]/25' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mb-3">
+            <p className="text-[10px] text-slate-400 mb-1.5">시각</p>
+            <select value={newHour} onChange={e => setNewHour(Number(e.target.value))}
+              className="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2c4be0] focus:ring-2 focus:ring-[#2c4be0]/10 transition font-mono">
+              {Array.from({ length: 24 }, (_, i) => (
+                <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            {scheduleSaved && (
+              <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 mr-auto">
+                <CheckCircle className="w-3 h-3" />저장됨
+              </span>
+            )}
+            <button onClick={addSchedule} disabled={newDays.length === 0}
+              className="ml-auto bg-[#2c4be0] text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] transition disabled:opacity-40 disabled:cursor-not-allowed">
+              추가
+            </button>
+          </div>
+        </div>
+      </div>
       </div>
     </div>
   )
