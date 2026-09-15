@@ -27,6 +27,7 @@ export interface Device {
   todayDetections: number
   npuMs: number
   lastSeen: string
+  rois?: Roi[]
 }
 
 export interface DetectionEvent {
@@ -35,4 +36,14 @@ export interface DetectionEvent {
   roi: string
   confidence: number
   deviceId: string
+}
+
+export interface Roi {
+  id: number
+  name: string
+  zoneType: 'trigger' | 'exclude'
+  priority: number
+  announcementText: string
+  audioFile: string
+  isActive: boolean
 }

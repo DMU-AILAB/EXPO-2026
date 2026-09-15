@@ -1,4 +1,12 @@
-import type { Device, DetectionEvent } from '../types'
+import type { Device, DetectionEvent, Roi } from '../types'
+
+export const MOCK_AUDIO_FILES = [
+  'entrance.mp3', 'crosswalk.mp3', 'warning.mp3',
+  'stairs.mp3', 'elevator.mp3', 'braille_block.mp3',
+]
+
+const R = (id: number, name: string, zoneType: Roi['zoneType'], priority: number, announcementText: string, audioFile: string, isActive = true): Roi =>
+  ({ id, name, zoneType, priority, announcementText, audioFile, isActive })
 
 export const mockDevices: Device[] = [
   {
@@ -20,6 +28,11 @@ export const mockDevices: Device[] = [
     todayDetections: 12,
     npuMs: 22,
     lastSeen: '방금 전',
+    rois: [
+      R(1, '입구 정면', 'trigger', 1, '입구 전방입니다. 주의하세요.', 'entrance.mp3'),
+      R(2, '우측 통로', 'trigger', 2, '우측 통로로 이어집니다.', 'crosswalk.mp3'),
+      R(3, '기둥 제외구역', 'exclude', 0, '', '', false),
+    ],
   },
   {
     id: 'cam-gate-02',
@@ -40,6 +53,11 @@ export const mockDevices: Device[] = [
     todayDetections: 38,
     npuMs: 19,
     lastSeen: '방금 전',
+    rois: [
+      R(1, '복도 A', 'trigger', 1, '복도 A 구역입니다.', 'crosswalk.mp3'),
+      R(2, '게이트 1', 'trigger', 2, '개찰구 전방입니다.', 'entrance.mp3'),
+      R(3, '게이트 2', 'trigger', 3, '개찰구 우측입니다.', 'entrance.mp3'),
+    ],
   },
   {
     id: 'cam-platform-03',
@@ -56,6 +74,7 @@ export const mockDevices: Device[] = [
     todayDetections: 0,
     npuMs: 0,
     lastSeen: '14:28 연결 끊김',
+    rois: [],
   },
   {
     id: 'cam-braille-01',
@@ -84,6 +103,12 @@ export const mockDevices: Device[] = [
     todayDetections: 64,
     npuMs: 31,
     lastSeen: '방금 전',
+    rois: [
+      R(1, '점자블록 1구간', 'trigger', 1, '점자블록 구역입니다. 안전하게 이동하세요.', 'braille_block.mp3'),
+      R(2, '점자블록 2구간', 'trigger', 2, '전방 점자블록 끝입니다.', 'warning.mp3'),
+      R(3, '장애물 제외구역', 'exclude', 0, '', '', true),
+      R(4, '우회 안내', 'trigger', 3, '우회 경로로 안내합니다.', 'crosswalk.mp3', false),
+    ],
   },
   {
     id: 'cam-escalator-up',
@@ -102,6 +127,10 @@ export const mockDevices: Device[] = [
     todayDetections: 21,
     npuMs: 21,
     lastSeen: '방금 전',
+    rois: [
+      R(1, '에스컬레이터 진입', 'trigger', 1, '에스컬레이터 탑승 구역입니다.', 'stairs.mp3'),
+      R(2, '안전선 제외구역', 'exclude', 0, '', ''),
+    ],
   },
   {
     id: 'cam-elevator-hall',
@@ -120,6 +149,11 @@ export const mockDevices: Device[] = [
     todayDetections: 15,
     npuMs: 24,
     lastSeen: '방금 전',
+    rois: [
+      R(1, '엘리베이터 전면', 'trigger', 1, '엘리베이터 전방입니다. 문이 열립니다.', 'elevator.mp3'),
+      R(2, '대기 구역', 'trigger', 2, '엘리베이터 대기 구역입니다.', 'warning.mp3'),
+      R(3, '통로 제외구역', 'exclude', 0, '', ''),
+    ],
   },
 ]
 
