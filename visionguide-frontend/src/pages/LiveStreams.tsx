@@ -1,5 +1,14 @@
 import { useState } from 'react'
-import { Maximize2, Camera, Unlink, Volume2, AlertTriangle } from 'lucide-react'
+import { Maximize2, Camera, Unlink, AlertTriangle } from 'lucide-react'
+
+const STREAM_IMAGES = [
+  '/streams/entrance.jpg',
+  '/streams/hall.jpg',
+  '/streams/street.jpg',
+  '/streams/campus.jpg',
+  '/streams/night.jpg',
+  '/streams/elevator.jpg',
+]
 import { mockDevices } from '../data/mockData'
 import type { Device, Camera as CameraType } from '../types'
 
@@ -15,14 +24,14 @@ const LAYOUTS = [
   { label: '4×4', cols: 4 },
 ] as const
 
-function StreamCell({ item, fullHeight }: { item: StreamItem; fullHeight?: boolean }) {
+function StreamCell({ item }: { item: StreamItem }) {
   const { device, camera } = item
   const isOffline = device.status === 'offline'
   const hasAlert = !!camera.currentAlert
 
   if (isOffline) {
     return (
-      <div className="relative bg-black/90 rounded-xl overflow-hidden border border-slate-800 flex flex-col items-center justify-center" style={{ minHeight: fullHeight ? '100%' : 240 }}>
+      <div className="relative bg-black/90 rounded-xl overflow-hidden border border-slate-800 flex flex-col items-center justify-center aspect-video">
         <div className="w-12 h-12 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mb-2">
           <Unlink className="w-5 h-5" />
         </div>
@@ -32,71 +41,56 @@ function StreamCell({ item, fullHeight }: { item: StreamItem; fullHeight?: boole
     )
   }
 
+  const imgSrc = STREAM_IMAGES[(camera.imageIndex ?? camera.id) % STREAM_IMAGES.length]
+
   return (
-    <div
-      className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800/60 group"
-      style={{ minHeight: fullHeight ? '100%' : 240 }}
-    >
-      {/* Scanlines bg */}
-      <div className="absolute inset-0 stream-scanlines opacity-60" />
+    <div className={`relative rounded-xl overflow-hidden group aspect-video transition-all duration-500 ${
+      hasAlert
+        ? 'border border-amber-500/60 shadow-[0_0_16px_rgba(245,158,11,0.18)]'
+        : 'border border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.16)]'
+    }`}>
+      {/* 실사 배경 이미지 */}
+      <img
+        src={imgSrc}
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover"
+        draggable={false}
+      />
 
-      {/* SVG detection overlay */}
-      <svg className="absolute inset-0 w-full h-full opacity-60 pointer-events-none" fill="none" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice">
-        <line stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" x1="0" y1="180" x2="160" y2="80" />
-        <line stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" x1="320" y1="180" x2="160" y2="80" />
-        {hasAlert ? (
-          <>
-            <polygon points="100,180 140,80 180,80 220,180" fill="rgba(245,158,11,0.2)" stroke="#f59e0b" strokeWidth="1.4" />
-            <text x="130" y="72" fill="#fcd34d" fontFamily="monospace" fontSize="8" fontWeight="bold">OBSTACLE</text>
-          </>
-        ) : (
-          <>
-            <rect x="140" y="70" width="70" height="85" rx="3" fill="rgba(96,165,250,0.15)" stroke="#60a5fa" strokeDasharray="4 2" strokeWidth="1.8" />
-            <line stroke="#ffffff" strokeLinecap="round" strokeWidth="2" x1="150" y1="145" x2="195" y2="90" />
-            <text x="142" y="66" fill="#93c5fd" fontFamily="monospace" fontSize="7.5" fontWeight="bold">CANE 96%</text>
-          </>
-        )}
-      </svg>
+      {/* 다크 오버레이 */}
+      <div className="absolute inset-0 bg-slate-900/30" />
 
-      {/* Top overlay */}
+      {/* 스캔라인 */}
+      <div className="absolute inset-0 stream-scanlines opacity-35" />
+
+      {/* 상단 그라데이션 바 */}
       <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
-        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.75), transparent)' }}>
+        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.70), transparent)' }}>
         <span className="text-[10.5px] font-bold text-white">{device.name}</span>
-        <span className="text-[10px] font-mono text-slate-300 bg-black/40 px-1.5 py-0.5 rounded">
-          카메라 {camera.id}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-[10px] font-bold text-white/90 tracking-wider">LIVE</span>
+        </div>
       </div>
 
-      {/* Center icon */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm border border-white/25 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-[#2c4be0] transition-all">
+      {/* 중앙 카메라 아이콘 */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center text-white group-hover:bg-[#2c4be0] transition-colors">
           <Camera className="w-4 h-4" />
         </div>
       </div>
 
-      {/* Bottom overlay */}
-      <div
-        className={`absolute bottom-0 left-0 right-0 px-3 py-2 flex items-center justify-between text-[10px] ${hasAlert ? 'text-amber-300' : 'text-slate-200'}`}
-        style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)' }}
-      >
-        <span className="flex items-center gap-1.5 font-medium">
-          {hasAlert ? (
-            <><AlertTriangle className="w-3 h-3 text-amber-400" />{camera.currentAlert}</>
-          ) : (
-            <><Volume2 className="w-3 h-3 text-emerald-400" />음성유도 대기</>
-          )}
-        </span>
-        <span className="flex items-center gap-2 font-mono">
-          <span className="text-slate-400">{camera.fps} FPS</span>
-          <span className="flex items-center gap-1 text-emerald-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            탐지 중
-          </span>
-        </span>
-      </div>
+      {/* 경고 바 */}
+      {hasAlert && (
+        <div className="absolute bottom-0 left-0 right-0 px-3 py-2 flex items-center gap-1.5 text-[10px] text-amber-300"
+          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.80), transparent)' }}>
+          <AlertTriangle className="w-3 h-3 text-amber-400 flex-shrink-0" />
+          {camera.currentAlert}
+        </div>
+      )}
 
-      {/* Hover glow border */}
-      <div className="absolute inset-0 rounded-xl border-2 border-[#2c4be0] opacity-0 group-hover:opacity-80 transition-opacity pointer-events-none" />
+      {/* 호버 테두리 */}
+      <div className="absolute inset-0 rounded-xl border-2 border-[#2c4be0] opacity-0 group-hover:opacity-70 transition-opacity pointer-events-none" />
     </div>
   )
 }
@@ -118,14 +112,14 @@ export default function LiveStreams() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4 pb-5 border-b border-slate-200/60">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900">실시간 스트림</h1>
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-700">
+          <span className="glass-badge gap-1.5 px-3 py-1 rounded-full bg-emerald-50/80 border border-emerald-200/70 text-xs font-bold text-emerald-700">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             {activeCount}개 스트림 활성
           </span>
         </div>
         <div className="flex items-center gap-3">
           {/* Layout toggle */}
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-200/50 border border-white/80">
+          <div className="glass-toggle flex items-center gap-1 p-1 rounded-xl">
             {LAYOUTS.map((l) => (
               <button
                 key={l.label}
@@ -140,7 +134,7 @@ export default function LiveStreams() {
               </button>
             ))}
           </div>
-          <button className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center gap-1.5 shadow-sm">
+          <button className="glass-btn px-3 py-1.5 rounded-xl text-xs gap-1.5">
             <Maximize2 className="w-3.5 h-3.5" />
             전체화면
           </button>

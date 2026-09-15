@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import glassPlugin from './src/plugins/glass'
 
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
@@ -38,5 +39,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [glassPlugin],
 } satisfies Config

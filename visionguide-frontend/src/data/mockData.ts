@@ -13,8 +13,9 @@ export const mockDevices: Device[] = [
     uptime: '3일 14시간',
     latency: 12,
     cameras: [
-      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 3, todayDetections: 12, isStreaming: true },
-      { id: 1, port: 8081, resolution: '640×480', fps: 15, roiCount: 2, todayDetections: 8, isStreaming: true },
+      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 3, todayDetections: 12, isStreaming: true, imageIndex: 0 },
+      { id: 1, port: 8081, resolution: '640×480', fps: 15, roiCount: 2, todayDetections: 8, isStreaming: true, imageIndex: 1 },
+
     ],
     todayDetections: 12,
     npuMs: 22,
@@ -32,8 +33,9 @@ export const mockDevices: Device[] = [
     uptime: '2일 6시간',
     latency: 8,
     cameras: [
-      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 2, todayDetections: 38, isStreaming: true },
-      { id: 1, port: 8081, resolution: '640×480', fps: 15, roiCount: 1, todayDetections: 22, isStreaming: true },
+      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 2, todayDetections: 38, isStreaming: true, imageIndex: 2 },
+      { id: 1, port: 8081, resolution: '640×480', fps: 15, roiCount: 1, todayDetections: 22, isStreaming: true, imageIndex: 2 },
+
     ],
     todayDetections: 38,
     npuMs: 19,
@@ -76,6 +78,7 @@ export const mockDevices: Device[] = [
         todayDetections: 64,
         isStreaming: true,
         currentAlert: '전방 1.5m 장애물 우회 안내',
+        imageIndex: 3,
       },
     ],
     todayDetections: 64,
@@ -94,7 +97,7 @@ export const mockDevices: Device[] = [
     uptime: '5일 2시간',
     latency: 9,
     cameras: [
-      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 2, todayDetections: 21, isStreaming: true },
+      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 2, todayDetections: 21, isStreaming: true, imageIndex: 4 },
     ],
     todayDetections: 21,
     npuMs: 21,
@@ -112,7 +115,7 @@ export const mockDevices: Device[] = [
     uptime: '4일 18시간',
     latency: 11,
     cameras: [
-      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 3, todayDetections: 15, isStreaming: true },
+      { id: 0, port: 8080, resolution: '640×480', fps: 15, roiCount: 3, todayDetections: 15, isStreaming: true, imageIndex: 5 },
     ],
     todayDetections: 15,
     npuMs: 24,

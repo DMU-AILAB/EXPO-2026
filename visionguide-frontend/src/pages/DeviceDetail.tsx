@@ -77,13 +77,13 @@ export default function DeviceDetail() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => alert('재시작 명령 전송 (목 동작)')}
-            className="px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition"
+            className="glass-btn px-4 py-2 rounded-xl text-xs"
           >
             재시작
           </button>
           <button
             onClick={() => window.open(`http://${device.ip}:5000`, '_blank')}
-            className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#2c4be0]/10 border border-[#2c4be0]/30 text-[#2c4be0] hover:bg-[#2c4be0]/15 shadow-sm transition"
+            className="glass-btn-brand px-4 py-2 rounded-xl text-xs"
           >
             ROI 편집
           </button>
@@ -180,25 +180,25 @@ export default function DeviceDetail() {
                         <Camera className="w-3.5 h-3.5 text-[#2c4be0]" />
                         카메라 {cam.id}
                       </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className="glass-badge px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50/80 text-emerald-700 border border-emerald-200/70">
                         스트리밍 중
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-500 font-mono mb-2">
-                      {cam.resolution} · {cam.fps} FPS · 포트 {cam.port}
+                    <p className="text-[11px] text-slate-500 mb-2">
+                      {cam.resolution} · {cam.fps}fps
                     </p>
                     <div className="flex items-center justify-between text-[11px] text-slate-500">
                       <span>ROI {cam.roiCount}개 · 오늘 탐지 {cam.todayDetections}회</span>
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => window.open(`http://${device.ip}:${cam.port}/stream.mjpg`, '_blank')}
-                          className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-600 hover:bg-white transition"
+                          className="glass-btn text-[10px] px-2 py-0.5 rounded-md"
                         >
                           스트림
                         </button>
                         <button
                           onClick={() => window.open(`http://${device.ip}:5000`, '_blank')}
-                          className="text-[10px] px-2 py-0.5 rounded-md bg-[#2c4be0]/10 border border-[#2c4be0]/25 text-[#2c4be0] hover:bg-[#2c4be0]/15 transition"
+                          className="glass-btn-brand text-[10px] px-2 py-0.5 rounded-md"
                         >
                           ROI 편집
                         </button>
@@ -251,7 +251,7 @@ export default function DeviceDetail() {
                         <td className="py-2.5 pr-4 text-slate-600">{ev.camera}</td>
                         <td className="py-2.5 pr-4 text-slate-600">{ev.roi}</td>
                         <td className="py-2.5 text-right">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span className="glass-badge px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50/80 text-emerald-700 border border-emerald-200/70">
                             {ev.confidence.toFixed(2)}
                           </span>
                         </td>

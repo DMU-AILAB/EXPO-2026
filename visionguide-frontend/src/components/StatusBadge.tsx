@@ -10,29 +10,29 @@ const config: Record<DeviceStatus, { dot: string; text: string; bg: string; bord
   online: {
     dot: 'bg-emerald-500',
     text: 'text-emerald-700',
-    bg: 'bg-emerald-50',
-    border: 'border-emerald-200',
+    bg: 'bg-emerald-400/20',
+    border: 'border-emerald-300/50',
     label: '온라인',
   },
   warning: {
     dot: 'bg-amber-500',
     text: 'text-amber-700',
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
+    bg: 'bg-amber-400/20',
+    border: 'border-amber-300/50',
     label: '주의',
   },
   offline: {
     dot: 'bg-red-500',
-    text: 'text-red-700',
-    bg: 'bg-red-100',
-    border: 'border-red-300',
+    text: 'text-red-600',
+    bg: 'bg-red-400/20',
+    border: 'border-red-300/50',
     label: '오프라인',
   },
   unknown: {
     dot: 'bg-slate-400',
     text: 'text-slate-500',
-    bg: 'bg-slate-100',
-    border: 'border-slate-200',
+    bg: 'bg-slate-400/15',
+    border: 'border-slate-300/50',
     label: '알 수 없음',
   },
 }
@@ -43,7 +43,7 @@ export default function StatusBadge({ status, pulse = false, size = 'md' }: Stat
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full font-bold shadow-xs ${sizeClass} ${c.text} ${c.bg} border ${c.border}`}
+      className={`glass-badge gap-1.5 rounded-full font-bold shadow-xs ${sizeClass} ${c.text} ${c.bg} border ${c.border}`}
     >
       <span className={`w-1.5 h-1.5 rounded-full ${c.dot} ${pulse && status !== 'offline' ? 'animate-pulse' : ''}`} />
       {c.label}

@@ -9,6 +9,7 @@ export interface Camera {
   todayDetections: number
   isStreaming: boolean
   currentAlert?: string
+  imageIndex?: number
 }
 
 export interface Device {

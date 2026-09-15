@@ -30,21 +30,9 @@ export default function Header() {
               <Scan className="w-5 h-5 text-[#2c4be0]" strokeWidth={2.4} />
             </div>
           </div>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <span className="font-bold text-[18px] tracking-tight text-[#0f172a] flex items-center gap-2">
-                VisionGuide
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-[#2c4be0]/10 text-[#2c4be0] border border-[#2c4be0]/25">
-                  CANE-AI NET
-                </span>
-              </span>
-            </div>
-            <p className="text-[11.5px] font-medium text-slate-500 tracking-tight flex items-center gap-1.5">
-              <span className="text-slate-700 font-semibold">서울역 통합관제센터</span>
-              <span className="text-slate-300">•</span>
-              <span>라즈베리파이 5 엣지 클러스터</span>
-            </p>
-          </div>
+          <span className="font-bold text-[18px] tracking-tight text-[#0f172a]">
+            VisionGuide
+          </span>
         </div>
 
         {/* Navigation */}
@@ -80,7 +68,7 @@ export default function Header() {
         {/* Right actions */}
         <div className="flex items-center gap-3.5">
           {/* Online status */}
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 shadow-sm shadow-emerald-500/5">
+          <div className="glass-badge gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-200/70 shadow-sm shadow-emerald-500/5">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600" />
@@ -91,7 +79,7 @@ export default function Header() {
           </div>
 
           {/* Notification bell */}
-          <button className="w-10 h-10 rounded-2xl bg-white/90 border border-slate-200/80 shadow-sm flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-white transition relative">
+          <button className="glass-btn w-10 h-10 rounded-2xl justify-center relative">
             <Bell className="w-4 h-4" strokeWidth={2} />
             <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white" />
           </button>
