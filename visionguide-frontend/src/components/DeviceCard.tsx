@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Device } from '../types'
 import StatusBadge from './StatusBadge'
@@ -9,8 +10,10 @@ interface DeviceCardProps {
 
 export default function DeviceCard({ device }: DeviceCardProps) {
   const navigate = useNavigate()
-  const primaryCamera = device.cameras[0]
+  const [selectedCam, setSelectedCam] = useState(0)
   const isOffline = device.status === 'offline'
+  const activeCamera = device.cameras[selectedCam]
+  const multiCam = device.cameras.length > 1
 
   return (
     <div
@@ -43,9 +46,27 @@ export default function DeviceCard({ device }: DeviceCardProps) {
         </p>
 
         {/* Stream Thumbnail */}
-        <StreamThumbnail status={device.status} camera={primaryCamera} deviceName={device.name} />
-      </div>
+        <StreamThumbnail status={device.status} camera={activeCamera} deviceName={device.name} />
 
+        {/* Camera Toggle */}
+        {multiCam && (
+          <div className="flex items-center gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
+            {device.cameras.map((cam, idx) => (
+              <button
+                key={cam.id}
+                onClick={() => setSelectedCam(idx)}
+                className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                  selectedCam === idx
+                    ? 'bg-[#2c4be0] text-white shadow-sm shadow-[#2c4be0]/30'
+                    : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200/80 hover:text-slate-700'
+                }`}
+              >
+                CAM {cam.id}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
