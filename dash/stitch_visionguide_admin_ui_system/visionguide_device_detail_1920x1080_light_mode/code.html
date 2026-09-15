@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>VisionGuide — Device Detail (cam-entrance-01)</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net" rel="preconnect"/>
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet"/>
+<style>
+    * {
+      font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+    }
+    body {
+      background: linear-gradient(135deg, #f0f3fa 0%, #f7f9fd 50%, #edf1f9 100%);
+      color: #0f172a;
+      min-height: 100vh;
+      width: 100%;
+    }
+    .light-glass-panel {
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow: 0 14px 38px rgba(30, 45, 90, 0.06), 0 2px 6px rgba(0, 0, 0, 0.02);
+      border-radius: 20px;
+    }
+    .light-glass-header {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+    }
+    .light-inner-card {
+      background: rgba(248, 250, 253, 0.85);
+      border: 1px solid rgba(226, 232, 240, 0.9);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .light-inner-card:hover {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(44, 75, 224, 0.35);
+      box-shadow: 0 8px 24px rgba(44, 75, 224, 0.08);
+    }
+    .light-btn-ghost {
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(203, 213, 225, 0.7);
+      backdrop-filter: blur(10px);
+      transition: all 0.2s ease;
+      color: #334155;
+    }
+    .light-btn-ghost:hover {
+      background: #ffffff;
+      border-color: #94a3b8;
+      color: #0f172a;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    }
+    .light-btn-secondary {
+      background: rgba(44, 75, 224, 0.08);
+      border: 1px solid rgba(44, 75, 224, 0.25);
+      color: #2c4be0;
+      transition: all 0.2s ease;
+    }
+    .light-btn-secondary:hover {
+      background: rgba(44, 75, 224, 0.14);
+      border-color: rgba(44, 75, 224, 0.45);
+      box-shadow: 0 4px 14px rgba(44, 75, 224, 0.15);
+    }
+    .light-btn-primary {
+      background: linear-gradient(135deg, #2c4be0 0%, #1d3bbb 100%);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      box-shadow: 0 6px 20px rgba(44, 75, 224, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      transition: all 0.2s ease;
+      color: #ffffff;
+    }
+    .light-btn-primary:hover {
+      background: linear-gradient(135deg, #243fc4 0%, #173099 100%);
+      box-shadow: 0 8px 24px rgba(44, 75, 224, 0.45);
+    }
+    .badge-emerald-light {
+      background: #e8f8f0;
+      border: 1px solid #a7f3d0;
+      color: #047857;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.15);
+    }
+    .pulse-dot-green {
+      animation: pulseGreen 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+    }
+    @keyframes pulseGreen {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(1.25); }
+    }
+  </style>
+</head>
+<body class="selection:bg-blue-600 selection:text-white flex flex-col justify-between">
+<!-- Ambient Blurred Pastel Blobs for Glass Glow -->
+<div class="fixed top-0 left-1/4 w-[700px] h-[350px] bg-blue-300/30 blur-[130px] pointer-events-none -z-10 rounded-full"></div>
+<div class="fixed top-96 -left-20 w-[600px] h-[600px] bg-indigo-200/35 blur-[140px] pointer-events-none -z-10 rounded-full"></div>
+<div class="fixed bottom-0 right-10 w-[650px] h-[500px] bg-emerald-200/30 blur-[150px] pointer-events-none -z-10 rounded-full"></div>
+<!-- Global App Header (VisionGuide Light Glass Chrome) -->
+<header class="light-glass-header sticky top-0 z-40 px-10 py-3.5 flex items-center justify-between">
+<div class="flex items-center gap-7">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-blue-600/10 border border-blue-500/25 flex items-center justify-center text-[#2c4be0] shadow-sm">
+<i class="fa-solid fa-expand text-lg"></i>
+</div>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-bold tracking-tight text-slate-900 text-lg">VisionGuide</span>
+<span class="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-[#2c4be0] border border-blue-200 font-semibold uppercase">CANE-AI NET</span>
+</div>
+<p class="text-[11px] text-slate-500 font-normal">서울역 통합관제센터 · 라즈베리파이 5 엣지 클러스터</p>
+</div>
+</div>
+<!-- Nav Tabs -->
+<nav class="hidden md:flex items-center gap-1.5 ml-4 pl-6 border-l border-slate-200 text-xs font-medium">
+<a class="px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-2" href="#">
+<i class="fa-solid fa-table-cells-large text-xs text-slate-400"></i> Overview
+        </a>
+<a class="px-3.5 py-1.5 rounded-lg text-[#2c4be0] bg-blue-50 border border-blue-200/80 shadow-sm flex items-center gap-2 font-semibold" href="#">
+<i class="fa-solid fa-server text-xs text-[#2c4be0]"></i> Devices <span class="px-1.5 py-0.2 text-[10px] rounded-full bg-[#2c4be0] text-white font-medium">15</span>
+</a>
+<a class="px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-2" href="#">
+<i class="fa-solid fa-video text-xs text-slate-400"></i> Live Streams <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+</a>
+<a class="px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-2" href="#">
+<i class="fa-solid fa-chart-simple text-xs text-slate-400"></i> Statistics
+        </a>
+<a class="px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-2" href="#">
+<i class="fa-solid fa-sliders text-xs text-slate-400"></i> Settings
+        </a>
+</nav>
+</div>
+<!-- Header Actions -->
+<div class="flex items-center gap-4 text-xs">
+<div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 shadow-sm">
+<span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot-green"></span>
+<span class="font-medium text-[11px]">12 / 15 Online</span>
+</div>
+<button class="w-9 h-9 rounded-xl light-btn-ghost flex items-center justify-center text-slate-600 hover:text-slate-900 relative shadow-sm">
+<i class="fa-regular fa-bell text-sm"></i>
+<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-amber-500"></span>
+</button>
+<div class="flex items-center gap-2.5 pl-3 border-l border-slate-200">
+<div class="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-[#2c4be0] text-white flex items-center justify-center font-bold text-xs shadow-sm">
+          관제
+        </div>
+<div class="hidden lg:block text-left">
+<div class="text-[12px] font-semibold text-slate-800 leading-tight">Admin_Ops</div>
+<div class="text-[10px] text-slate-400 leading-tight">보행안전 통합팀</div>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Canvas for 1920x1080 Layout (Max Width 1820px, high density) -->
+<main class="w-full max-w-[1820px] mx-auto px-10 pt-6 pb-6 flex-1 flex flex-col justify-between">
+<!-- TOP BAR: Breadcrumb & Actions -->
+<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
+<!-- Left Info -->
+<div>
+<button class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-[#2c4be0] mb-1.5 transition">
+<i class="fa-solid fa-chevron-left text-[10px]"></i>
+<span>← 디바이스 목록</span>
+<span class="text-slate-300 font-normal">/</span>
+<span class="text-slate-400 font-normal">라즈베리파이 5 엣지 클러스터</span>
+</button>
+<div class="flex items-center gap-3.5">
+<h1 class="text-3xl font-extrabold tracking-tight text-slate-900">cam-entrance-01</h1>
+<!-- Online Pill -->
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full badge-emerald-light text-xs font-bold">
+<span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot-green"></span>
+<span>온라인</span>
+</div>
+<!-- Location Tag -->
+<span class="text-xs text-slate-600 bg-white/90 border border-slate-200 px-3 py-1 rounded-full shadow-sm flex items-center gap-1.5">
+<i class="fa-solid fa-location-dot text-[#2c4be0]"></i>
+            입구 캐노피 (1층 3번 게이트 방향)
+          </span>
+</div>
+</div>
+<!-- Right Actions -->
+<div class="flex items-center gap-3">
+<!-- Ghost Button -->
+<button class="light-btn-ghost px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
+<i class="fa-solid fa-arrow-rotate-right text-xs text-slate-500"></i>
+<span>재시작</span>
+</button>
+<!-- Frosted Secondary -->
+<button class="light-btn-secondary px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2">
+<i class="fa-solid fa-draw-polygon text-xs"></i>
+<span>ROI 편집</span>
+</button>
+<!-- Primary Vibrant Blue -->
+<button class="light-btn-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2">
+<i class="fa-solid fa-gear text-xs"></i>
+<span>설정</span>
+</button>
+</div>
+</div>
+<!-- TWO-COLUMN WORKSPACE (Left 38% / Right 62%) -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch flex-1">
+<!-- LEFT COLUMN (Approx 38% -> 5 cols of 12) -->
+<div class="lg:col-span-5 flex flex-col gap-6">
+<!-- CARD 1: 시스템 상태 -->
+<div class="light-glass-panel p-6 flex flex-col justify-between flex-1 relative overflow-hidden">
+<!-- Ambient light highlight inside card -->
+<div class="absolute -top-12 -right-12 w-40 h-40 bg-blue-100/70 rounded-full blur-2xl pointer-events-none"></div>
+<!-- Header -->
+<div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#2c4be0] shadow-sm">
+<i class="fa-solid fa-microchip text-base"></i>
+</div>
+<div>
+<h2 class="text-sm font-bold text-slate-900 tracking-tight">시스템 상태</h2>
+<p class="text-[11px] text-slate-500">Raspberry Pi 5 8GB · BCM2712 Quad Cortex-A76</p>
+</div>
+</div>
+<span class="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full shadow-xs">
+              HEALTHY
+            </span>
+</div>
+<!-- Gauge -->
+<div class="py-4 flex flex-col items-center justify-center relative">
+<div class="relative w-44 h-44 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 120 120">
+<!-- Light Glass Track -->
+<circle cx="60" cy="60" fill="transparent" r="48" stroke="#e2e8f0" stroke-width="9"></circle>
+<!-- Blue Glowing Progress Arc (43%) -->
+<circle cx="60" cy="60" fill="transparent" r="48" stroke="#2c4be0" stroke-dasharray="301.59" stroke-dashoffset="171.9" stroke-linecap="round" stroke-width="9" style="filter: drop-shadow(0 2px 10px rgba(44, 75, 224, 0.4));"></circle>
+</svg>
+<!-- Center Content -->
+<div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+<span class="text-[11px] font-semibold text-slate-400 tracking-wider uppercase">CPU 로드율</span>
+<span class="text-4xl font-extrabold text-slate-900 tracking-tight">43%</span>
+<span class="text-[11px] text-[#2c4be0] font-mono font-semibold mt-0.5">2.40 GHz</span>
+</div>
+</div>
+<p class="text-[11px] text-slate-500 mt-1.5 font-medium">Quad Core A76 · 엑티브 쿨러 팬 2,400 RPM</p>
+</div>
+<!-- Sub Stats -->
+<div class="space-y-3 pt-3 border-t border-slate-100 text-xs">
+<!-- Memory Bar -->
+<div>
+<div class="flex items-center justify-between text-[11px] mb-1.5">
+<span class="text-slate-600 font-medium flex items-center gap-1.5">
+<i class="fa-solid fa-memory text-slate-400"></i> 메모리 (LPDDR4X)
+                </span>
+<span class="font-mono text-slate-800 font-semibold">1.2GB <span class="text-slate-400 font-normal">/ 4GB</span> <span class="text-[#2c4be0] ml-1 font-bold">(30%)</span></span>
+</div>
+<div class="w-full h-2 rounded-full bg-slate-100 overflow-hidden p-[1px] border border-slate-200">
+<div class="h-full rounded-full bg-gradient-to-r from-blue-500 to-[#2c4be0] shadow-sm" style="width: 30%;"></div>
+</div>
+</div>
+<!-- Temperature -->
+<div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
+<div class="flex items-center gap-2.5">
+<div class="w-7 h-7 rounded-lg bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-700 shadow-xs">
+<i class="fa-solid fa-temperature-half text-xs"></i>
+</div>
+<div>
+<div class="text-[11px] text-slate-500">SoC 코어 온도</div>
+<div class="text-[10px] text-emerald-600 font-semibold">안전 임계치 이하 (&lt; 70°C)</div>
+</div>
+</div>
+<div class="text-right">
+<div class="text-sm font-bold text-emerald-600 font-mono">52°C</div>
+<div class="text-[10px] text-slate-400">Max 허용: 80°C</div>
+</div>
+</div>
+<!-- Uptime & Latency -->
+<div class="grid grid-cols-2 gap-3 pt-0.5">
+<div class="p-2.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
+<div class="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">
+<i class="fa-regular fa-clock text-slate-400"></i> 시스템 가동 시간
+                </div>
+<div class="text-xs font-bold text-slate-800 font-mono">3일 14시간</div>
+<div class="text-[10px] text-slate-400">부팅: 05-15 00:12</div>
+</div>
+<div class="p-2.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
+<div class="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">
+<i class="fa-solid fa-bolt text-amber-500"></i> 네트워크 지연시간
+                </div>
+<div class="text-xs font-bold text-emerald-600 font-mono">12ms</div>
+<div class="text-[10px] text-slate-400">MQTT 실시간 동기화</div>
+</div>
+</div>
+</div>
+</div>
+<!-- CARD 2: 카메라 목록 -->
+<div class="light-glass-panel p-6 flex flex-col justify-between relative overflow-hidden">
+<!-- Header -->
+<div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#2c4be0] shadow-sm">
+<i class="fa-solid fa-video text-base"></i>
+</div>
+<div>
+<h2 class="text-sm font-bold text-slate-900 tracking-tight">카메라 목록</h2>
+<p class="text-[11px] text-slate-500">연결된 파이 카메라 모듈 3 엣지 센서</p>
+</div>
+</div>
+<span class="text-xs text-slate-500 font-medium">총 2개 연결</span>
+</div>
+<!-- Camera List Items -->
+<div class="space-y-3 pt-3">
+<!-- Camera 0 -->
+<div class="light-inner-card rounded-2xl p-4">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2.5">
+<span class="font-bold text-sm text-slate-900">카메라 0</span>
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-700 shadow-xs">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot-green"></span>
+                    스트리밍 중
+                  </span>
+</div>
+<span class="text-[10px] font-mono font-bold text-[#2c4be0] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                  MAIN FEED
+                </span>
+</div>
+<div class="text-[11px] text-slate-500 font-mono mb-1 flex items-center gap-1.5">
+<i class="fa-solid fa-display text-[10px] text-slate-400"></i>
+<span>640×480 · 15 FPS · 포트 8080</span>
+</div>
+<div class="text-[11px] text-slate-600 mb-3 flex items-center gap-1.5">
+<i class="fa-solid fa-bullseye text-[10px] text-[#2c4be0]"></i>
+<span>ROI 3개 · 오늘 탐지 <strong class="text-slate-900 font-semibold">12회</strong></span>
+</div>
+<div class="flex items-center gap-2 pt-2 border-t border-slate-200/60">
+<button class="light-btn-ghost px-3 py-1.5 rounded-lg text-[11px] font-semibold flex-1 flex items-center justify-center gap-1.5 shadow-2xs">
+<i class="fa-solid fa-play text-[10px] text-[#2c4be0]"></i>
+<span>스트림 보기</span>
+</button>
+<button class="light-btn-ghost px-3 py-1.5 rounded-lg text-[11px] font-semibold flex-1 flex items-center justify-center gap-1.5 shadow-2xs">
+<i class="fa-solid fa-draw-polygon text-[10px] text-indigo-500"></i>
+<span>ROI 편집</span>
+</button>
+</div>
+</div>
+<!-- Camera 1 -->
+<div class="light-inner-card rounded-2xl p-4">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2.5">
+<span class="font-bold text-sm text-slate-900">카메라 1</span>
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-700 shadow-xs">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot-green"></span>
+                    스트리밍 중
+                  </span>
+</div>
+<span class="text-[10px] font-mono text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+                  AUX FEED
+                </span>
+</div>
+<div class="text-[11px] text-slate-500 font-mono mb-1 flex items-center gap-1.5">
+<i class="fa-solid fa-display text-[10px] text-slate-400"></i>
+<span>640×480 · 15 FPS · 포트 8081</span>
+</div>
+<div class="text-[11px] text-slate-600 mb-3 flex items-center gap-1.5">
+<i class="fa-solid fa-bullseye text-[10px] text-[#2c4be0]"></i>
+<span>ROI 2개 · 오늘 탐지 <strong class="text-slate-900 font-semibold">9회</strong></span>
+</div>
+<div class="flex items-center gap-2 pt-2 border-t border-slate-200/60">
+<button class="light-btn-ghost px-3 py-1.5 rounded-lg text-[11px] font-semibold flex-1 flex items-center justify-center gap-1.5 shadow-2xs">
+<i class="fa-solid fa-play text-[10px] text-[#2c4be0]"></i>
+<span>스트림 보기</span>
+</button>
+<button class="light-btn-ghost px-3 py-1.5 rounded-lg text-[11px] font-semibold flex-1 flex items-center justify-center gap-1.5 shadow-2xs">
+<i class="fa-solid fa-draw-polygon text-[10px] text-indigo-500"></i>
+<span>ROI 편집</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- RIGHT COLUMN (Approx 62% -> 7 cols of 12) -->
+<div class="lg:col-span-7 flex flex-col">
+<!-- CARD: 최근 감지 이벤트 -->
+<div class="light-glass-panel p-6 flex-1 flex flex-col justify-between relative overflow-hidden">
+<div class="flex flex-col flex-1">
+<!-- Header -->
+<div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#2c4be0] shadow-sm">
+<i class="fa-solid fa-person-walking-with-cane text-base"></i>
+</div>
+<div>
+<h2 class="text-base font-bold text-slate-900 tracking-tight">최근 감지 이벤트</h2>
+<p class="text-[11px] text-slate-500">흰 지팡이(White Cane) 및 점자블록 동선 AI 실시간 추론 로그</p>
+</div>
+</div>
+<!-- Live Indicator -->
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-sm">
+<span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot-green"></span>
+<span class="text-xs font-bold text-emerald-700">실시간</span>
+</div>
+</div>
+<!-- Frosted Light Table Container -->
+<div class="overflow-x-auto rounded-xl border border-slate-200 bg-white/70 shadow-xs flex-1">
+<table class="w-full text-left text-xs border-collapse">
+<!-- Column Headers -->
+<thead>
+<tr class="border-b border-slate-200 bg-slate-50/90 text-slate-500 font-semibold text-[11px] uppercase tracking-wider">
+<th class="py-3 px-5">시각</th>
+<th class="py-3 px-5">카메라</th>
+<th class="py-3 px-5">ROI 구역</th>
+<th class="py-3 px-5 text-right">신뢰도 (Confidence)</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 font-normal">
+<!-- Row 1: Latest row with subtle blue tint & left glowing border -->
+<tr class="bg-blue-50/70 border-l-[4px] border-l-[#2c4be0] transition duration-150">
+<td class="py-3.5 px-5 text-slate-900 font-mono font-bold flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-[#2c4be0] animate-ping"></span>
+                      14:23:04
+                    </td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="px-2.5 py-0.5 rounded bg-blue-100 text-[#2c4be0] border border-blue-200 text-[10px] font-mono font-bold">카메라 0</span>
+</td>
+<td class="py-3.5 px-5 text-slate-800">
+<span class="inline-flex items-center gap-2 font-medium">
+<i class="fa-solid fa-route text-[#2c4be0] text-xs"></i> 입구 점자블록 유도로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-300 text-emerald-700 text-[11px] font-mono font-bold shadow-xs">
+<i class="fa-solid fa-check text-[9px]"></i> 0.91
+                      </span>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-slate-50/70 transition">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">14:21:50</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 0</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-door-open text-slate-400 text-xs"></i> 개찰구 서측 통로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.94
+                      </span>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-slate-50/70 transition bg-slate-50/30">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">14:18:12</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 1</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-triangle-exclamation text-amber-500 text-xs"></i> 전방 적치물 경고 구역
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.88
+                      </span>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-slate-50/70 transition">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">14:15:39</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 0</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-route text-[#2c4be0] text-xs"></i> 입구 점자블록 유도로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.96
+                      </span>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-slate-50/70 transition bg-slate-50/30">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">14:10:02</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 0</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-route text-[#2c4be0] text-xs"></i> 입구 점자블록 유도로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.89
+                      </span>
+</td>
+</tr>
+<!-- Row 6 -->
+<tr class="hover:bg-slate-50/70 transition">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">14:02:44</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 1</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-stairs text-slate-400 text-xs"></i> 에스컬레이터 하단 진입로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.93
+                      </span>
+</td>
+</tr>
+<!-- Row 7 -->
+<tr class="hover:bg-slate-50/70 transition bg-slate-50/30">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">13:58:19</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 0</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-route text-[#2c4be0] text-xs"></i> 입구 점자블록 유도로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.92
+                      </span>
+</td>
+</tr>
+<!-- Row 8 -->
+<tr class="hover:bg-slate-50/70 transition">
+<td class="py-3.5 px-5 text-slate-600 font-mono font-medium">13:51:07</td>
+<td class="py-3.5 px-5 text-slate-600">
+<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono font-medium">카메라 1</span>
+</td>
+<td class="py-3.5 px-5 text-slate-700">
+<span class="inline-flex items-center gap-2">
+<i class="fa-solid fa-door-open text-slate-400 text-xs"></i> 개찰구 서측 통로
+                      </span>
+</td>
+<td class="py-3.5 px-5 text-right">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-mono font-semibold">
+                        0.87
+                      </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Footer -->
+<div class="flex items-center justify-between pt-4 mt-3 border-t border-slate-100 text-xs">
+<span class="text-slate-400 text-[11px] font-mono">최신 업데이트: 방금 전 (자동 갱신 1초 주기)</span>
+<div class="text-slate-600 text-xs font-medium">
+              총 오늘 <strong class="text-slate-900 font-bold">342건</strong> 탐지됨
+            </div>
+<button class="text-[#2c4be0] hover:text-blue-700 font-semibold text-xs flex items-center gap-1.5 group transition">
+<span>더 보기</span>
+<i class="fa-solid fa-arrow-right text-[10px] transform group-hover:translate-x-0.5 transition"></i>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- BOTTOM SYSTEM SPEC & NETWORK BAR -->
+<div class="mt-5 p-3.5 px-6 rounded-2xl light-glass-panel flex flex-col sm:flex-row sm:items-center justify-between text-xs text-slate-500 gap-3">
+<div class="flex items-center gap-4 flex-wrap font-medium">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-[#2c4be0]"></span>
+<span>IP 주소: <code class="text-slate-800 font-mono font-semibold">192.168.1.42</code></span>
+</div>
+<span class="text-slate-300 hidden sm:inline">|</span>
+<div>MAC: <code class="text-slate-700 font-mono font-medium">D8:3A:DD:2F:B1:04</code></div>
+<span class="text-slate-300 hidden sm:inline">|</span>
+<div>OS: <span class="text-slate-700">Raspberry Pi OS (Bookworm 64-bit)</span></div>
+<span class="text-slate-300 hidden sm:inline">|</span>
+<div>AI 모델: <span class="text-[#2c4be0] font-mono font-semibold">YOLOv8n-Cane v2.4 (HEF 엣지 NPU 컴파일)</span></div>
+</div>
+<div class="flex items-center gap-2 text-slate-600 font-medium">
+<i class="fa-solid fa-shield-halved text-emerald-600 text-xs"></i>
+<span>TLS 1.3 암호화 스트림 활성</span>
+</div>
+</div>
+</main>
+</body></html>

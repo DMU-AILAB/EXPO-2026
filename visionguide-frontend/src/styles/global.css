@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    box-shadow:
+      0 12px 32px -4px rgba(20, 35, 90, 0.06),
+      0 4px 12px -2px rgba(20, 35, 90, 0.03),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    border-radius: 20px;
+  }
+
+  .glass-panel-subtle {
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(20px) saturate(170%);
+    -webkit-backdrop-filter: blur(20px) saturate(170%);
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    box-shadow:
+      0 8px 24px -4px rgba(20, 35, 90, 0.04),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    border-radius: 16px;
+  }
+
+  .glass-device-card {
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.95);
+    border-radius: 20px;
+    box-shadow:
+      0 10px 30px -4px rgba(30, 41, 75, 0.05),
+      inset 0 1px 1px rgba(255, 255, 255, 1);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+  }
+
+  .glass-device-card:hover {
+    transform: translateY(-4px);
+    box-shadow:
+      0 20px 40px -8px rgba(44, 75, 224, 0.12),
+      0 2px 8px 0 rgba(44, 75, 224, 0.08);
+    border-color: rgba(44, 75, 224, 0.35);
+  }
+
+  .glass-device-card.offline-card {
+    background: rgba(254, 242, 242, 0.82);
+    border-color: rgba(252, 165, 165, 0.5);
+  }
+
+  .glass-device-card.offline-card:hover {
+    border-color: rgba(239, 68, 68, 0.5);
+    box-shadow: 0 20px 40px -8px rgba(239, 68, 68, 0.12);
+  }
+
+  .micro-pill {
+    background: rgba(241, 245, 249, 0.85);
+    border: 1px solid rgba(203, 213, 225, 0.6);
+    backdrop-filter: blur(8px);
+    border-radius: 9999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 500;
+    color: #334155;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s ease;
+  }
+
+  .micro-pill:hover {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(148, 163, 184, 0.8);
+    color: #0f172a;
+  }
+
+  .glow-blob {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(90px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .stream-scanlines {
+    background:
+      linear-gradient(rgba(15, 23, 42, 0.02) 50%, rgba(15, 23, 42, 0.25) 50%),
+      linear-gradient(
+        90deg,
+        rgba(44, 75, 224, 0.03),
+        rgba(16, 185, 129, 0.02),
+        rgba(44, 75, 224, 0.03)
+      );
+    background-size: 100% 3px, 6px 100%;
+  }
+
+  .light-glass-panel {
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 14px 38px rgba(30, 45, 90, 0.06), 0 2px 6px rgba(0, 0, 0, 0.02);
+    border-radius: 20px;
+  }
+}

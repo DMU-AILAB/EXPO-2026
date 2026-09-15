@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>VisionGuide - 실시간 관제 스트림 모니터링</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<style>
+    @layer base {
+      html, body { margin: 0; padding: 0; }
+      body { overscroll-behavior: none; }
+      ::-webkit-scrollbar { display: none; }
+    }
+  </style>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            "surface-bright": "#faf8ff",
+            "primary-fixed-dim": "#bac3ff",
+            "surface-container": "#ecedfa",
+            "tertiary-container": "#885000",
+            "on-error-container": "#93000a",
+            "surface-container-high": "#e6e7f4",
+            "background": "#f4f6fb",
+            "secondary-fixed-dim": "#76daa6",
+            "secondary-fixed": "#92f7c1",
+            "on-tertiary-fixed": "#2c1600",
+            "on-tertiary-fixed-variant": "#693c00",
+            "tertiary": "#673b00",
+            "tertiary-fixed": "#ffdcbd",
+            "surface-container-lowest": "#ffffff",
+            "primary": "#002ec6",
+            "error": "#ba1a1a",
+            "surface-variant": "#e0e2ee",
+            "on-surface-variant": "#444655",
+            "surface-container-highest": "#e0e2ee",
+            "surface-container-low": "#f2f3ff",
+            "inverse-primary": "#bac3ff",
+            "on-surface": "#181b24",
+            "on-tertiary-container": "#ffce9e",
+            "secondary": "#006c46",
+            "secondary-container": "#8ff4be",
+            "tertiary-fixed-dim": "#ffb86e",
+            "on-primary-container": "#cfd4ff",
+            "outline-variant": "#c5c5d8",
+            "inverse-on-surface": "#eff0fd",
+            "on-secondary": "#ffffff",
+            "surface-dim": "#d8d9e6",
+            "on-secondary-container": "#007149",
+            "on-secondary-fixed-variant": "#005234",
+            "primary-container": "#2c4be0",
+            "inverse-surface": "#2d303a",
+            "on-primary-fixed": "#00105b",
+            "surface-tint": "#2e4ce1",
+            "on-primary": "#ffffff",
+            "on-error": "#ffffff",
+            "error-container": "#ffdad6",
+            "surface": "#f8fafd",
+            "on-tertiary": "#ffffff",
+            "on-background": "#181b24",
+            "primary-fixed": "#dee0ff",
+            "on-secondary-fixed": "#002112",
+            "outline": "#757687",
+            "on-primary-fixed-variant": "#002fc9"
+          },
+          fontFamily: {
+            "headline-sm": ["Inter"],
+            "code": ["JetBrains Mono"],
+            "body-sm": ["Inter"],
+            "display": ["Inter"],
+            "body-lg": ["Inter"],
+            "label-md": ["Inter"],
+            "headline-md": ["Inter"],
+            "caption": ["Inter"],
+            "headline-lg": ["Inter"],
+            "body-md": ["Inter"],
+            "label-sm": ["Inter"]
+          }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="bg-[#f2f5fa] font-body-md text-on-surface antialiased min-h-screen">
+<!-- TOP APP NAVIGATION BAR -->
+<header class="fixed top-0 left-0 right-0 h-16 z-50 bg-white/85 backdrop-blur-xl border-b border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.04)] px-8 flex items-center justify-between">
+<!-- Brand Info -->
+<div class="flex items-center gap-3.5">
+<div class="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-md shadow-primary/20">
+<span class="material-symbols-outlined text-white text-[20px]">videocam</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-bold text-[17px] tracking-tight text-slate-900">VisionGuide</span>
+<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/80 font-code text-[11px] font-semibold tracking-wide">CANE-AI NET</span>
+</div>
+<span class="text-[11px] text-slate-500 font-medium hidden lg:inline">서울역 통합관제센터 · 라즈베리파이 5 엣지 클러스터</span>
+</div>
+</div>
+<!-- Center Navigation Tabs -->
+<nav class="hidden md:flex items-center gap-1.5 p-1 rounded-xl bg-slate-100/90 border border-slate-200/60">
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Overview</a>
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Devices 15</a>
+<a aria-current="page" class="px-4 py-1.5 bg-primary text-white rounded-lg text-[13px] font-semibold shadow-sm transition-all" href="#">Live Streams</a>
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Statistics</a>
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Settings</a>
+</nav>
+<!-- Right System Indicators & Profile -->
+<div class="flex items-center gap-4">
+<div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<span class="text-[12px] font-semibold tracking-tight">12 / 15 Online</span>
+</div>
+<div class="relative flex items-center justify-center w-9 h-9 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-[21px]">notifications</span>
+<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500"></span>
+</div>
+<div class="flex items-center gap-2.5 pl-2 border-l border-slate-200">
+<div class="hidden xl:flex flex-col text-right">
+<span class="text-[12px] font-semibold text-slate-800">관제 Admin_Ops</span>
+<span class="text-[11px] text-slate-400 font-code">SecOps L3</span>
+</div>
+<div class="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-medium shadow-sm">
+<span class="material-symbols-outlined text-[18px]">person</span>
+</div>
+</div>
+</div>
+</header>
+<!-- MAIN MONITORING WORKSPACE (1920x1080 Layout Canvas) -->
+<main class="pt-16 min-h-[calc(100vh)] flex flex-col justify-between" style="background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 28px 28px; background-color: #f3f6fb;">
+<div class="px-8 py-5 flex-1 flex flex-col gap-4">
+<!-- SUB-TOOLBAR: GLASS CONTROL DECK (Light Theme) -->
+<div class="rounded-2xl bg-white/80 backdrop-blur-xl border border-white/90 shadow-[0_4px_20px_rgba(15,23,42,0.05)] px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+<!-- Title & Active Summary -->
+<div class="flex items-center gap-3.5">
+<div class="flex items-center gap-2 text-primary">
+<span class="material-symbols-outlined text-[22px]">nest_cam_iq_outdoor</span>
+<h1 class="text-[18px] font-bold text-slate-900 tracking-tight">실시간 스트림</h1>
+</div>
+<div class="h-4 w-px bg-slate-200"></div>
+<div class="bg-emerald-50 text-emerald-700 border border-emerald-200/80 px-3 py-1 rounded-full text-[12px] font-semibold flex items-center gap-2 shadow-xs">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+</span>
+<span>4개 스트림 활성 (총 15개 노드)</span>
+</div>
+</div>
+<!-- Center: Layout Switcher Pills -->
+<div class="flex items-center gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200/70 shadow-inner">
+<button class="px-3.5 py-1 rounded-lg font-code text-[12px] font-medium text-slate-600 hover:text-slate-900 hover:bg-white/60 transition" type="button">1×1</button>
+<button class="px-4 py-1 rounded-lg font-code text-[12px] font-bold text-white bg-primary shadow-sm transition" type="button">2×2</button>
+<button class="px-3.5 py-1 rounded-lg font-code text-[12px] font-medium text-slate-600 hover:text-slate-900 hover:bg-white/60 transition" type="button">3×3</button>
+<button class="px-3.5 py-1 rounded-lg font-code text-[12px] font-medium text-slate-600 hover:text-slate-900 hover:bg-white/60 transition" type="button">4×4</button>
+</div>
+<!-- Right: Layer Filters & Fullscreen -->
+<div class="flex items-center gap-2.5">
+<button class="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-[12px] font-medium bg-blue-50/90 border border-blue-200 text-blue-800 shadow-xs hover:bg-blue-100/80 transition" type="button">
+<span class="material-symbols-outlined text-[16px] text-blue-600">blind</span>
+<span class="font-semibold">흰 지팡이(White Cane) 레이어 ON</span>
+<span class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]"></span>
+</button>
+<button class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-[12px] font-medium bg-white border border-slate-200/90 text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-xs transition" id="fullscreen-btn" type="button">
+<span class="material-symbols-outlined text-[16px]">fullscreen</span>
+<span>전체화면</span>
+</button>
+</div>
+</div>
+<!-- 2×2 MASTER MONITORING STREAM MATRIX -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1">
+<!-- ==================== CELL 1 (Top-Left): cam-entrance-01 ==================== -->
+<div class="group relative rounded-2xl overflow-hidden bg-white border border-slate-200/90 shadow-[0_8px_30px_rgba(15,23,42,0.06)] flex flex-col justify-between transition-all duration-200 hover:border-primary/40 hover:shadow-lg">
+<!-- CCTV Viewport Frame -->
+<div class="relative w-full h-[360px] xl:h-[400px] bg-[#090e1b] overflow-hidden">
+<!-- Simulated CCTV Architectural Backdrop -->
+<svg class="absolute inset-0 w-full h-full opacity-45 mix-blend-screen" preserveaspectratio="none" viewbox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<lineargradient id="hall-grad" x1="0%" x2="0%" y1="0%" y2="100%">
+<stop offset="0%" stop-color="#142142" stop-opacity="0.9"></stop>
+<stop offset="100%" stop-color="#050811" stop-opacity="0.95"></stop>
+</lineargradient>
+<lineargradient id="yellow-tactile" x1="0%" x2="100%" y1="0%" y2="100%">
+<stop offset="0%" stop-color="#facc15" stop-opacity="0.9"></stop>
+<stop offset="100%" stop-color="#ca8a04" stop-opacity="0.4"></stop>
+</lineargradient>
+</defs>
+<rect fill="url(#hall-grad)" height="500" width="800"></rect>
+<path d="M 0,0 L 300,160 L 500,160 L 800,0 Z" fill="#1b2b52" opacity="0.5"></path>
+<line stroke="#253a6e" stroke-width="1" x1="120" x2="330" y1="0" y2="160"></line>
+<line stroke="#253a6e" stroke-width="1" x1="680" x2="470" y1="0" y2="160"></line>
+<line stroke="#1d2c4d" stroke-width="2" x1="180" x2="160" y1="160" y2="500"></line>
+<line stroke="#1d2c4d" stroke-width="2" x1="620" x2="640" y1="160" y2="500"></line>
+<polygon fill="url(#yellow-tactile)" points="350,500 450,500 420,240 380,240"></polygon>
+<line stroke="#fef08a" stroke-dasharray="3,3" stroke-width="1.5" x1="370" x2="390" y1="500" y2="240"></line>
+<line stroke="#fef08a" stroke-dasharray="3,3" stroke-width="1.5" x1="430" x2="410" y1="500" y2="240"></line>
+</svg>
+<!-- Silhouette of Commuter with White Cane -->
+<div class="absolute left-[44%] bottom-[16%] w-24 h-56 flex flex-col items-center pointer-events-none">
+<div class="relative w-full h-full">
+<div class="w-6 h-6 rounded-full bg-slate-300/35 mx-auto mt-2"></div>
+<div class="w-12 h-24 bg-gradient-to-b from-slate-300/40 to-slate-400/20 mx-auto rounded-t-lg mt-1"></div>
+<div class="flex justify-center gap-2 mt-0.5">
+<div class="w-3.5 h-20 bg-slate-300/30"></div>
+<div class="w-3.5 h-20 bg-slate-400/25"></div>
+</div>
+<!-- Cane Stick (Visual Vector) -->
+<div class="absolute bottom-3 right-0 w-36 h-[2.5px] bg-white shadow-[0_0_8px_#ffffff] rotate-[34deg] origin-left"></div>
+</div>
+</div>
+<!-- AI ROI Polygon -->
+<div class="absolute top-[26%] left-[24%] w-[52%] h-[60%] border border-dashed border-blue-400/70 bg-blue-500/10 pointer-events-none rounded-lg p-2 flex flex-col justify-between">
+<span class="self-start px-2 py-0.5 rounded bg-blue-900/80 backdrop-blur-md text-blue-200 font-code text-[10px] tracking-wider border border-blue-400/40">ROI 1: 입구 유도 구역 [PASS-THROUGH]</span>
+<span class="self-end text-[10px] font-code text-cyan-300/80">X: 208 Y: 140 W: 384 H: 290</span>
+</div>
+<!-- AI Detection Bounding Box: White Cane -->
+<div class="absolute left-[40%] top-[34%] w-[28%] h-[54%] border-2 border-[#00ff88] shadow-[0_0_16px_rgba(0,255,136,0.6)] pointer-events-none rounded-sm">
+<div class="absolute -top-6 left-0 bg-[#00ff88] text-slate-950 font-code text-[11px] font-bold px-2 py-0.5 rounded-t flex items-center gap-1 shadow">
+<span class="material-symbols-outlined text-[13px] leading-none font-bold">accessibility_new</span>
+<span>white_cane 0.94</span>
+</div>
+<svg class="absolute inset-0 w-full h-full overflow-visible" xmlns="http://www.w3.org/2000/svg">
+<line stroke="#00f0ff" stroke-dasharray="4,2" stroke-width="2" x1="30%" x2="90%" y1="70%" y2="92%"></line>
+<circle class="animate-ping" cx="90%" cy="92%" fill="#00f0ff" r="4"></circle>
+<circle cx="90%" cy="92%" fill="#ffffff" r="3"></circle>
+</svg>
+</div>
+<!-- Real-Time Voice Broadcast Floating Toast -->
+<div class="absolute bottom-4 left-4 z-10 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border border-white/20 text-white font-medium text-[11px] shadow-lg">
+<span class="material-symbols-outlined text-emerald-400 text-[16px] animate-pulse">volume_up</span>
+<span>🔊 음성 유도기 송출 대기 (전방 3m 이내 진입 확인)</span>
+</div>
+<!-- Camera OSD Glass Header Overlay -->
+<div class="absolute top-3 left-3 right-3 flex items-center justify-between z-20 pointer-events-none">
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-white/90 backdrop-blur-md border border-white shadow-sm">
+<span class="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-600 text-white font-code text-[10px] font-bold">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                  LIVE 1080p
+                </span>
+<span class="font-code font-bold text-slate-800 text-[12px]">cam-entrance-01</span>
+<span class="text-slate-500 text-[11px]">입구 캐노피 메인 통로</span>
+</div>
+<span class="px-2.5 py-1 rounded-xl bg-white/90 backdrop-blur-md border border-white font-code text-[11px] text-slate-700 font-medium shadow-sm">카메라 0 (Wide-Angle)</span>
+</div>
+</div>
+<!-- Bottom Telemetry Strip (Light Glass) -->
+<div class="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between font-code text-[11px]">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-white border border-slate-300/80 text-slate-700 font-semibold">ROI: 입구</span>
+<span class="text-slate-500">15.2 FPS · NPU 21ms (YOLOv8n)</span>
+</div>
+<div class="flex items-center gap-1.5 text-emerald-700 bg-emerald-100/70 border border-emerald-300/60 px-2.5 py-0.5 rounded-full font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping"></span>
+<span>실시간 탐지 중</span>
+</div>
+</div>
+</div>
+<!-- ==================== CELL 2 (Top-Right): cam-gate-02 ==================== -->
+<div class="group relative rounded-2xl overflow-hidden bg-white border border-slate-200/90 shadow-[0_8px_30px_rgba(15,23,42,0.06)] flex flex-col justify-between transition-all duration-200 hover:border-primary/40 hover:shadow-lg">
+<!-- CCTV Viewport Frame -->
+<div class="relative w-full h-[360px] xl:h-[400px] bg-[#090e1b] overflow-hidden">
+<svg class="absolute inset-0 w-full h-full opacity-40 mix-blend-screen" preserveaspectratio="none" viewbox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+<rect fill="#0b1329" height="500" width="800"></rect>
+<g fill="#101c3d" stroke="#2a427d" stroke-width="1.5">
+<rect height="200" rx="4" width="60" x="140" y="220"></rect>
+<rect height="200" rx="4" width="60" x="280" y="220"></rect>
+<rect height="200" rx="4" width="60" x="420" y="220"></rect>
+<rect height="200" rx="4" width="60" x="560" y="220"></rect>
+</g>
+<path d="M 200,290 L 280,270" opacity="0.6" stroke="#00f0ff" stroke-width="2"></path>
+<path d="M 340,290 L 420,270" opacity="0.6" stroke="#00f0ff" stroke-width="2"></path>
+<line opacity="0.7" stroke="#eab308" stroke-dasharray="12,6" stroke-width="6" x1="80" x2="720" y1="440" y2="440"></line>
+<line opacity="0.5" stroke="#eab308" stroke-width="12" x1="350" x2="350" y1="220" y2="440"></line>
+</svg>
+<div class="absolute top-14 right-4 z-10 font-code text-[11px] text-white/50 tracking-wider flex flex-col items-end">
+<span>Bitrate: 4.4 Mbps · H.264 · RTSP</span>
+<span>CH-02 / GATE_WEST_FEED</span>
+</div>
+<!-- ROI Box -->
+<div class="absolute top-[36%] left-[28%] w-[44%] h-[46%] border border-dashed border-blue-400 bg-blue-500/10 pointer-events-none rounded-lg p-2 flex flex-col justify-between">
+<span class="self-start px-2 py-0.5 rounded bg-blue-900/80 text-blue-200 font-code text-[10px]">ROI 2: 개찰구 통과선</span>
+<span class="text-right text-[10px] font-code text-cyan-300/80">TRIGGER_ZONE: BARRIER_FREE</span>
+</div>
+<!-- Pedestrian Detection Box -->
+<div class="absolute left-[36%] top-[26%] w-[24%] h-[60%] pointer-events-none">
+<div class="w-full h-full border border-white/20 rounded relative">
+<span class="absolute -top-5 left-0 bg-white/25 backdrop-blur-sm text-white font-code text-[10px] px-1.5 py-0.2 rounded">person 0.98</span>
+<div class="absolute bottom-4 right-[-10px] w-28 h-28 border-2 border-[#00ff88] shadow-[0_0_12px_#00ff88] rounded-sm">
+<span class="absolute -top-5 left-0 bg-[#00ff88] text-slate-950 font-code text-[10px] font-bold px-1.5 py-0.2 rounded">white_cane 0.91</span>
+</div>
+</div>
+</div>
+<!-- Camera OSD Glass Header Overlay -->
+<div class="absolute top-3 left-3 right-3 flex items-center justify-between z-20 pointer-events-none">
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-white/90 backdrop-blur-md border border-white shadow-sm">
+<span class="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-600 text-white font-code text-[10px] font-bold">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                  LIVE 1080p
+                </span>
+<span class="font-code font-bold text-slate-800 text-[12px]">cam-gate-02</span>
+<span class="text-slate-500 text-[11px]">개찰구 서측 통로</span>
+</div>
+<span class="px-2.5 py-1 rounded-xl bg-white/90 backdrop-blur-md border border-white font-code text-[11px] text-slate-700 font-medium shadow-sm">카메라 1 (PTZ)</span>
+</div>
+</div>
+<!-- Bottom Telemetry Strip (Light Glass) -->
+<div class="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between font-code text-[11px]">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-white border border-slate-300/80 text-slate-700 font-semibold">ROI: 개찰구</span>
+<span class="text-slate-500">14.8 FPS · NPU 19ms</span>
+</div>
+<div class="flex items-center gap-1.5 text-emerald-700 bg-emerald-100/70 border border-emerald-300/60 px-2.5 py-0.5 rounded-full font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+<span>탐지 중 (1명 보행 보조)</span>
+</div>
+</div>
+</div>
+<!-- ==================== CELL 3 (Bottom-Left): cam-braille-01 ==================== -->
+<div class="group relative rounded-2xl overflow-hidden bg-white border border-slate-200/90 shadow-[0_8px_30px_rgba(15,23,42,0.06)] flex flex-col justify-between transition-all duration-200 hover:border-primary/40 hover:shadow-lg">
+<!-- CCTV Viewport Frame -->
+<div class="relative w-full h-[360px] xl:h-[400px] bg-[#090e1b] overflow-hidden">
+<svg class="absolute inset-0 w-full h-full opacity-45 mix-blend-screen" preserveaspectratio="none" viewbox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+<rect fill="#0b1328" height="500" width="800"></rect>
+<polygon fill="#f59e0b" opacity="0.65" points="100,500 240,500 680,100 560,100"></polygon>
+<line stroke="#fef08a" stroke-dasharray="8,8" stroke-width="4" x1="170" x2="620" y1="500" y2="100"></line>
+<line stroke="#1c2d58" stroke-width="1" x1="0" x2="800" y1="360" y2="360"></line>
+<line stroke="#1c2d58" stroke-width="1" x1="0" x2="800" y1="240" y2="240"></line>
+<!-- Displaced Cargo/Obstacle -->
+<rect fill="#92400e" height="60" stroke="#d97706" stroke-width="2" width="70" x="420" y="240"></rect>
+</svg>
+<!-- AI ROI Polygon -->
+<div class="absolute top-[22%] left-[34%] w-[48%] h-[64%] border border-dashed border-blue-400 bg-blue-500/10 pointer-events-none rounded-lg p-2 flex flex-col justify-between">
+<span class="self-start px-2 py-0.5 rounded bg-blue-900/80 text-blue-200 font-code text-[10px]">ROI 3: 점자 유도로 위험 모니터링</span>
+</div>
+<!-- Obstacle Bounding Box (Amber Warning) -->
+<div class="absolute left-[50%] top-[46%] w-[17%] h-[20%] border-2 border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.8)] pointer-events-none rounded-sm">
+<div class="absolute -top-6 left-0 bg-amber-400 text-slate-950 font-code text-[10px] font-bold px-2 py-0.5 rounded-t flex items-center gap-1 shadow">
+<span class="material-symbols-outlined text-[12px] leading-none">warning</span>
+<span>obstacle_detected 0.88</span>
+</div>
+</div>
+<!-- White Cane Approaching -->
+<div class="absolute left-[32%] top-[50%] w-[18%] h-[32%] border-2 border-[#00ff88] shadow-[0_0_12px_#00ff88] pointer-events-none rounded-sm">
+<div class="absolute -top-6 left-0 bg-[#00ff88] text-slate-950 font-code text-[10px] font-bold px-1.5 py-0.5 rounded-t">
+<span>white_cane 0.95</span>
+</div>
+</div>
+<!-- Real-Time Voice Intercom Warning -->
+<div class="absolute bottom-4 left-4 z-10 flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-950/85 backdrop-blur-md border border-amber-400/40 text-amber-200 font-medium text-[11px] shadow-lg animate-pulse">
+<span class="material-symbols-outlined text-amber-300 text-[16px]">fmd_bad</span>
+<span>⚠️ 전방 1.5m 장애물(적치물) 우회 음성 방송 연동</span>
+</div>
+<!-- Camera OSD Glass Header Overlay -->
+<div class="absolute top-3 left-3 right-3 flex items-center justify-between z-20 pointer-events-none">
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-white/90 backdrop-blur-md border border-white shadow-sm">
+<span class="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-600 text-white font-code text-[10px] font-bold">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                  LIVE 1080p
+                </span>
+<span class="font-code font-bold text-slate-800 text-[12px]">cam-braille-01</span>
+<span class="text-slate-500 text-[11px]">점자블록 유도로 1구간</span>
+</div>
+<span class="px-2.5 py-1 rounded-xl bg-white/90 backdrop-blur-md border border-white font-code text-[11px] text-slate-700 font-medium shadow-sm">카메라 0 (Fixed)</span>
+</div>
+</div>
+<!-- Bottom Telemetry Strip (Light Glass) -->
+<div class="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between font-code text-[11px]">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-white border border-slate-300/80 text-slate-700 font-semibold">ROI: 점자 유도로</span>
+<span class="text-slate-500">15.0 FPS · NPU 22ms</span>
+</div>
+<div class="flex items-center gap-1.5 text-amber-800 bg-amber-100/70 border border-amber-300/80 px-2.5 py-0.5 rounded-full font-semibold">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+<span>주의: 장애물 감지 (CH-02)</span>
+</div>
+</div>
+</div>
+<!-- ==================== CELL 4 (Bottom-Right): cam-parking-02 (OFFLINE) ==================== -->
+<div class="group relative rounded-2xl overflow-hidden bg-white border border-slate-200/90 shadow-[0_8px_30px_rgba(15,23,42,0.06)] flex flex-col justify-between transition-all duration-200 hover:border-red-300">
+<!-- CCTV Viewport Frame - Clean Light/Subtle Dark Offline Diagnostic Area -->
+<div class="relative w-full h-[360px] xl:h-[400px] bg-slate-100 flex flex-col items-center justify-center overflow-hidden" style="background-image: repeating-linear-gradient(45deg, #e2e8f0 0, #e2e8f0 2px, transparent 0, transparent 16px);">
+<!-- Camera OSD Glass Header Overlay -->
+<div class="absolute top-3 left-3 right-3 flex items-center justify-between z-20">
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 shadow-sm">
+<span class="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-400 text-white font-code text-[10px] font-bold">
+<span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+                  NO SIGNAL
+                </span>
+<span class="font-code font-bold text-slate-700 text-[12px]">cam-parking-02</span>
+<span class="text-slate-500 text-[11px]">승강장 3호선 남단</span>
+</div>
+<span class="px-2.5 py-1 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 font-code text-[11px] text-slate-500 font-medium shadow-sm">카메라 2</span>
+</div>
+<!-- Offline Diagnostic Card (Glassmorphic) -->
+<div class="relative z-10 mx-6 p-6 rounded-2xl bg-white/90 backdrop-blur-xl border border-slate-200 shadow-md text-center max-w-md flex flex-col items-center">
+<div class="w-12 h-12 rounded-2xl bg-red-50 border border-red-200 text-red-600 flex items-center justify-center mb-3 shadow-xs">
+<span class="material-symbols-outlined text-[26px]">videocam_off</span>
+</div>
+<p class="text-[15px] font-bold text-slate-900 tracking-tight">카메라 연결 끊김 (RTSP Timeout)</p>
+<p class="font-code text-[12px] text-slate-600 mt-1">cam-parking-02 (승강장 3호선 남단 · 엣지 게이트웨이 #04)</p>
+<span class="font-code text-[11px] text-slate-400 mt-1">마지막 프레임 수신: 14:28:40 KST · TCP Port 554 Closed</span>
+<button class="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold bg-slate-900 hover:bg-slate-800 text-white shadow-sm transition active:scale-95 cursor-pointer" id="resync-btn" type="button">
+<span class="material-symbols-outlined text-[16px]">sync</span>
+<span>신호 재연결 시도 (Re-sync)</span>
+</button>
+</div>
+</div>
+<!-- Bottom Telemetry Strip (Light Warning) -->
+<div class="px-4 py-2.5 bg-red-50/60 border-t border-red-100 flex items-center justify-between font-code text-[11px]">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-red-100 border border-red-200 text-red-700 font-bold">오프라인 상태</span>
+<span class="text-red-600">0.0 FPS · 패킷 손실 100%</span>
+</div>
+<div class="flex items-center gap-1.5 text-red-600 font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+<span>네트워크 점검 필요</span>
+</div>
+</div>
+</div>
+</div>
+<!-- FOOTER MINI TELEMETRY STRIP (Glass Light) -->
+<div class="rounded-xl bg-white/80 backdrop-blur-xl border border-slate-200/90 shadow-[0_2px_10px_rgba(15,23,42,0.03)] px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-[12px] font-code text-slate-600">
+<div class="flex items-center gap-3.5">
+<span class="flex items-center gap-1.5 font-medium text-slate-800">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span>NPU 가속: Hailo-8 (Raspberry Pi 5 PCIe Gen2 x1)</span>
+</span>
+<span class="text-slate-300">|</span>
+<span class="text-slate-600">모델: YOLOv8n-Cane-Custom (FP16 · 3.2MB)</span>
+</div>
+<div class="flex items-center gap-4">
+<span>평균 레이턴시: <strong class="text-slate-900 font-semibold">20.6ms</strong></span>
+<span class="text-slate-300">|</span>
+<span>오디오 비콘 활성화율: <strong class="text-emerald-600 font-semibold">99.4%</strong></span>
+</div>
+</div>
+</div>
+</main>
+<script>
+    // Re-sync interaction
+    const resyncBtn = document.getElementById('resync-btn');
+    if (resyncBtn) {
+      resyncBtn.addEventListener('click', () => {
+        const original = resyncBtn.innerHTML;
+        resyncBtn.innerHTML = '<span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span><span>신호 재검색 중...</span>';
+        resyncBtn.classList.add('opacity-75', 'pointer-events-none');
+        setTimeout(() => {
+          resyncBtn.innerHTML = '<span class="material-symbols-outlined text-[16px] text-emerald-400">check_circle</span><span>연결 패킷 전송됨</span>';
+          setTimeout(() => {
+            resyncBtn.innerHTML = original;
+            resyncBtn.classList.remove('opacity-75', 'pointer-events-none');
+          }, 2000);
+        }, 1400);
+      });
+    }
+
+    // Fullscreen interaction
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    if (fullscreenBtn) {
+      fullscreenBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          if (document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+          }
+        }
+      });
+    }
+  </script>
+</body></html>
