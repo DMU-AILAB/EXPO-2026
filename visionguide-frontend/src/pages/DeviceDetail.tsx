@@ -62,7 +62,7 @@ export default function DeviceDetail() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/devices')}
             className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 text-sm font-medium transition"
           >
             <ChevronLeft className="w-4 h-4" />
