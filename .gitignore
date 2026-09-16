@@ -27,23 +27,23 @@ label_tool/reviewed.json
 # 달라서 커밋하면 다른 PC/팀원 환경에서 깨짐 (datasets/data.yaml의 경로 문제와 동일 종류)
 datasets/data_local.yaml
 
-# Roboflow 원본 다운로드 (person 라벨 병합용 소스 — merge_person_dataset.py 참고,
-# 병합 결과만 datasets/train|val|test 에 커밋하고 원본 다운로드는 커밋하지 않음)
-datasets/Human Dataset v2-experiment-yolov8/
-datasets/Pedestrian Detection CCTV yolov8/
+# datasets/sources/ — 외부에서 받은 수집 원본. 학습은 이걸 읽지 않는다(data.yaml은
+# train|val|test 만 가리킴). 변환/병합 결과만 커밋하고 원본 다운로드는 커밋하지 않는다.
+#   background_photos/      배경 사진 966M (HEIC/avif/webp 혼재, 이전 경로: extra_data/)
+#   lookalike_lvis_oi/      유사물 사진 123M (이전 경로: lookalike_data/)
+#   person_pedcctv/         Roboflow, merge_person_dataset.py 가 스플릿에 병합함
+#   person_humanv2_UNUSED/  Roboflow, 어디에도 병합되지 않은 미사용 데이터 578M
+# ⚠️ background_photos 는 직접 촬영본이라 스크립트로 재생성이 불가능한 유일본이다 —
+#    지우지 말 것. 나머지는 fetch_*_lookalikes.py / Roboflow 재다운로드로 복구 가능.
+# 예외: cane_pool/ (스플릿 전 지팡이 원본 풀)은 커밋한다 — 스플릿 비율을 다시 나눌 때의
+#       입력이고, 재다운로드할 외부 출처가 없다.
+datasets/sources/*
+!datasets/sources/cane_pool/
 
-# 배경(네거티브) 원본 사진과 변환 스테이징 — Roboflow 원본과 같은 원칙으로 커밋하지 않는다
-# (원본 1GB, HEIC/avif 혼재). prepare_background_dataset.py가 640 jpg로 변환해
-# datasets/train/ 에 넣은 bg_*.jpg 만 커밋된다. holdout/manifest는 재실행하면 동일하게
-# 재생성되므로(seed 고정) 스테이징째로 제외.
-extra_data/
-datasets/background/
-
-# 지팡이 유사물(등산스틱·우산·목발·난간·나뭇가지) 수집 원본과 변환 스테이징 —
-# 위와 같은 원칙. prepare_lookalike_dataset.py가 변환해 datasets/train/ 에 넣은
-# lk_*.jpg 만 커밋된다.
-lookalike_data/
-datasets/lookalike/
+# datasets/staging/ — prepare_*_dataset.py 가 640 jpg로 정규화한 중간 산출물.
+# 실제 학습에 쓰이는 bg_*.jpg 는 datasets/train/ 에 커밋되고(lk_*.jpg 는 아래 참고),
+# holdout/manifest 는 재실행하면 동일하게 재생성되므로(seed 고정) 스테이징째로 제외.
+datasets/staging/
 
 # 환경 변수 / 시크릿
 .env
@@ -62,3 +62,64 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# 발표/전시 자료 — 동영상만 110MB(단일 파일 최대 66MB)라 저장소에 넣으면 clone이 무거워진다.
+# 로컬/외부 공유로 보관하고 저장소는 코드 중심으로 유지한다. docs/FILE_INVENTORY.md 참고.
+docs/presentation/
+
+# YOLO val/predict 실행 산출물 — 재실행하면 재생성되는 파생물
+runs/detect/
+
+# onnx2tf/ultralytics export 중간 산출물. Pi가 실제로 쓰는 건 best_int8.tflite /
+# best_int8_edgetpu.tflite 뿐이라(Makefile의 sync 타겟) 그 둘만 커밋한다.
+# 주의: runs/white_cane_v1-2/weights/best.onnx 는 이미 추적 중이라 아래 규칙이 적용되지
+# 않는다(git은 추적 중인 파일을 gitignore로 무시하지 않음) — 새로 생기는 것만 걸린다.
+runs/*/weights/best_saved_model/
+runs/*/weights/*.onnx
+
+# onnx2tf가 export 중 작업 디렉터리에 떨구는 캘리브레이션 샘플 부산물
+calibration_image_sample_data_*.npy
+
+# pytest 캐시 (__pycache__ 와 같은 성격)
+.pytest_cache/
+
+# 유사물 네거티브 학습 이미지 (lk_*.jpg 544장 / 55MB + 동명 라벨).
+# bg_*.jpg(228장)는 커밋돼 있어 전례와 다르지만, 이쪽은 원본이 공개 데이터셋이라
+# fetch_lvis_lookalikes.py / fetch_openimages_lookalikes.py + prepare_lookalike_dataset.py
+# 로 재생성이 가능하다 — 재현 경로가 스크립트로 남아 있으므로 바이너리는 넣지 않는다.
+# 주의: clone한 환경에서 그냥 학습하면 유사물 네거티브 없이 학습돼 v6가 재현되지 않는다.
+# 수집 절차는 docs/FILE_INVENTORY.md 참고.
+datasets/train/images/lk_*.jpg
+datasets/train/labels/lk_*.txt
+
+# resplit_dataset.py 산출물 — datasets/{train,val,test}의 하드링크 재배치라
+# 원본이 커밋돼 있으면 언제든 재생성된다(python resplit_dataset.py).
+datasets/v2/
+datasets/data_v2.yaml
+
+# resplit_dataset.py --relabel-person 산출물 (재생성 가능)
+datasets/staging/person_relabel/
+
+# CCTV 각도 유사물 네거티브 (lkc_*.jpg) — lk_와 같은 원칙으로 커밋하지 않는다
+# (원본이 공개 Roboflow 데이터셋이라 prepare_stick_cctv_dataset.py로 재생성 가능)
+datasets/train/images/lkc_*.jpg
+datasets/train/labels/lkc_*.txt
+datasets/staging/stick_cctv/
+
+# 합성 야간 평가셋 / lkc 대조군 — 스크립트로 재생성 가능
+datasets/v2_night/
+datasets/v2_nolkc/
+datasets/data_v2_nolkc.yaml
+
+# 평가 시각화 산출물 (재생성 가능)
+eval_out/
+
+# 학습/export 중간 산출물 — 배포에 쓰지 않고 best.pt에서 언제든 재생성된다
+# (docs/int8_320_quantization_report.md §5 참고). onnx는 12MB, best_saved_model은
+# 40~60MB라 저장소만 무겁게 만든다.
+runs/*/weights/best.onnx
+runs/*/weights/best_saved_model/
+runs/*/weights/keep_*.tflite
+runs/*/weights/last.pt
+# yolo val 부산물 — 실행할 때마다 val-N 디렉터리가 쌓인다
+runs/detect/

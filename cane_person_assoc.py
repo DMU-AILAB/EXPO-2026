@@ -17,43 +17,64 @@ from __future__ import annotations
 CANE_CLASS_ID = 0
 PERSON_CLASS_ID = 1
 
+# 지팡이-사람 짝짓기 허용 간격 — 사람 bbox 폭에 대한 비율. 실측 표본은 전부 거리 0
+# (두 박스가 겹침)이라 분포에서 맞춘 값이 아니라, 박스가 살짝 떨어질 때를 위한 여유값이다.
+# 픽셀 절대값이 아니라 사람 폭 대비 비율인 이유는 원근(가까운 사람은 크게, 먼 사람은
+# 작게 찍힘)에 따라 같은 기준이 유지되어야 하기 때문이다.
+_DEFAULT_MAX_GAP_RATIO = 0.15
+
 
 def _center(bbox: list) -> tuple[float, float]:
     x1, y1, x2, y2 = bbox
     return (x1 + x2) / 2, (y1 + y2) / 2
 
 
-def _expand_x(bbox: list, margin_ratio: float) -> list:
-    x1, y1, x2, y2 = bbox
-    margin = (x2 - x1) * margin_ratio
-    return [x1 - margin, y1, x2 + margin, y2]
-
-
-def _contains(bbox: list, point: tuple[float, float]) -> bool:
-    x1, y1, x2, y2 = bbox
-    px, py = point
-    return x1 <= px <= x2 and y1 <= py <= y2
+def _gap(a: list, b: list) -> float:
+    """두 bbox의 최단거리(px). 겹치거나 맞닿으면 0."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    dx = max(bx1 - ax2, ax1 - bx2, 0.0)
+    dy = max(by1 - ay2, ay1 - by2, 0.0)
+    return (dx * dx + dy * dy) ** 0.5
 
 
 def _matched_pairs(
     tracks: list[dict],
-    x_margin_ratio: float,
+    max_gap_ratio: float,
     cane_cls: int,
     person_cls: int,
 ) -> tuple[list[dict], list[dict], set[tuple[int, int]]]:
     """(지팡이 트랙, 사람 트랙, 짝지어진 (person_id, cane_id) 집합)을 반환.
 
-    사람 bbox를 좌우로 `x_margin_ratio`만큼 확장(지팡이를 몸 옆으로 짚는
-    경우 허용)한 뒤, 그 안에 중심점이 들어오는 지팡이를 짝으로 본다.
+    두 조건을 모두 만족해야 짝으로 본다.
+
+    1. 지팡이 bbox와 사람 bbox의 **최단거리**가 사람 폭 × `max_gap_ratio` 이하
+    2. 지팡이 bbox 중심의 y가 사람 bbox의 y 범위 안
+
+    이전 구현은 "사람 bbox를 좌우로 확장한 뒤 지팡이 **중심점**이 그 안인가"였는데,
+    흰 지팡이는 몸 앞으로 비스듬히 뻗어 짚기 때문에 사람과 명백히 함께 있어도
+    중심점이 자주 밖으로 나갔다 — 실측(사람 1명 + 지팡이 탐지 60프레임)에서 확장 여백
+    0.15로는 **19/60만 통과**했고, 그 결과 ROI 트리거가 한 번도 발동하지 않았으며
+    유동인구의 지팡이 사용자 집계도 0명으로 나왔다.
+
+    같은 표본을 최단거리로 재면 **60/60이 거리 0(두 박스가 겹침)**이고 중심 y도
+    60/60이 사람 범위 안이다. 즉 판정 축이 아니라 "중심점 하나로 본다"는 방식이
+    문제였다. `max_gap_ratio`는 분포에서 맞춘 값이 아니라(전부 0이라 맞출 게 없다)
+    박스가 살짝 떨어지는 경우를 위한 여유값이다.
+
+    세로 조건을 남기는 이유: 빼면 사람 위쪽의 나뭇가지나 아래쪽 난간이 거리만
+    가까우면 통과해 사람 동반 게이트의 존재 이유가 약해진다.
     """
     canes = [t for t in tracks if t["class"] == cane_cls]
     people = [t for t in tracks if t["class"] == person_cls]
 
     pairs: set[tuple[int, int]] = set()
     for person in people:
-        expanded = _expand_x(person["bbox"], x_margin_ratio)
+        px1, py1, px2, py2 = person["bbox"]
+        max_gap = (px2 - px1) * max_gap_ratio
         for cane in canes:
-            if _contains(expanded, _center(cane["bbox"])):
+            _, cy = _center(cane["bbox"])
+            if py1 <= cy <= py2 and _gap(cane["bbox"], person["bbox"]) <= max_gap:
                 pairs.add((person["track_id"], cane["track_id"]))
 
     return canes, people, pairs
@@ -61,24 +82,24 @@ def _matched_pairs(
 
 def associate(
     tracks: list[dict],
-    x_margin_ratio: float = 0.15,
+    max_gap_ratio: float = _DEFAULT_MAX_GAP_RATIO,
     cane_cls: int = CANE_CLASS_ID,
     person_cls: int = PERSON_CLASS_ID,
 ) -> dict[int, bool]:
     """이번 프레임 기준: 사람 track_id -> 지팡이 동반 여부.
 
-    알려진 한계: 두 사람이 밀착해 있으면 지팡이 하나가 양쪽 확장 영역에
-    동시에 걸쳐 둘 다 동반으로 잘못 판정될 수 있다 — 이번 범위에서는
-    허용 가능한 단순화로 남겨둔다.
+    알려진 한계: 두 사람이 밀착해 있으면 지팡이 하나가 양쪽 모두와 조건을
+    만족해 둘 다 동반으로 잘못 판정될 수 있다 — 이번 범위에서는 허용 가능한
+    단순화로 남겨둔다(1:1 배정이 필요하면 호출부에서 처리할 것).
     """
-    _, people, pairs = _matched_pairs(tracks, x_margin_ratio, cane_cls, person_cls)
+    _, people, pairs = _matched_pairs(tracks, max_gap_ratio, cane_cls, person_cls)
     matched = {pid for pid, _ in pairs}
     return {person["track_id"]: person["track_id"] in matched for person in people}
 
 
 def associate_canes(
     tracks: list[dict],
-    x_margin_ratio: float = 0.15,
+    max_gap_ratio: float = _DEFAULT_MAX_GAP_RATIO,
     cane_cls: int = CANE_CLASS_ID,
     person_cls: int = PERSON_CLASS_ID,
 ) -> dict[int, bool]:
@@ -91,6 +112,6 @@ def associate_canes(
     사람 클래스가 아예 없는 프레임에서는 모든 지팡이가 False가 된다 — 호출부가
     이 게이트를 켤지 말지(`CameraProfile.require_person_for_trigger`)를 정한다.
     """
-    canes, _, pairs = _matched_pairs(tracks, x_margin_ratio, cane_cls, person_cls)
+    canes, _, pairs = _matched_pairs(tracks, max_gap_ratio, cane_cls, person_cls)
     matched = {cid for _, cid in pairs}
     return {cane["track_id"]: cane["track_id"] in matched for cane in canes}

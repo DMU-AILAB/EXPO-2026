@@ -17,19 +17,44 @@ NMS_IOU_DEFAULT = 0.45
 INPUT_SIZE = 640
 
 
-def set_input(interpreter, frame: np.ndarray, input_size: int = INPUT_SIZE) -> None:
+def set_input(interpreter, frame: np.ndarray, input_size: int = INPUT_SIZE,
+              letterbox: bool = True) -> tuple[float, float, float] | None:
     """BGR 프레임을 YOLOv8 TFLite 입력 텐서에 맞게 전처리.
 
     export 툴체인에 따라 입력 레이아웃이 NHWC([1,H,W,3])거나 NCHW([1,3,H,W])일
     수 있다 — ultralytics 8.4.83부터 `.tflite` export가 옛 TensorFlow
     SavedModel(NHWC) 경로 대신 새 LiteRT/PyTorch 경로(NCHW)로 바뀌었기
     때문이다. 모델이 실제로 선언한 shape을 보고 자동으로 맞춘다.
+
+    **letterbox=True(기본값)는 종횡비를 보존**하고 남는 영역을 회색(114)으로
+    채운다. 학습(ultralytics)이 레터박스를 쓰므로 추론도 같아야 한다. 예전에는
+    `cv2.resize`로 정사각 스쿼시를 했는데, 16:9 프레임이 1:1로 눌리면 가로가
+    1.78배 압축되어 **비스듬히 뻗은 가늘고 긴 흰 지팡이가 학습 분포 밖으로
+    나갔다**. 실측(805프레임 실영상, v6 INT8, conf 0.25): 스쿼시는 지팡이를
+    1프레임에서만 찾고 ROI 트리거가 한 번도 발동하지 않은 반면, 레터박스는
+    108프레임에서 찾고 트리거가 발동했다.
+
+    반환값 `(scale, pad_x, pad_y)`는 `postprocess_multiclass(letterbox=...)`에
+    그대로 넘겨 좌표를 원본 프레임 기준으로 되돌리는 데 쓴다. letterbox=False면
+    None을 반환하며, 이때 후처리는 기존 스쿼시 좌표 계산을 그대로 쓴다.
     """
     inp     = interpreter.get_input_details()[0]
     dtype   = inp["dtype"]
     is_nchw = inp["shape"][1] == 3
 
-    resized = cv2.resize(frame, (input_size, input_size))
+    if letterbox:
+        h, w  = frame.shape[:2]
+        scale = input_size / max(h, w)
+        nh, nw = max(1, int(round(h * scale))), max(1, int(round(w * scale)))
+        pad_x, pad_y = (input_size - nw) / 2.0, (input_size - nh) / 2.0
+        resized = np.full((input_size, input_size, 3), 114, np.uint8)
+        top, left = int(pad_y), int(pad_x)
+        resized[top:top + nh, left:left + nw] = cv2.resize(frame, (nw, nh))
+        lb = (scale, pad_x, pad_y)
+    else:
+        resized = cv2.resize(frame, (input_size, input_size))
+        lb = None
+
     rgb     = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     blob    = rgb[np.newaxis]  # [1, H, W, 3]
     if is_nchw:
@@ -52,6 +77,7 @@ def set_input(interpreter, frame: np.ndarray, input_size: int = INPUT_SIZE) -> N
     # uint8 (0–255): 그대로 사용
 
     interpreter.set_tensor(inp["index"], blob)
+    return lb
 
 
 def get_output(interpreter) -> np.ndarray:
@@ -64,6 +90,17 @@ def get_output(interpreter) -> np.ndarray:
     return data.astype(np.float32)
 
 
+def _input_size_from(img_w: int, img_h: int, scale: float,
+                     pad_x: float, pad_y: float) -> float:
+    """letterbox 파라미터에서 입력 텐서 한 변의 길이를 역산한다.
+
+    set_input은 `size = scale*max(h,w) + 2*pad`가 성립하도록 패딩을 계산하므로,
+    긴 변 쪽(패딩이 0에 가까운 쪽)으로 복원하면 반올림 오차가 가장 작다.
+    호출부가 input_size를 또 넘기지 않아도 되게 하기 위한 헬퍼다.
+    """
+    return scale * max(img_w, img_h) + 2.0 * (pad_x if img_w >= img_h else pad_y)
+
+
 def postprocess_multiclass(
     output: np.ndarray,
     conf_thr: float | dict[str, float],
@@ -71,6 +108,7 @@ def postprocess_multiclass(
     img_h: int,
     class_names: tuple[str, ...] = CLASS_NAMES,
     nms_iou: float = NMS_IOU_DEFAULT,
+    letterbox: tuple[float, float, float] | None = None,
 ) -> list[dict]:
     """YOLOv8 출력 [1, 4+nc, 8400] (또는 전치된 [1, 8400, 4+nc]) → 탐지 결과 리스트.
 
@@ -81,6 +119,11 @@ def postprocess_multiclass(
     conf_thr는 스칼라(모든 클래스 동일) 또는 {class_name: threshold} 딕셔너리
     (클래스별 개별 임계값)를 받는다 — 예: 사람은 배경 오탐이 잦아 지팡이보다
     높은 임계값이 필요한 경우가 흔해서 클래스별로 다르게 튜닝할 수 있게 했다.
+
+    letterbox는 `set_input()`이 돌려준 `(scale, pad_x, pad_y)`다. 주어지면 패딩을
+    빼고 스케일을 되돌려 원본 프레임 좌표를 만든다. None이면 입력이 정사각으로
+    스쿼시됐다고 보고 기존 계산(정규화 좌표 × img_w/img_h)을 그대로 쓴다 —
+    둘을 섞으면 박스가 조용히 어긋나므로 set_input의 반환값을 그대로 넘길 것.
     """
     pred = output[0]
     if pred.shape[0] < pred.shape[1]:   # [4+nc, 8400] → [8400, 4+nc]
@@ -103,10 +146,20 @@ def postprocess_multiclass(
     pred, best_cls, best_score = pred[mask], best_cls[mask], best_score[mask]
     cx, cy, w, h = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
 
-    bx = (cx - w / 2) * img_w
-    by = (cy - h / 2) * img_h
-    bw = w * img_w
-    bh = h * img_h
+    if letterbox is None:
+        bx = (cx - w / 2) * img_w
+        by = (cy - h / 2) * img_h
+        bw = w * img_w
+        bh = h * img_h
+    else:
+        # 모델 출력은 입력 텐서(정사각 input_size) 기준 정규화 좌표다.
+        # 픽셀로 되돌린 뒤 패딩을 빼고 스케일을 나눠 원본 프레임 좌표로 만든다.
+        scale, pad_x, pad_y = letterbox
+        size = _input_size_from(img_w, img_h, scale, pad_x, pad_y)
+        bx = ((cx - w / 2) * size - pad_x) / scale
+        by = ((cy - h / 2) * size - pad_y) / scale
+        bw = w * size / scale
+        bh = h * size / scale
 
     boxes = np.stack([bx, by, bw, bh], axis=1).tolist()
     confs = best_score.tolist()

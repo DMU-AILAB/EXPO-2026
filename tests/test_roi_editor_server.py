@@ -16,6 +16,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
+import camera_config
 import server as srv
 
 VALID_POLY = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]
@@ -132,20 +133,25 @@ def test_post_cameras_rejects_duplicate_edgetpu(client):
 
 
 def test_post_cameras_defaults_model_variant(client):
-    """model_variant를 안 보내면 CameraProfile 기본값(v2_640)이 그대로 저장돼야 한다."""
+    """model_variant를 안 보내면 CameraProfile 기본값이 그대로 저장돼야 한다.
+
+    기대값을 문자열로 박아두면 기본 모델을 바꿀 때마다 테스트가 깨지므로
+    camera_config의 상수를 그대로 참조한다 — 검증하려는 것은 "어떤 모델인가"가
+    아니라 "pydantic 페이로드 기본값이 CameraProfile과 어긋나지 않는가"다.
+    """
     res = client.post("/api/cameras", json={"cameras": [
         {"id": "cam0", "port": 8080, "inference_backend": "tflite"},
     ]})
     assert res.status_code == 200
     body = client.get("/api/cameras").json()
-    assert body["cameras"][0]["model_variant"] == "v2_640"
+    assert body["cameras"][0]["model_variant"] == camera_config._DEFAULT_MODEL_VARIANT
 
 
 def test_get_model_variants_lists_known_keys(client):
     res = client.get("/api/model-variants")
     assert res.status_code == 200
     keys = {v["key"] for v in res.json()["variants"]}
-    assert keys == {"v2_640", "v3_320", "v4_320", "v5b_320"}
+    assert keys == set(camera_config.MODEL_VARIANTS)
 
 
 def test_get_device_status_returns_expected_keys(client):

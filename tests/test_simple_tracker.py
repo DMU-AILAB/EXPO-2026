@@ -93,3 +93,51 @@ def test_coasting_then_removed_after_max_age():
     assert len(tracks) == 1 and tracks[0]["age"] == 2
     tracks = t.update([])  # 미탐지 프레임 2 (age > max_age, 제거)
     assert len(tracks) == 0
+
+
+def test_max_disp_stays_small_for_static_object_with_jitter():
+    """고정 물체는 탐지 지터가 있어도 원점 대비 변위가 커지지 않아야 한다.
+
+    누적 경로 길이로 쟀다면 지터가 매 프레임 더해져 결국 "움직였다"가 되지만,
+    원점 대비 최대 변위는 지터 진폭에 bounded된다 — 움직임 게이트의 전제다.
+    """
+    import random
+    rng = random.Random(0)
+    t = SimpleTracker()
+    for _ in range(300):
+        x = 100 + rng.uniform(-2, 2)
+        y = 200 + rng.uniform(-2, 2)
+        tracks = t.update([{"bbox": [x, y, x + 20, y + 60], "conf": 0.8,
+                            "class": 0, "label": "white_cane"}])
+    assert tracks[0]["max_disp"] < 10.0
+
+
+def test_max_disp_grows_for_moving_object():
+    t = SimpleTracker()
+    for i in range(30):
+        x = 100 + i * 4
+        tracks = t.update([{"bbox": [x, 200, x + 20, 260], "conf": 0.8,
+                            "class": 0, "label": "white_cane"}])
+    assert tracks[0]["max_disp"] > 100.0
+
+
+def test_max_disp_is_retained_after_object_stops():
+    """움직인 뒤 멈춰도 '움직인 적 있음'은 유지된다 (static_frames와 목적이 다름)."""
+    t = SimpleTracker()
+    for i in range(30):
+        x = 100 + i * 4
+        t.update([{"bbox": [x, 200, x + 20, 260], "conf": 0.8,
+                   "class": 0, "label": "white_cane"}])
+    for _ in range(30):
+        tracks = t.update([{"bbox": [216, 200, 236, 260], "conf": 0.8,
+                            "class": 0, "label": "white_cane"}])
+    assert tracks[0]["max_disp"] > 100.0      # 유지
+    assert tracks[0]["static_frames"] >= 24   # 지금은 멈춰 있음
+
+
+def test_new_track_starts_with_zero_displacement():
+    """새 트랙은 움직임이 증명되지 않은 상태로 시작 — 게이트가 프레임 0부터 막는다."""
+    t = SimpleTracker()
+    tracks = t.update([{"bbox": [100, 200, 120, 260], "conf": 0.8,
+                        "class": 0, "label": "white_cane"}])
+    assert tracks[0]["max_disp"] == 0.0

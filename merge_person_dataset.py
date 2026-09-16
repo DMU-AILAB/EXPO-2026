@@ -15,7 +15,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-SRC_ROOT = Path(__file__).parent / "datasets" / "Pedestrian Detection CCTV yolov8"
+SRC_ROOT = Path(__file__).parent / "datasets" / "sources" / "person_pedcctv"
 DST_ROOT = Path(__file__).parent / "datasets"
 SPLIT_MAP = {"train": "train", "valid": "val", "test": "test"}
 KEEP_CLASSES = {3, 4, 5, 6}   # person_female, person_female_back, person_male, person_male_back

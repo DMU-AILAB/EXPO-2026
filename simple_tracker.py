@@ -21,11 +21,23 @@ class SimpleTracker:
     보인다. 거리 임계값을 트랙 박스의 대각선 길이에 비례시켜, 물체가 크면
     더 멀리 움직여도 같은 트랙으로 보고 작으면 엄격하게 본다.
 
-    각 트랙은 "static_frames"(연속으로 거의 안 움직인 프레임 수)도 추적한다 —
+    각 트랙은 배경 오탐지 판별용으로 두 가지 이동 지표를 함께 추적한다 —
     지팡이는 사람이 들고 움직이지만, 배경의 케이블/문틀 경계선 같은 고정된
-    오탐지 대상은 항상 같은 자리에 그대로 있다. 호출부(camera_live_pi.py 등)가
-    이 값을 이용해 "너무 오래 정지된 지팡이 트랙은 배경 오탐지로 간주하고
-    ROI 트리거 대상에서 제외"하는 식으로 활용할 수 있다.
+    오탐지 대상은 항상 같은 자리에 그대로 있다.
+
+    - "static_frames": 연속으로 거의 안 움직인 프레임 수. **지금 멈춰 있는가**를 본다.
+    - "max_disp": 트랙 생성 지점(origin_center) 대비 중심 이동 거리의 최댓값.
+      **한 번이라도 움직인 적이 있는가**를 본다(한 번 커지면 줄지 않음).
+
+    둘 다 필요한 이유는 목적이 다르기 때문이다. static_frames만 쓰면 새로 생긴
+    트랙은 값이 0이라 임계값에 도달할 때까지 "정지"로 판정되지 않아, 그 사이에
+    배경 오탐지가 트리거를 통과한다("정지가 증명되기 전까지는 통과"). max_disp는
+    반대로 "움직임이 증명되기 전까지는 억제"라서 고정 물체를 프레임 0부터 막는다.
+
+    max_disp를 누적 경로 길이가 아니라 **원점 대비 최대 변위**로 재는 이유:
+    누적 경로는 EMA 스무딩 후에도 남는 미세 지터가 매 프레임 더해져 완전히 고정된
+    물체도 시간이 지나면 "움직였다"가 된다. 원점 대비 변위는 지터 진폭에 bounded돼
+    고정 물체는 영원히 작은 값에 머문다.
     """
 
     def __init__(self, max_age: int = 10, min_iou: float = 0.3,
@@ -77,6 +89,13 @@ class SimpleTracker:
         self._tracks[ti]["age"]  = 0
         self._tracks[ti]["conf"] = det["conf"]
 
+        # 원점 대비 최대 변위 — 스무딩된 bbox 기준으로 재야 지터가 덜 섞인다.
+        ocx, ocy = self._tracks[ti]["origin_center"]
+        cx, cy = self._center(self._tracks[ti]["bbox"])
+        disp = ((cx - ocx) ** 2 + (cy - ocy) ** 2) ** 0.5
+        if disp > self._tracks[ti]["max_disp"]:
+            self._tracks[ti]["max_disp"] = disp
+
     def update(self, detections: list[dict]) -> list[dict]:
         """탐지 결과를 받아 트랙 목록을 갱신하고 반환."""
         matched_det: set[int] = set()
@@ -126,6 +145,8 @@ class SimpleTracker:
                     "label":        det["label"],
                     "age":          0,
                     "static_frames": 0,
+                    "origin_center": self._center(det["bbox"]),
+                    "max_disp":      0.0,
                 })
                 self._next_id += 1
 

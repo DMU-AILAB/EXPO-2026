@@ -87,9 +87,10 @@ def main() -> None:
 
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(img_h, img_w, 3)
 
-        set_input(interp, frame, input_size=input_size)
+        lb = set_input(interp, frame, input_size=input_size)
         interp.invoke()
-        dets = postprocess_multiclass(get_output(interp), conf_thr, img_w, img_h)
+        dets = postprocess_multiclass(get_output(interp), conf_thr, img_w, img_h,
+                                      letterbox=lb)
 
         data = json.dumps(dets).encode()
         stdout.write(struct.pack(">I", len(data)) + data)

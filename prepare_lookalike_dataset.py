@@ -7,7 +7,7 @@
 
 수집 원본을 두 갈래로 나눠 넣는다 — 이 구분이 핵심이다:
 
-    lookalike_data/
+    datasets/sources/lookalike_lvis_oi/
       solo/<카테고리>/         사람 없이 유사물만       → 빈 라벨(배경)
       with_person/<카테고리>/  사람이 유사물을 들고 있음 → person(class 1)만 라벨
 
@@ -40,8 +40,8 @@ from pathlib import Path
 from dataset_prep import convert, register_heif, sort_key, stratified_holdout
 
 ROOT = Path(__file__).parent
-SRC_DIR = ROOT / "lookalike_data"
-STAGE_DIR = ROOT / "datasets" / "lookalike"
+SRC_DIR = ROOT / "datasets" / "sources" / "lookalike_lvis_oi"
+STAGE_DIR = ROOT / "datasets" / "staging" / "lookalike"
 TRAIN_IMAGES = ROOT / "datasets" / "train" / "images"
 TRAIN_LABELS = ROOT / "datasets" / "train" / "labels"
 COCO_WEIGHTS = ROOT / "yolov8n.pt"
@@ -77,17 +77,25 @@ def collect_sources(src_dir: Path, exclude: set[str]) -> tuple[list[tuple[Path, 
     return kept, excluded
 
 
-def label_people(names: list[str], stage_images: Path) -> dict[str, list[tuple[float, float, float, float]]]:
-    """with_person 이미지에 COCO yolov8n으로 person 박스를 자동 검출 → YOLO 정규화 좌표."""
+def label_people(names: list[str], stage_images: Path,
+                 weights: Path | str = COCO_WEIGHTS,
+                 conf: float = PERSON_CONF) -> dict[str, list[tuple[float, float, float, float]]]:
+    """with_person 이미지에 COCO 모델로 person 박스를 자동 검출 → YOLO 정규화 좌표.
+
+    weights/conf 기본값은 이 스크립트가 lk_*.jpg를 만들 때 쓴 값 그대로다(재현성).
+    `resplit_dataset.relabel_person()`은 더 큰 모델을 넘겨 쓴다 — 지팡이 데이터셋의
+    사람 라벨 보완에서는 yolov8n이 명백히 보이는 사람도 놓치는 사례가 있었고,
+    yolov8l이 같은 임계값에서 11% 더 찾았다(530 → 588박스).
+    """
     from ultralytics import YOLO
 
-    model = YOLO(str(COCO_WEIGHTS))
+    model = YOLO(str(weights))
     boxes: dict[str, list[tuple[float, float, float, float]]] = {}
     batch = 16
     for i in range(0, len(names), batch):
         chunk = names[i:i + batch]
         results = model.predict([str(stage_images / n) for n in chunk],
-                                imgsz=640, conf=PERSON_CONF, classes=[0], verbose=False)
+                                imgsz=640, conf=conf, classes=[0], verbose=False)
         for name, res in zip(chunk, results):
             boxes[name] = [tuple(b) for b in res.boxes.xywhn.tolist()]
     return boxes
@@ -135,9 +143,9 @@ def main() -> None:
     parser.add_argument("--exclude-file", default=None,
                         help="제외할 원본 파일명 목록 txt (한 줄에 하나)")
     parser.add_argument("--src", default=None,
-                        help=f"수집 원본 디렉토리 (기본: {SRC_DIR.name})")
+                        help=f"수집 원본 디렉토리 (기본: {SRC_DIR.relative_to(ROOT)})")
     parser.add_argument("--stage", default=None,
-                        help=f"변환 스테이징 디렉토리 (기본: datasets/{STAGE_DIR.name})")
+                        help=f"변환 스테이징 디렉토리 (기본: {STAGE_DIR.relative_to(ROOT)})")
     args = parser.parse_args()
 
     src_dir = Path(args.src) if args.src else SRC_DIR
@@ -153,8 +161,10 @@ def main() -> None:
 
     exclude = set()
     if args.exclude_file:
-        exclude = {line.strip() for line in Path(args.exclude_file).read_text().splitlines()
-                   if line.strip()}
+        # '#' 이후는 주석 — 왜 뺐는지를 파일명 옆에 남길 수 있어야 나중에 판단을 되짚을 수 있다
+        exclude = {line.split("#", 1)[0].strip()
+                   for line in Path(args.exclude_file).read_text().splitlines()}
+        exclude.discard("")
 
     kept, excluded = collect_sources(src_dir, exclude)
     if not kept:
@@ -229,16 +239,23 @@ def main() -> None:
     print(f"카테고리: {counts}")
 
     holdout = stratified_holdout(strata, HOLDOUT_RATIO)
-    # 벤치(eval_background_fp.py)는 "모든 박스가 오탐지"를 전제로 하므로 solo만 넣는다.
+    # 벤치는 홀드아웃 **전량**을 쓴다 — with_person 이미지도 지팡이는 없으므로
+    # `eval_background_fp.py --classes 0`으로 지팡이 오탐지만 세면 그대로 유효하다.
+    # solo만 쓰면 표본이 1/7로 줄어 지표가 둔감해진다.
     bench = sorted(n for n in holdout if manifest[n]["branch"] == "solo")
     train_names = [n for n in names if n not in holdout]
-    print(f"홀드아웃 {len(holdout)}장 (그중 벤치용 solo {len(bench)}장) / train 편입 {len(train_names)}장")
+    print(f"홀드아웃 {len(holdout)}장 (그중 클래스 무관 벤치용 solo {len(bench)}장)"
+          f" / train 편입 {len(train_names)}장")
 
     if args.dry_run:
         print("\n--dry-run: train 복사와 메타데이터 기록을 건너뜁니다.")
         return
 
+    # holdout.txt: 전량 — `--classes 0`(지팡이 오탐지만)과 함께 쓴다
+    # holdout_solo.txt: 사람도 없는 것만 — 클래스 필터 없이 쓸 수 있다
     (stage_dir / "holdout.txt").write_text(
+        "\n".join(str(stage_images / n) for n in sorted(holdout)) + "\n")
+    (stage_dir / "holdout_solo.txt").write_text(
         "\n".join(str(stage_images / n) for n in bench) + "\n")
     (stage_dir / "manifest.json").write_text(
         json.dumps({"images": manifest, "holdout": sorted(holdout), "bench": bench,
