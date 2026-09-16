@@ -42,17 +42,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v10_320`** (= `runs/white_cane_v10_nolkc/weights`). v10은 **누수 없는 재분할(`datasets/v2`) 위에서 처음부터 학습한 계보**이고, 실영상 탐지율이 v9 계열 최고 수준이다(`docs/model_evaluation_report_v3.md`). `v11_yolo26n_320`은 백본 비교용으로 남겨둔 것이지 권장이 아니다(실영상 35.3% vs v10 73.2%). **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
-| `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
+| `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/v1/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
 | `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
 | `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
 | `lookalike_exclude.txt` | 유사물 네거티브에서 뺄 원본 파일명 + 근거 주석 (`--exclude-file`) — 흰지팡이가 찍힌 사진을 걸러내는 육안 검수 결과 |
 | `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `datasets/sources/lookalike_lvis_oi/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
 | `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
-| `eval_video_recall.py` | 로컬 전용 — **실영상 기준 지팡이 탐지/트리거 벤치마크. 모델 채택의 1차 기준.** `camera_live_pi.py`의 백엔드·게이트 상수·연관 로직을 그대로 import해 배포와 같은 경로로 잰다(복붙 금지). `--gt`로 정답 구간을 주면 재현율과 오탐지를 분리 집계한다(`datasets/video_gt.json`) |
+| `eval_video_recall.py` | 로컬 전용 — **실영상 기준 지팡이 탐지/트리거 벤치마크. 모델 채택의 1차 기준.** `camera_live_pi.py`의 백엔드·게이트 상수·연관 로직을 그대로 import해 배포와 같은 경로로 잰다(복붙 금지). `--gt`로 정답 구간을 주면 재현율과 오탐지를 분리 집계한다(`datasets/videos/video_gt.json`) |
 | `resplit_dataset.py` + `tests/test_resplit_dataset.py` | 로컬 전용 1회성 — 누수 없는 **그룹 단위 재분할**(`datasets/v2/`, 하드링크). 증강 해시/AIHub 세션을 그룹으로 묶고 층별 md5로 배정한다. `--relabel-person`으로 cane_only의 누락 사람 라벨도 보완. 테스트가 split 쌍의 그룹키 교집합이 공집합인지 검증한다 |
 | `prepare_night_eval.py` | 로컬 전용 1회성 — 합성 야간 평가셋(`datasets/v2_night/`, 감마 0.35~0.55 + 노이즈 σ=6). **KPI 달성 근거가 아니라 회귀 감시용** |
 | `configs/train_*.yaml` | 학습 설정 — `yolo train cfg=<yaml>`로 재현 가능하게 고정. `project:`는 반드시 절대경로(상대경로면 `runs/detect/runs/<name>`으로 중첩된다) |
-| `apps/label_tool/server.py` + `apps/label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `apps/label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
+| `apps/label_tool/server.py` + `apps/label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/v1/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `apps/label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
 
 ### 미구현 (계획)
 
@@ -254,8 +254,9 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
 
 ## 데이터셋
 
-- 학습에 실제로 쓰이는 건 `datasets/{train,val,test}/{images,labels}` (`data.yaml`이 참조하는 경로).
-  `datasets/sources/cane_pool/{images,labels}`는 지팡이 전용 원본 풀(스플릿 전)로, `train/val/test`의
+- 학습에 실제로 쓰이는 건 `datasets/v1/{train,val,test}/{images,labels}` (`data.yaml`이 참조하는 경로).
+  파생 스플릿(`v2`·`v2_nolkc`·`v2_night`)과 나란히 놓이도록 `v1/`로 묶었다.
+  `datasets/sources/cane_pool/{images,labels}`는 지팡이 전용 원본 풀(스플릿 전)로, `v1/{train,val,test}`의
   cane_only 이미지 합계와 장수가 일치한다.
 - 라벨 형식: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이, class 1 = 사람
 - **원본 해상도 상한: 지팡이 416×416 / 사람 224×224** (전수 조사). 따라서 **`imgsz > 416`
@@ -275,11 +276,11 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   **`resplit_dataset.py --relabel-person`으로 보완 완료**: `datasets/v2` 기준 지팡이+사람이
   동시에 라벨링된 이미지가 **9,228장**이고 cane_only는 426 → **75장**으로 줄었다
   (`docs/model_evaluation_report_v3.md` §1). `apps/label_tool/`은 남은 75장을 수동 검토할 때 쓴다.
-- **배경(네거티브) 이미지 228장**이 `datasets/train/`에 `bg_XXXX.jpg` + 빈 라벨로 들어가 있다
+- **배경(네거티브) 이미지 228장**이 `datasets/v1/train/`에 `bg_XXXX.jpg` + 빈 라벨로 들어가 있다
   (`prepare_background_dataset.py`가 `datasets/sources/background_photos/`에서 생성). YOLO는 빈 라벨 이미지를 배경으로
   학습해 오탐지를 억제한다. 원본 `datasets/sources/background_photos/`와 변환 스테이징 `datasets/staging/background/`는
   Roboflow 원본과 같은 원칙으로 **커밋 대상이 아니다**(`.gitignore`) — 실제 학습에 쓰이는
-  변환본만 `datasets/train/`에 커밋된다. 이 중 40장은 학습에서 제외하고 오탐지 측정 전용
+  변환본만 `datasets/v1/train/`에 커밋된다. 이 중 40장은 학습에서 제외하고 오탐지 측정 전용
   홀드아웃(`datasets/staging/background/holdout.txt`)으로 쓴다. 배경에 사람이 찍힌 4장은
   `prepare_background_dataset.EXCLUDE`로 제외했다 — 라벨 없이 넣으면 "사람 = 배경"을 가르치게 된다.
 - **유사물 네거티브**는 `prepare_lookalike_dataset.py`가 `lk_XXXX.jpg`로 편입한다.

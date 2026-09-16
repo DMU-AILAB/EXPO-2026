@@ -69,7 +69,7 @@ _SUGGEST_PROMPT = (
 STATIC_DIR = Path(__file__).parent / "static"
 SPLITS = ["train", "val", "test"]
 
-datasets_dir: Path = Path(__file__).resolve().parents[2] / "datasets"
+datasets_dir: Path = Path(__file__).resolve().parents[2] / "datasets" / "v1"
 reviewed_path: Path = Path(__file__).parent / "reviewed.json"
 
 app = FastAPI(title="VisionGuide Cane-Dataset Person Labeling Tool",
@@ -361,7 +361,7 @@ if __name__ == "__main__":
     import uvicorn
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--datasets-dir", default=str(Path(__file__).resolve().parents[2] / "datasets"))
+    parser.add_argument("--datasets-dir", default=str(Path(__file__).resolve().parents[2] / "datasets" / "v1"))
     parser.add_argument("--port", type=int, default=5050)
     args = parser.parse_args()
 

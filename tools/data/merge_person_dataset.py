@@ -1,5 +1,5 @@
 """merge_person_dataset.py — Roboflow "Pedestrian Detection CCTV" 데이터셋을
-기존 white_cane 데이터셋(datasets/train|val|test)에 1회성으로 병합한다.
+기존 white_cane 데이터셋(datasets/v1/{train,val,test})에 1회성으로 병합한다.
 
 이 데이터셋은 사실 마스크 착용 탐지용이라 nc=7
 (face_mask, human_face, incorrect_face_mask,
@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "sources" / "person_pedcctv"
-DST_ROOT = Path(__file__).resolve().parents[2] / "datasets"
+DST_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "v1"
 SPLIT_MAP = {"train": "train", "valid": "val", "test": "test"}
 KEEP_CLASSES = {3, 4, 5, 6}   # person_female, person_female_back, person_male, person_male_back
 PERSON_CLASS_ID = 1

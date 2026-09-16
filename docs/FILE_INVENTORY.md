@@ -118,9 +118,11 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 
 ```
 datasets/
-├── train/{images,labels}   11,116장  ┐
-├── val/{images,labels}      1,263장  ├─ 원본 풀 (337.6 MB / 26,956 파일)
-├── test/{images,labels}     1,099장  ┘
+├── v1/                     ← 원본 풀. data.yaml이 가리킨다
+│   ├── train/{images,labels}  11,116장  ┐
+│   ├── val/{images,labels}     1,263장  ├─ 337.6 MB / 26,956 파일
+│   └── test/{images,labels}    1,099장  ┘
+├── videos/                 ← 평가 영상 3개 + video_gt.json (미추적)
 ├── sources/cane_pool/
 │   ├── images/              9,308장  ← train/val/test와 blob 동일 (280.4 MB)
 │   └── labels/              9,308개  ← 사람 라벨 병합 전 원본 (0.3 MB, 고유)
@@ -128,7 +130,7 @@ datasets/
 │
 ├── v2/ v2_nolkc/ v2_night/            ← .gitignore (resplit_dataset.py가 생성)
 ├── data_v2*.yaml                      ← .gitignore
-└── test2.mp4 test3.mp4                ← untracked
+└── staging/                          ← .gitignore (변환 중간 산출물)
 ```
 
 **주의해야 할 두 가지**
@@ -201,7 +203,7 @@ Pi에는 아무 영향이 없다 — 배포 경로 자체가 없다.
 | 대상 | 이유 |
 |---|---|
 | `datasets/sources/background_photos/`, `staging/`, `v2*/` | 원본·중간 산출물. 스크립트로 재생성 |
-| `datasets/train/images/lk_*.jpg` (544장) | 공개 데이터셋에서 재수집 가능 |
+| `datasets/v1/train/images/lk_*.jpg` (544장) | 공개 데이터셋에서 재수집 가능 |
 | `runs/*/weights/{best.onnx,best_saved_model/,keep_*,last.pt}` | export 중간 산출물 |
 | `runs/detect/` | `yolo val` 부산물 |
 | `eval_out/` | 평가 시각화 산출물 |

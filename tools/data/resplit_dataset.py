@@ -50,6 +50,8 @@ sys.path.insert(0, str(ROOT / "tools" / "data"))
 
 
 SRC_SPLITS = ("train", "val", "test")
+# 원본 풀은 datasets/v1/{train,val,test} 다 — v2 계열과 나란히 놓이도록 재배치했다.
+SRC_ROOT = ROOT / "datasets" / "v1"
 OUT_DIR = ROOT / "datasets" / "v2"
 DATA_YAML = ROOT / "datasets" / "data_v2.yaml"
 MANIFEST = OUT_DIR / "split_manifest.json"
@@ -217,7 +219,7 @@ def _label_path(name: str) -> Path:
     if fixed.exists():
         return fixed
     for s in SRC_SPLITS:
-        p = ROOT / "datasets" / s / "labels" / (Path(name).stem + ".txt")
+        p = SRC_ROOT / s / "labels" / (Path(name).stem + ".txt")
         if p.exists():
             return p
     raise FileNotFoundError(name)
@@ -225,7 +227,7 @@ def _label_path(name: str) -> Path:
 
 def _image_path(name: str) -> Path:
     for s in SRC_SPLITS:
-        p = ROOT / "datasets" / s / "images" / name
+        p = SRC_ROOT / s / "images" / name
         if p.exists():
             return p
     raise FileNotFoundError(name)
@@ -387,7 +389,7 @@ def main() -> None:
 
     names: list[str] = []
     for s in SRC_SPLITS:
-        names += os.listdir(ROOT / "datasets" / s / "images")
+        names += os.listdir(SRC_ROOT / s / "images")
     names.sort()
 
     if args.relabel_person:

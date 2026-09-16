@@ -4,7 +4,7 @@ detect.py — 흰 지팡이 탐지 추론 모듈
 단독 실행:
     python detect.py image.jpg
     python detect.py image.jpg --model runs/white_cane_v2/weights/best.pt --conf 0.25
-    python detect.py datasets/test/images/ --save-dir output/
+    python detect.py datasets/v1/test/images/ --save-dir output/
 
 외부 임포트:
     from detect import WhiteCaneDetector

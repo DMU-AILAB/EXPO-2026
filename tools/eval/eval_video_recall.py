@@ -355,7 +355,7 @@ def _report(results: list[dict], args) -> None:
     else:
         print()
         print("정답 구간 없음 — 위 수치는 '전 구간에 지팡이 존재' 가정이다"
-              " (datasets/video_gt.json에 항목을 추가하면 분리 집계된다).")
+              " (datasets/videos/video_gt.json에 항목을 추가하면 분리 집계된다).")
 
     print()
     r0 = results[0]
@@ -387,7 +387,7 @@ def main() -> None:
     p.add_argument("--no-require-person", action="store_true",
                    help="사람 동반 게이트를 끄고 측정 (배포 기본값은 켜짐)")
     p.add_argument("--stride", type=int, default=1, help="N프레임마다 1장만 평가 (빠른 확인용)")
-    p.add_argument("--gt", metavar="JSON", default="datasets/video_gt.json",
+    p.add_argument("--gt", metavar="JSON", default="datasets/videos/video_gt.json",
                    help="정답 구간 파일. 영상 파일명을 키로 [[시작초, 끝초], ...]를 담는다. "
                         "해당 영상의 항목이 없으면 전 구간에 지팡이가 있다고 가정한다.")
     p.add_argument("--cache", metavar="NPZ", help="추론 결과 캐시 경로 (있으면 재사용, 없으면 생성)")
