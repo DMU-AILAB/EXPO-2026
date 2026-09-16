@@ -1,6 +1,9 @@
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# 저장소 루트와 배포 런타임 모듈(device/)을 둘 다 경로에 넣는다.
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "device"))
 
 # streamlit-drawable-canvas 0.9.3 호환성 패치
 # Streamlit 1.37+에서 image_to_url 시그니처 변경:

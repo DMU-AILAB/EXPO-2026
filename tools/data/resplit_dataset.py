@@ -44,8 +44,9 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[2]   # 저장소 루트 (이 파일은 tools/<분류>/ 아래에 있다)
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools" / "data"))
 
 
 SRC_SPLITS = ("train", "val", "test")
@@ -63,7 +64,7 @@ RELABEL_DIR = ROOT / "datasets" / "staging" / "person_relabel"
 # 검출된 사람만 라벨하고 못 찾은 사람은 배경으로 남겨두므로, 재현율이 낮으면 고치려던
 # 문제가 그대로 남는다. 실측(cane_only 426장, conf 0.40): yolov8n 530박스 /
 # yolov8m 569 / yolov8l 588. 로컬 1회성 작업이라 큰 모델의 추론 비용은 문제가 안 된다.
-RELABEL_WEIGHTS = ROOT / "yolov8l.pt"
+RELABEL_WEIGHTS = ROOT / "weights" / "yolov8l.pt"
 # 임계값 0.25는 yolov8l 스윕에서 정했다 — 0.40에서 588박스, 0.25에서 598, 0.15에서
 # 618로 곡선이 0.25 아래에서 평평해진다. 더 낮추면 얻는 건 적고 오탐(사람 아닌 것을
 # 사람으로 라벨) 위험만 커진다. yolov8n으로는 conf 0.40에서 명백히 보이는 보행자를

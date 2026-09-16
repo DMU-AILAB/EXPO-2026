@@ -72,7 +72,7 @@ from pathlib import Path
 from dataset_prep import convert, sort_key, stratified_holdout
 from prepare_lookalike_dataset import label_people, write_review_sheets
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[2]   # 저장소 루트 (이 파일은 tools/<분류>/ 아래에 있다)
 SRC_DIR = ROOT / "datasets" / "sources" / "lookalike_stick_cctv"
 STAGE_DIR = ROOT / "datasets" / "staging" / "stick_cctv"
 TRAIN_IMAGES = ROOT / "datasets" / "train" / "images"

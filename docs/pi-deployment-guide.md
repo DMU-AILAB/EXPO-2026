@@ -216,7 +216,7 @@ tmux new -s visionguide
 
 # 창 1: 카메라 앱 실행
 cd ~/visionguide
-~/.pyenv/versions/3.10.14/bin/python camera_live_pi.py --headless --port 8080 --roi-config rois.json
+~/.pyenv/versions/3.10.14/bin/python device/camera_live_pi.py --headless --port 8080 --roi-config rois.json
 ```
 
 ```
@@ -226,7 +226,7 @@ Ctrl+B, C    새 창 열기
 ```bash
 # 창 2: ROI 에디터 실행
 cd ~/visionguide
-~/.pyenv/versions/3.10.14/bin/python roi_editor/server.py
+~/.pyenv/versions/3.10.14/bin/python apps/roi_editor/server.py
 ```
 
 ```

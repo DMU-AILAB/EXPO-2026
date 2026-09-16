@@ -17,13 +17,20 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
+# 저장소 루트 — PC 개발 트리에서는 이 파일이 device/ 안에 있고, Pi에는 rsync가
+# ~/visionguide/ 에 평면으로 풀어놓는다. runs/ 가 옆에 있으면 평면 배치(Pi),
+# 없으면 한 단계 위가 루트(PC)다. 같은 코드가 양쪽에서 동작해야 해서 이렇게 판별한다.
+_HERE = Path(__file__).parent
+_BASE = _HERE if (_HERE / "runs").is_dir() else _HERE.parent
+
 from typing import Union
 
 import cv2
 import numpy as np
 
 # 기본 모델 경로 (이 파일 기준 상대 경로)
-_DEFAULT_MODEL = Path(__file__).parent / "runs/white_cane_v2/weights/best.pt"
+_DEFAULT_MODEL = _BASE / "runs/white_cane_v2/weights/best.pt"
 
 
 class WhiteCaneDetector:

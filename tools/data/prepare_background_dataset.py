@@ -29,7 +29,7 @@ from pathlib import Path
 
 from dataset_prep import convert, register_heif, sort_key, stratified_holdout
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[2]   # 저장소 루트 (이 파일은 tools/<분류>/ 아래에 있다)
 SRC_DIR = ROOT / "datasets" / "sources" / "background_photos"
 STAGE_DIR = ROOT / "datasets" / "staging" / "background"
 TRAIN_IMAGES = ROOT / "datasets" / "train" / "images"

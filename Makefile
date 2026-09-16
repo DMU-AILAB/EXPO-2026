@@ -24,24 +24,26 @@ PI_PYTHON ?= python3
 PI_PIP    ?= pip3
 
 # Pi에 배포할 Python 소스 — 새 파일 추가 시 여기에 추가
+# 소스는 device/ 아래에 있지만 **Pi에는 ~/visionguide/ 에 평면으로 전개된다** —
+# 기기의 디렉터리 구조와 systemd 유닛 경로는 이 재배치 전후로 달라지지 않는다.
 DEPLOY_PY = \
-	camera_live_pi.py \
-	detect.py \
-	edgetpu_infer.py \
-	audio_trigger.py \
-	announcement_router.py \
-	kics_protocol.py \
-	si4432_radio.py \
-	rf_audio_trigger.py \
-	gpio_controls.py \
-	fan_controller.py \
-	yolo_postprocess.py \
-	simple_tracker.py \
-	cane_person_assoc.py \
-	foot_traffic_counter.py \
-	camera_config.py \
-	detection_events.py \
-	fp_hotspots.py
+	device/camera_live_pi.py \
+	device/detect.py \
+	device/edgetpu_infer.py \
+	device/audio_trigger.py \
+	device/announcement_router.py \
+	device/kics_protocol.py \
+	device/si4432_radio.py \
+	device/rf_audio_trigger.py \
+	device/gpio_controls.py \
+	device/fan_controller.py \
+	device/yolo_postprocess.py \
+	device/simple_tracker.py \
+	device/cane_person_assoc.py \
+	device/foot_traffic_counter.py \
+	device/camera_config.py \
+	device/detection_events.py \
+	device/fp_hotspots.py
 
 # Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.
 # 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.
@@ -107,8 +109,8 @@ sync:
 sync-roi-editor:
 	@echo "[SYNC] ROI 에디터 파일 전송..."
 	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/roi_editor/static"
-	rsync -avz --progress roi_editor/ $(DEST)/roi_editor/
-	rsync -avz --progress simulator/roi_manager.py $(DEST)/simulator/
+	rsync -avz --progress apps/roi_editor/ $(DEST)/roi_editor/
+	rsync -avz --progress apps/simulator/roi_manager.py $(DEST)/simulator/
 	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/simulator && touch ~/visionguide/simulator/__init__.py"
 
 ## Pi에 카메라 앱 의존성 설치

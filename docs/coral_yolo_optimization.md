@@ -231,7 +231,7 @@ INT8 양자화 품질은 calibration 데이터의 대표성에 크게 좌우된�
 
 ```bash
 # Pi에서 calibration 영상 수집 (100장 이상 권장)
-python camera_live_pi.py --save-frames 200 --output datasets/calib/
+python device/camera_live_pi.py --save-frames 200 --output datasets/calib/
 
 # export 시 calib 지정
 yolo export model=best.pt format=tflite int8=True data=calib.yaml

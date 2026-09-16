@@ -243,7 +243,7 @@ http://<새IP>:5000               ← discover.py로 조회
 **기본 사용:**
 
 ```bash
-python discover.py
+python tools/dev/discover.py
 ```
 
 ```
@@ -261,9 +261,9 @@ python discover.py
 
 | 옵션 | 설명 |
 |------|------|
-| `python discover.py` | 탐색 후 URL 출력 (약 3~4초) |
-| `python discover.py --open` | 탐색 후 첫 번째 Pi를 브라우저로 자동 실행 |
-| `python discover.py --subnet 10.0.1` | 서브넷 직접 지정 (자동 감지 실패 시) |
+| `python tools/dev/discover.py` | 탐색 후 URL 출력 (약 3~4초) |
+| `python tools/dev/discover.py --open` | 탐색 후 첫 번째 Pi를 브라우저로 자동 실행 |
+| `python tools/dev/discover.py --subnet 10.0.1` | 서브넷 직접 지정 (자동 감지 실패 시) |
 
 **동작 방식:**
 
@@ -357,7 +357,7 @@ sudo systemctl start visionguide-auto-ap  # iptables + dnsmasq도 재적용
 
 ```bash
 # 방법 1: discover.py (PC에서)
-python discover.py
+python tools/dev/discover.py
 
 # 방법 2: mDNS
 http://raspberrypi.local:5000

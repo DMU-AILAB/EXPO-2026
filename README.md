@@ -74,7 +74,7 @@ cp rois_example.json rois.json
 # rois.json 에서 ROI 폴리곤 좌표와 audio_file 경로 수정
 
 # 4. 실행 (헤드리스 모드)
-python camera_live_pi.py --roi-config rois.json --headless --port 8080
+python device/camera_live_pi.py --roi-config rois.json --headless --port 8080
 ```
 
 브라우저에서 `http://<Pi IP>:8080/stream.mjpg` 로 MJPEG 스트리밍 확인.
@@ -82,7 +82,7 @@ python camera_live_pi.py --roi-config rois.json --headless --port 8080
 ### ROI 설정 없이 실행 (탐지·추적만)
 
 ```bash
-python camera_live_pi.py --source 0 --conf 0.35
+python device/camera_live_pi.py --source 0 --conf 0.35
 ```
 
 ---

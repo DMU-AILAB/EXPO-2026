@@ -36,7 +36,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[2]   # 저장소 루트 (이 파일은 tools/<분류>/ 아래에 있다)
 DST_ROOT = ROOT / "datasets" / "sources" / "lookalike_lvis_oi"
 COCO_WEIGHTS = ROOT / "yolov8n.pt"
 SEED = 0

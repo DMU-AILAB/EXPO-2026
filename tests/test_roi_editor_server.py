@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "roi_editor"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "roi_editor"))
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")

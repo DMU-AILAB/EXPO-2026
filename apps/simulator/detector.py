@@ -5,7 +5,7 @@ from ultralytics import YOLO
 import streamlit as st
 
 DEFAULT_MODEL_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "runs/white_cane_v2/weights/best.pt"
+    os.path.dirname(__file__), "..", "..", "runs/white_cane_v2/weights/best.pt"
 )
 
 

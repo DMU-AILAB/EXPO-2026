@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import camera_config as cc
 import camera_live_pi as m

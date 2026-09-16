@@ -40,6 +40,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
+import sys
+
+# 저장소 루트 — PC 개발 트리에서는 이 파일이 device/ 안에 있고, Pi에는 rsync가
+# ~/visionguide/ 에 평면으로 풀어놓는다. runs/ 가 옆에 있으면 평면 배치(Pi),
+# 없으면 한 단계 위가 루트(PC)다. 같은 코드가 양쪽에서 동작해야 해서 이렇게 판별한다.
+_HERE = Path(__file__).parent
+_BASE = _HERE if (_HERE / "runs").is_dir() else _HERE.parent
+
+# simulator 패키지의 위치도 배치에 따라 다르다 — Pi는 ~/visionguide/simulator/,
+# PC 개발 트리는 apps/simulator/. 아래 ROIManager import가 try/except로 감싸여
+# 있어서 경로가 틀리면 ROI·오디오 기능이 **조용히 꺼진다**. 여기서 확실히 잡는다.
+for _cand in (_BASE, _BASE / "apps"):
+    if (_cand / "simulator").is_dir() and str(_cand) not in sys.path:
+        sys.path.insert(0, str(_cand))
+
 from urllib.parse import urlsplit
 
 import cv2
@@ -106,7 +121,7 @@ def _model_paths(weights_dir: str) -> dict[str, Path]:
     폴더를 실제 모델 파일 경로들로 변환한다 — 카메라마다 다른 모델(예: 정확도 우선
     white_cane_v2/640 vs 속도 우선 white_cane_v3_320/320)을 쓸 수 있게 한다.
     """
-    base = Path(__file__).parent / weights_dir
+    base = _BASE / weights_dir
     return {
         "edgetpu": base / "best_int8_edgetpu.tflite",
         "tflite":  base / "best_int8.tflite",
@@ -354,7 +369,7 @@ def build_backend(
 
     raise RuntimeError(
         "사용 가능한 모델 파일을 찾을 수 없습니다.\n"
-        f"  확인 경로: {Path(__file__).parent / weights_dir}"
+        f"  확인 경로: {_BASE / weights_dir}"
     )
 
 

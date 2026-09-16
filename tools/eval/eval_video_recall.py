@@ -36,8 +36,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[2]   # 저장소 루트 (이 파일은 tools/<분류>/ 아래에 있다)
 sys.path.insert(0, str(ROOT))
+# 배포 런타임 모듈은 device/ 에 있다 — 복붙 금지 원칙상 그대로 import한다.
+sys.path.insert(0, str(ROOT / "device"))
 
 # 배포 코드에서 그대로 가져온다 — 복붙 금지. 상수가 바뀌면 평가도 따라가야 한다.
 from camera_live_pi import (  # noqa: E402

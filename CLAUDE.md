@@ -65,14 +65,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 디렉터리 구조 (★ 배치 규칙)
+
+```
+device/     Pi에서 실행되는 런타임 17개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
+apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
+dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
+configs/ deploy/ tests/ docs/ datasets/ runs/ weights/ examples/
+```
+
+**새 파일을 어디에 둘지**는 "Pi에서 도는가"로 먼저 가른다. Pi에서 돌면 `device/`에
+넣고 **반드시 `Makefile`의 `DEPLOY_PY`에도 추가**한다. 둘이 어긋나면 기기에서
+ImportError가 나거나, 더 나쁘게는 구버전 파일이 조용히 남는다.
+
+### ★ Pi는 평면 배치다 — 이 저장소 구조와 다르다
+
+`make sync`는 `device/*.py`를 Pi의 `~/visionguide/`에 **평면으로** 풀어놓는다.
+즉 기기에서는 `device/`라는 디렉터리가 존재하지 않고 모든 모듈이 한 곳에 있다.
+systemd 유닛도 `~/visionguide/camera_live_pi.py`를 가리킨다.
+
+그래서 **양쪽에서 동작해야 하는 경로 계산은 배치를 판별해야 한다.** `device/`의
+모듈들은 이 관용구를 쓴다.
+
+```python
+_HERE = Path(__file__).parent
+_BASE = _HERE if (_HERE / "runs").is_dir() else _HERE.parent   # 평면(Pi) vs 중첩(PC)
+```
+
+`simulator` 패키지도 같은 문제를 겪는다 — Pi는 `~/visionguide/simulator/`,
+PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도하는 이유이며,
+**`ROIManager` import가 `try/except ImportError`로 감싸여 있어 경로가 틀리면 ROI·오디오가
+조용히 꺼지기 때문에** 여기서 확실히 잡아야 한다.
+
+`apps/roi_editor/server.py`도 마찬가지다 — Pi에서는 `parent.parent`가 곧
+`~/visionguide/`지만 PC에서는 `apps/`라서, 런타임 모듈을 찾으려면 `device/`를
+따로 넣어야 한다.
+
+테스트는 `tests/conftest.py`가 `device/`·`apps/`·`tools/*`를 한 번에 경로에 넣는다 —
+개별 테스트에 `sys.path` 조작을 다시 넣지 말 것.
+
 ## 핵심 파일 관계
 
-`camera_live_pi.py` (Pi 메인) ←→ `audio_trigger.py` + `simulator/roi_manager.py` + `camera_config.py`
-`simulator/app.py` (PC 시뮬레이터) ←→ `audio_trigger.py` + `simulator/roi_manager.py` + `simulator/trigger_dispatcher.py`
-`roi_editor/server.py` (ROI/카메라 웹 에디터) ←→ `simulator/roi_manager.py`(간접, JSON 스키마 공유) + `camera_config.py` + `foot_traffic_counter.py`
+`device/camera_live_pi.py` (Pi 메인) ←→ `device/audio_trigger.py` + `apps/simulator/roi_manager.py` + `device/camera_config.py`
+`apps/simulator/app.py` (PC 시뮬레이터) ←→ `device/audio_trigger.py` + `apps/simulator/roi_manager.py` + `apps/simulator/trigger_dispatcher.py`
+`apps/roi_editor/server.py` (ROI/카메라 웹 에디터) ←→ `apps/simulator/roi_manager.py`(간접, JSON 스키마 공유) + `device/camera_config.py` + `device/foot_traffic_counter.py`
 
-새 기능을 추가할 때: `simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유하므로 변경 시 양쪽 동작을 확인하세요.
-`camera_config.py`는 `camera_live_pi.py`(런타임 로더)와 `roi_editor/server.py`(웹 UI 저장/검증) 양쪽이
+새 기능을 추가할 때: `apps/simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유하므로 변경 시 양쪽 동작을 확인하세요.
+`device/camera_config.py`는 `device/camera_live_pi.py`(런타임 로더)와 `apps/roi_editor/server.py`(웹 UI 저장/검증) 양쪽이
 동일 모듈을 import하므로, 검증 규칙(포트 중복, Coral 동글 1개 제약 등)은 한 곳(`validate_camera_config`)에만 있다.
 
 ## 카메라 프로필 / 회전 / 감지 제외구역 (설계 결정)
@@ -286,16 +326,16 @@ conda activate visionguide
 # pip install -r requirements.txt
 
 # PC 시뮬레이터 실행
-cd simulator && streamlit run app.py
+cd apps/simulator && streamlit run app.py
 
 # Pi 전용 카메라 뷰어 (ROI + 오디오 없음)
-python camera_live_pi.py --source 0 --headless
+python device/camera_live_pi.py --source 0 --headless
 
 # Pi 전용 카메라 뷰어 (ROI + MP3 음성 안내)
-python camera_live_pi.py --roi-config rois.json --headless
+python device/camera_live_pi.py --roi-config rois.json --headless
 
 # Pi 전용 카메라 뷰어 (다중 카메라 — camera_config.json에 정의된 카메라들을 동시 구동)
-python camera_live_pi.py --camera-config camera_config.json --headless
+python device/camera_live_pi.py --camera-config camera_config.json --headless
 
 # YOLOv8 학습 (PC/GPU 환경)
 yolo train cfg=configs/train_v10_nolkc.yaml   # 설정은 yaml로 고정 — imgsz=320(원본 상한 416)

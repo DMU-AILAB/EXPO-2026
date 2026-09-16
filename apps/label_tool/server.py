@@ -69,7 +69,7 @@ _SUGGEST_PROMPT = (
 STATIC_DIR = Path(__file__).parent / "static"
 SPLITS = ["train", "val", "test"]
 
-datasets_dir: Path = Path(__file__).parent.parent / "datasets"
+datasets_dir: Path = Path(__file__).resolve().parents[2] / "datasets"
 reviewed_path: Path = Path(__file__).parent / "reviewed.json"
 
 app = FastAPI(title="VisionGuide Cane-Dataset Person Labeling Tool",
@@ -268,7 +268,7 @@ def _call_openai_suggest(image_path: Path) -> list[list[float]]:
 # 저장소 루트의 yolov8n.pt(COCO 사전학습, 이미 git에 있음)를 그대로 재사용한다. label_tool
 # 안에 따로 사본을 두면 완전히 같은 6.5MB 파일이 중복 커밋되므로 만들지 않는다.
 _LOCAL_YOLO_OPENVINO_PATH = Path(__file__).parent / "yolov8n_human_int8_openvino_model"
-_LOCAL_YOLO_PT_PATH = Path(__file__).parent.parent / "yolov8n.pt"
+_LOCAL_YOLO_PT_PATH = Path(__file__).resolve().parents[2] / "weights" / "yolov8n.pt"
 _LOCAL_YOLO_CONF = 0.35
 _local_yolo_model = None
 
@@ -361,7 +361,7 @@ if __name__ == "__main__":
     import uvicorn
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--datasets-dir", default=str(Path(__file__).parent.parent / "datasets"))
+    parser.add_argument("--datasets-dir", default=str(Path(__file__).resolve().parents[2] / "datasets"))
     parser.add_argument("--port", type=int, default=5050)
     args = parser.parse_args()
 

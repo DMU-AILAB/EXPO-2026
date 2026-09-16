@@ -23,10 +23,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from shapely.geometry import Polygon
 
-# roi_editor/server.py는 roi_editor/ 서브디렉토리에서 실행되는 스크립트라
-# sys.path[0]이 그 디렉토리가 된다 — 저장소 루트의 foot_traffic_counter.py/camera_config.py를
-# import하려면 루트를 sys.path에 직접 넣어줘야 한다.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# roi_editor/server.py는 서브디렉토리에서 실행되는 스크립트라 sys.path[0]이 그
+# 디렉토리가 된다 — 배포 런타임 모듈(foot_traffic_counter.py/camera_config.py 등)을
+# import하려면 그 위치를 sys.path에 직접 넣어줘야 한다.
+#
+# 그 위치가 두 가지다. **Pi에서는 ~/visionguide/ 에 모든 .py가 평면으로 놓여**
+# parent.parent가 곧 그 디렉토리지만, **PC 개발 트리에서는 apps/roi_editor/ 라서
+# parent.parent가 apps/ 이고 런타임 모듈은 device/ 에 있다.** 둘 다 넣어 둔다.
+_UP = Path(__file__).parent.parent          # Pi: ~/visionguide, PC: <repo>/apps
+sys.path.insert(0, str(_UP))
+_ROOT = _UP.parent if (_UP.parent / "device").is_dir() else _UP
+if (_ROOT / "device").is_dir():             # PC 개발 트리에만 존재한다
+    sys.path.insert(0, str(_ROOT / "device"))
 from foot_traffic_counter import (  # noqa: E402
     read_daily_totals, read_hourly_breakdown, read_range_daily_totals,
 )
@@ -42,7 +50,7 @@ from yolo_postprocess import CLASS_NAMES  # noqa: E402
 # ---------------------------------------------------------------------------
 # Paths (overridden by CLI args at startup)
 # ---------------------------------------------------------------------------
-_DEFAULT_ROIS = Path(__file__).parent.parent / "rois.json"
+_DEFAULT_ROIS = _ROOT / "rois.json"
 _DEFAULT_AUDIO_DIR = Path(__file__).parent.parent / "audio"
 _DEFAULT_TRAFFIC_DB = Path(__file__).parent.parent / "foot_traffic.db"
 _DEFAULT_CAMERA_CONFIG = Path(__file__).parent.parent / "camera_config.json"

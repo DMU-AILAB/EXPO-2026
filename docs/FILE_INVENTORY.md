@@ -1,7 +1,7 @@
 # 파일 인벤토리 — 저장소 구조도
 
 **갱신일:** 2026-09-16 (전수 분석 기준)
-**대상 커밋:** `feat/motion-gate-and-lvis-lookalikes` (origin/main 병합 후)
+**대상 브랜치:** `refactor/repo-structure` (기능별 디렉터리 재배치 후)
 
 이 문서는 저장소의 **모든 디렉터리와 루트 파일**이 어떤 역할인지, 그리고
 **Pi 배포 대상인지 / 커밋 대상인지**를 한눈에 보여준다. 기능 설명은 `CLAUDE.md`에
@@ -13,7 +13,7 @@
 |---|---:|---:|---:|
 | `datasets/` | 45,574 | 618.3 MB | 59% |
 | `runs/` | 536 | 372.2 MB | 36% |
-| `visionguide-frontend/` | 34 | 31.7 MB | 3% |
+| `dashboard/frontend/` | 34 | 31.7 MB | 3% |
 | 루트 파일 | 49 | 13.4 MB | 1% |
 | 그 외 전부 | 105 | 10.2 MB | 1% |
 | **합계** | **46,298** | **1,045.8 MB** | |
@@ -26,115 +26,92 @@
 
 ```
 expo/
-├── [루트 34개 .py]        ← 디바이스 런타임과 PC 도구가 섞여 있다 (§2)
-│
-├── roi_editor/            Pi 로컬 웹 UI (포트 5000) — 실제 운영 대시보드
-├── simulator/             PC Streamlit 시뮬레이터
-├── label_tool/            라벨 보완 툴 (로컬 전용)
-│
-├── configs/               학습 설정 yaml (yolo train cfg=)
-├── deploy/                systemd 유닛 · sudoers · AP 전환 스크립트
-├── tests/                 pytest 20개 파일
-│
-├── datasets/              학습 데이터 (§4) ★저장소의 59%
-├── runs/                  학습 산출물 (§5) ★저장소의 36%
-│
-├── docs/                  설계·평가 문서 + PDF
-│
-├── visionguide-frontend/  React 관리자 대시보드 — 미구현·미배포 (§6)
-├── dash/                  Stitch 디자인 목업 (html+png)
-└── EXPO-Dash-demo/        디자인 토큰 출처 (roi_editor가 채용)
+├── device/            Pi에서 실행되는 런타임 17개 ★ Makefile의 DEPLOY_PY와 정확히 일치
+├── tools/             PC 전용 스크립트 17개
+│   ├── data/            데이터 준비 9 + lookalike_exclude.txt
+│   ├── eval/            평가 2 (eval_video_recall · eval_background_fp)
+│   └── dev/             개발 보조 3 (camera_live · discover · seed_dummy_traffic)
+├── apps/              사람이 띄워 쓰는 앱
+│   ├── roi_editor/      Pi 로컬 웹 UI (:5000) — 실제 운영 대시보드
+│   ├── simulator/       PC Streamlit 시뮬레이터
+│   └── label_tool/      라벨 보완 툴
+├── dashboard/         미구현 React 대시보드 + 디자인 자료
+│   ├── frontend/        (구 visionguide-frontend)
+│   ├── mockups/         (구 dash — Stitch 목업)
+│   └── demo/            (구 EXPO-Dash-demo — 디자인 토큰 출처)
+├── configs/           학습 설정 yaml 10개
+├── deploy/            systemd 유닛 · sudoers · auto_ap.sh · deploy.ps1
+├── tests/             pytest 20개 + conftest.py
+├── weights/           COCO 사전학습 .pt (gitignore)
+├── examples/          *_example.json 3개
+├── datasets/          학습 데이터 ★저장소의 59%
+├── runs/              학습 산출물 ★저장소의 36%
+└── docs/              설계·평가 문서
 ```
 
-> **`visionguide-backend/`는 존재하지 않는다.** `CLAUDE.md`에 미구현으로 기재돼 있다.
+루트에 남는 파일은 9개다 — `README.md` `CLAUDE.md` `AGENTS.md` `인수인계.md`
+`Makefile` `environment.yml` `requirements.txt` `requirements-pi.txt` `.gitignore`.
 
----
+## 2. ★ Pi는 평면 배치다 — 이 저장소 구조와 다르다
 
-## 2. 루트 Python 34개 — 두 종류가 섞여 있다
+`make sync`는 `device/*.py`를 Pi의 `~/visionguide/`에 **평면으로** 풀어놓는다.
+기기에는 `device/`라는 디렉터리가 없고 모든 모듈이 한 곳에 있으며, systemd 유닛도
+`~/visionguide/camera_live_pi.py`를 가리킨다. **이 재배치로 기기 쪽은 전혀 바뀌지 않았다.**
 
-루트가 평평해서 "Pi에서 도는 코드"와 "PC에서 한 번 돌리는 도구"가 구분되지 않는다.
-판별 기준은 **`Makefile`의 `DEPLOY_PY`에 있는가**이다.
+그래서 양쪽에서 동작해야 하는 경로 계산은 배치를 판별한다.
 
-### 2-1. Pi 런타임 (`DEPLOY_PY` 17개) — rsync로 기기에 배포된다
+| 파일 | 판별 방식 |
+|---|---|
+| `device/{camera_live_pi,detect,edgetpu_infer}.py` | `runs/`가 옆에 있으면 평면(Pi), 없으면 한 단계 위가 루트(PC) |
+| `device/camera_live_pi.py`의 `simulator` import | `_BASE`와 `_BASE/apps` 둘 다 `sys.path`에 시도 |
+| `apps/roi_editor/server.py` | `parent.parent`(Pi=루트, PC=apps) + PC일 때만 `device/` 추가 |
+| `tests/` | `conftest.py`가 `device`·`apps`·`tools/*`를 한 번에 넣는다 |
+
+**`simulator` import는 특히 주의해야 한다.** `camera_live_pi.py`에서 `ROIManager`
+import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예외 없이
+**ROI·오디오 기능이 조용히 꺼진다**. 그래서 import 전에 경로를 확정한다.
+
+### 새 파일을 어디에 둘 것인가
+
+"Pi에서 도는가"로 먼저 가른다. Pi에서 돌면 `device/`에 넣고 **반드시 `Makefile`의
+`DEPLOY_PY`에도 추가**한다 — 둘이 어긋나면 기기에서 ImportError가 나거나, 더 나쁘게는
+구버전 파일이 조용히 남는다. PC에서만 쓰면 `tools/` 아래 용도별 디렉터리에 넣는다.
+
+## 2-1. `device/` — Pi 런타임 17개 (= `DEPLOY_PY`)
 
 | 파일 | 역할 |
 |---|---|
 | `camera_live_pi.py` | **Pi 메인.** 카메라·추론·트래킹·ROI·MJPEG·녹화 (88K, 최대 파일) |
-| `yolo_postprocess.py` | 전처리(letterbox)·후처리 공유 모듈 — CPU/EdgeTPU 양쪽이 쓴다 |
+| `yolo_postprocess.py` | 전처리(letterbox)·후처리 공유 — CPU/EdgeTPU 양쪽이 쓴다 |
 | `edgetpu_infer.py` | Coral EdgeTPU Python 3.9 서브프로세스 워커 |
 | `detect.py` | `WhiteCaneDetector` (PyTorch 폴백) |
-| `simple_tracker.py` | 트래커 (`static_frames`/`max_disp` 포함) |
-| `cane_person_assoc.py` | 지팡이–사람 짝짓기 |
+| `simple_tracker.py` · `cane_person_assoc.py` | 트래킹 · 지팡이–사람 짝짓기 |
 | `camera_config.py` | 다중 카메라 프로필 + `MODEL_VARIANTS` |
-| `audio_trigger.py` | 디바운스/쿨다운 + 큐 기반 순차 재생 |
-| `announcement_router.py` | 카메라·RF 두 이벤트 소스의 안내 라우팅 |
-| `foot_traffic_counter.py` | 유동인구 sqlite 집계 |
-| `detection_events.py` | 감지 이벤트 로그 |
-| `fp_hotspots.py` | 오탐지 핫스팟 누적 → 제외구역 제안 |
-| `gpio_controls.py` | Wi-Fi 전환 버튼·LED·부저 |
-| `fan_controller.py` | 냉각팬 GPIO 스위칭 |
-| `si4432_radio.py` | Si4432 SPI 수신기 |
-| `kics_protocol.py` | KICS.KO-06.0046/R3 358.5MHz 펄스 디코더 |
-| `rf_audio_trigger.py` | RF 수신 → 오디오 트리거 |
+| `audio_trigger.py` · `announcement_router.py` | 디바운스·쿨다운·순차 재생 · 안내 라우팅 |
+| `foot_traffic_counter.py` · `detection_events.py` · `fp_hotspots.py` | 유동인구 · 이벤트 로그 · 오탐지 핫스팟 |
+| `gpio_controls.py` · `fan_controller.py` | Wi-Fi 버튼·LED·부저 · 냉각팬 |
+| `si4432_radio.py` · `kics_protocol.py` · `rf_audio_trigger.py` | Si4432 수신 · KICS 디코더 · RF 트리거 |
 
-### 2-2. PC 전용 도구 (배포 안 함) 17개
+## 2-2. `tools/` — PC 전용 17개
 
-**데이터 준비 (1회성)**
-
-| 파일 | 역할 |
+| 하위 | 파일 |
 |---|---|
-| `dataset_prep.py` | 정규화·분할 공유 헬퍼 |
-| `prepare_background_dataset.py` | 배경 네거티브 편입 (`bg_*.jpg`) |
-| `prepare_lookalike_dataset.py` | 유사물 네거티브 편입 (`lk_*.jpg`) |
-| `prepare_stick_cctv_dataset.py` | CCTV 각도 유사물 — **기각됨**(헤더에 근거) |
-| `prepare_night_eval.py` | 합성 야간 평가셋 |
-| `fetch_lvis_lookalikes.py` | LVIS에서 유사물 수집 |
-| `fetch_openimages_lookalikes.py` | Open Images에서 유사물 수집 |
-| `merge_person_dataset.py` | 사람 데이터셋 병합 (1회성, 실행 완료) |
-| `resplit_dataset.py` | **누수 없는 그룹 단위 재분할** → `datasets/v2/` |
+| `data/` | `resplit_dataset.py`(누수 없는 재분할) · `dataset_prep.py` · `merge_person_dataset.py` · `prepare_{background,lookalike,stick_cctv,night_eval}_*.py` · `fetch_{lvis,openimages}_lookalikes.py` · `lookalike_exclude.txt` |
+| `eval/` | `eval_video_recall.py`(**모델 채택 1차 기준**) · `eval_background_fp.py` |
+| `dev/` | `camera_live.py`(PC 뷰어) · `discover.py`(Pi 탐색) · `seed_dummy_traffic.py` |
 
-**평가**
-
-| 파일 | 역할 |
-|---|---|
-| `eval_video_recall.py` | **실영상 탐지/트리거 벤치 — 모델 채택 1차 기준** |
-| `eval_background_fp.py` | 네거티브 오탐지 벤치 |
-
-**기타**
-
-| 파일 | 역할 |
-|---|---|
-| `camera_live.py` | PC용 뷰어 (PyTorch, ROI 없음) |
-| `discover.py` | 서브넷 스캔으로 Pi 찾기 — **어디서도 import되지 않음** |
-| `seed_dummy_traffic.py` | 통계 화면 확인용 더미 데이터 생성 |
-
-### 2-3. 루트 비-Python 파일
-
-| 파일 | 상태 |
-|---|---|
-| `Makefile` | Pi 배포 자동화 — `DEPLOY_PY`/`DEPLOY_MODEL_DIRS`가 배포 목록의 단일 출처 |
-| `deploy.ps1` | Windows PowerShell 배포 (Makefile과 기능 중복) |
-| `CLAUDE.md` (607줄) · `README.md` (182줄) · `AGENTS.md` (26줄) · `인수인계.md` (250줄) | 문서 4종 |
-| `environment.yml` · `requirements.txt` · `requirements-pi.txt` | 의존성 |
-| `camera_config_example.json` · `rois_example.json` · `rf_config_example.json` | 설정 예시 |
-| `lookalike_exclude.txt` | 유사물 제외 목록 + 근거 주석 |
-| `yolo26n.pt` · `yolov8n.pt` | **COCO 사전학습 가중치 11.5MB — ultralytics가 자동 다운로드하므로 커밋 불필요** |
-| `train.log` | **2026-07-06 학습 로그 1.5MB — `runs/*/results.csv`에 같은 내용이 있다** |
-
----
-
-## 3. 애플리케이션 디렉터리
+## 3. 애플리케이션 디렉터리 (`apps/`)
 
 | 디렉터리 | 내용 | 배포 |
 |---|---|---|
-| `roi_editor/` | `server.py`(FastAPI), `network_manager.py`(nmcli 래퍼), `static/index.html` | ⭕ `make sync-roi-editor` |
-| `simulator/` | `app.py`(Streamlit), `detector.py`, `roi_manager.py`, `trigger_dispatcher.py` | `roi_manager.py`만 ⭕ |
-| `label_tool/` | `server.py`, `static/index.html`, OpenVINO 모델 3.6MB | ❌ 로컬 전용 |
+| `apps/roi_editor/` | `server.py`(FastAPI), `network_manager.py`(nmcli 래퍼), `static/index.html` | ⭕ `make sync-roi-editor` |
+| `apps/simulator/` | `app.py`(Streamlit), `detector.py`, `roi_manager.py`, `trigger_dispatcher.py` | `roi_manager.py`만 ⭕ |
+| `apps/label_tool/` | `server.py`, `static/index.html`, OpenVINO 모델 3.6MB | ❌ 로컬 전용 |
 | `configs/` | `train_v9_*.yaml`(증강 실험 6) · `train_v10_*`(데이터 2) · `train_v11_*`(백본 2) | ❌ |
 | `deploy/` | systemd 유닛 7 + sudoers 2 + `auto_ap.sh` | `make install-service` |
 | `tests/` | pytest 20개 파일 | ❌ |
 
-> **`simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유한다.** 변경 시 양쪽 확인 필요.
+> **`apps/simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유한다.** 변경 시 양쪽 확인 필요.
 
 ---
 
@@ -145,7 +122,9 @@ datasets/
 ├── train/{images,labels}   11,116장  ┐
 ├── val/{images,labels}      1,263장  ├─ 원본 풀 (337.6 MB / 26,956 파일)
 ├── test/{images,labels}     1,099장  ┘
-├── sources/cane_pool/       9,308장  ← train/val/test와 100% 중복 (280.7 MB)
+├── sources/cane_pool/
+│   ├── images/              9,308장  ← train/val/test와 blob 동일 (280.4 MB)
+│   └── labels/              9,308개  ← 사람 라벨 병합 전 원본 (0.3 MB, 고유)
 ├── data.yaml                          ← train/val/test를 가리킴
 │
 ├── v2/ v2_nolkc/ v2_night/            ← .gitignore (resplit_dataset.py가 생성)
@@ -155,8 +134,10 @@ datasets/
 
 **주의해야 할 두 가지**
 
-1. **`sources/cane_pool/`은 순수 중복이다.** 9,308장 전부가 `train/val/test`와
-   **동일한 git blob 해시**를 가진다(전수 확인). 18,616개 경로가 이중으로 추적된다.
+1. **`sources/cane_pool/`은 이미지만 중복이다.** 이미지 9,308장은 `train/val/test`와
+   **동일한 git blob 해시**를 갖지만, **라벨은 9,303개가 다르다** — `merge_person_dataset.py`와
+   `resplit_dataset.py --relabel-person`이 split 쪽 라벨에 사람을 추가했고, cane_pool은
+   그 이전 상태를 보존한다. 정리할 때 **이미지만 빼고 라벨은 남겨야 한다.**
 2. **현재 학습에 실제로 쓰는 데이터는 추적되지 않는다.** 채택 모델 `v10_320`은
    `datasets/data_v2_nolkc.yaml`로 학습했는데 그 경로는 전부 `.gitignore`다.
    다만 `resplit_dataset.py`가 `train/val/test`에서 **하드링크로 생성**하므로
@@ -183,21 +164,21 @@ datasets/
 
 ---
 
-## 6. UI 관련 디렉터리 3종 — 혼동 주의
+## 6. UI 관련 디렉터리 4종 — 혼동 주의
 
 이름이 비슷하지만 **서로 다른 것**이고, 그중 하나만 실제로 동작한다.
 
 | 디렉터리 | 정체 | 상태 | 접속 |
 |---|---|---|---|
-| **`roi_editor/`** | Pi 로컬 FastAPI + 정적 HTML | **구현·배포됨** | `http://<pi>:5000` |
-| `visionguide-frontend/` | React + Vite 관리자 대시보드 | **미구현·미배포** | 로컬 `npm run dev` |
-| `dash/` | Stitch 생성 디자인 목업(html+png) | 참고 자료 | — |
-| `EXPO-Dash-demo/` | 디자인 토큰 출처 (roi_editor가 채용) | 참고 자료 | — |
+| **`apps/roi_editor/`** | Pi 로컬 FastAPI + 정적 HTML | **구현·배포됨** | `http://<pi>:5000` |
+| `dashboard/frontend/` | React + Vite 관리자 대시보드 | **미구현·미배포** | 로컬 `npm run dev` |
+| `dashboard/mockups/` | Stitch 생성 디자인 목업(html+png) | 참고 자료 | — |
+| `dashboard/demo/` | 디자인 토큰 출처 (roi_editor가 채용) | 참고 자료 | — |
 
-**기기에서 보이는 화면은 `roi_editor/`뿐이다.** `visionguide-frontend/`를 고쳐도
+**기기에서 보이는 화면은 `apps/roi_editor/`뿐이다.** `dashboard/frontend/`를 고쳐도
 Pi에는 아무 영향이 없다 — 배포 경로 자체가 없다.
 
-`visionguide-frontend/public/streams/*.jpg` 6장이 **29.8 MB**를 차지한다
+`dashboard/frontend/public/streams/*.jpg` 6장이 **29.8 MB**를 차지한다
 (`hall.jpg` 한 장이 14 MB). 데모용 목업 이미지다.
 
 ---

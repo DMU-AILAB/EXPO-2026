@@ -31,6 +31,13 @@ import struct
 import sys
 from pathlib import Path
 
+# 저장소 루트 — PC 개발 트리에서는 이 파일이 device/ 안에 있고, Pi에는 rsync가
+# ~/visionguide/ 에 평면으로 풀어놓는다. runs/ 가 옆에 있으면 평면 배치(Pi),
+# 없으면 한 단계 위가 루트(PC)다. 같은 코드가 양쪽에서 동작해야 해서 이렇게 판별한다.
+_HERE = Path(__file__).parent
+_BASE = _HERE if (_HERE / "runs").is_dir() else _HERE.parent
+
+
 import numpy as np
 import tflite_runtime.interpreter as tflite
 
@@ -50,7 +57,7 @@ def _on_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _on_sigterm)
 
-_DEFAULT_MODEL = Path(__file__).parent / "runs/white_cane_v2/weights" / "best_int8_edgetpu.tflite"
+_DEFAULT_MODEL = _BASE / "runs/white_cane_v2/weights" / "best_int8_edgetpu.tflite"
 _DEFAULT_INPUT_SIZE = 640
 
 

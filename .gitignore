@@ -123,3 +123,7 @@ runs/*/weights/keep_*.tflite
 runs/*/weights/last.pt
 # yolo val 부산물 — 실행할 때마다 val-N 디렉터리가 쌓인다
 runs/detect/
+
+# COCO 사전학습 가중치 — ultralytics가 자동 다운로드한다
+weights/*.pt
+train.log
