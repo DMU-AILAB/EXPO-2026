@@ -110,3 +110,6 @@ datasets/staging/stick_cctv/
 datasets/v2_night/
 datasets/v2_nolkc/
 datasets/data_v2_nolkc.yaml
+
+# 평가 시각화 산출물 (재생성 가능)
+eval_out/
