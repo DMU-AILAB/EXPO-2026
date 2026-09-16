@@ -139,3 +139,8 @@ local/
 recordings/
 foot_traffic.db
 calibration_image_sample_data_*.npy
+
+# 평가용 실영상 — 용량이 크고(개당 6~13MB) 재현에 필수가 아니다.
+# **test2/test3는 학습에 절대 쓰면 안 되는 평가 전용 영상**이라(누수 재발)
+# 저장소에 두지 않는 편이 실수를 줄인다. 원본은 별도로 보관할 것.
+datasets/*.mp4
