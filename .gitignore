@@ -111,8 +111,6 @@ datasets/v2_night/
 datasets/v2_nolkc/
 datasets/data_v2_nolkc.yaml
 
-# 평가 시각화 산출물 (재생성 가능)
-eval_out/
 
 # 학습/export 중간 산출물 — 배포에 쓰지 않고 best.pt에서 언제든 재생성된다
 # (docs/int8_320_quantization_report.md §5 참고). onnx는 12MB, best_saved_model은
@@ -126,4 +124,18 @@ runs/detect/
 
 # COCO 사전학습 가중치 — ultralytics가 자동 다운로드한다
 weights/*.pt
-train.log
+
+# ─────────────────────────────────────────────────────────────
+# local/ — 재생성 가능한 로컬 산출물을 한 곳에 모은다.
+# 평가 시각화(eval_out), 학습 로그, export 부산물, pytest 캐시 등.
+# 저장소 루트가 이런 파일로 어질러지지 않게 하려는 것이며, 통째로 지워도
+# 무방하다(전부 재생성된다).
+local/
+
+# 아래 둘은 코드가 **실행 디렉터리 기준**으로 만들기 때문에 local/ 로 옮길 수
+# 없다. camera_live_pi.py가 Path("recordings")를, camera_config가
+# "foot_traffic.db"를 기본값으로 쓴다 — 옮기려면 코드를 고쳐야 하고 그러면
+# Pi의 저장 위치도 함께 바뀐다(기존 클립이 고아가 된다).
+recordings/
+foot_traffic.db
+calibration_image_sample_data_*.npy
