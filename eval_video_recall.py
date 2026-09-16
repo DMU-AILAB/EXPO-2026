@@ -224,18 +224,22 @@ def _unmap(dets: list[dict], mode: str, size: int, w: int, h: int) -> list[dict]
 #   정지 억제 → 움직임 게이트 → 사람 동반
 # --------------------------------------------------------------------------
 def run_gates(frames: list[list[dict]], shape: tuple[int, int],
-              conf: float, fps: float, debounce: float, require_person: bool) -> dict:
+              conf: float, fps: float, debounce: float, require_person: bool,
+              gt: np.ndarray | None = None) -> dict:
     h, w = shape
     moved_min = ((w ** 2 + h ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
     tracker = SimpleTracker()
 
     stage = {"raw": 0, "static": 0, "moved": 0, "person": 0}
     passing = []           # 프레임별 최종 게이트 통과 여부
+    raw_hit = []           # 프레임별 raw 탐지 여부 (정답 대비 재현율/오탐지 계산용)
     seen: dict[int, dict] = {}
 
     for dets in frames:
         dets = [d for d in dets if d["conf"] >= conf]
-        if any(d["label"] == "white_cane" for d in dets):
+        hit = any(d["label"] == "white_cane" for d in dets)
+        raw_hit.append(hit)
+        if hit:
             stage["raw"] += 1
 
         tracks = tracker.update(dets)
@@ -275,7 +279,40 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
 
     canes = [r for r in seen.values() if r["cls"] == CANE_CLASS_ID]
     persons = [r for r in seen.values() if r["cls"] == PERSON_CLASS_ID]
+
+    # 정답 구간이 있으면 재현율(지팡이 있는 구간)과 오탐지(없는 구간)를 분리한다.
+    # 없으면 "전 구간에 지팡이 존재"로 가정하는데, 지팡이가 3분의 1 구간에만 있는
+    # 영상에서는 그 가정이 분모를 3배로 부풀려 재현율을 과소평가한다.
+    gt_stats = None
+    if gt is not None:
+        rh = np.asarray(raw_hit, dtype=bool)
+        pa = np.asarray(passing, dtype=bool)
+        m = gt[:len(rh)]
+        present, absent = int(m.sum()), int((~m).sum())
+        # 헛트리거: 지팡이가 없는 구간에서만 이뤄진 연속 통과 구간
+        false_runs = 0
+        i = 0
+        while i < len(pa):
+            if pa[i]:
+                j = i
+                while j < len(pa) and pa[j]:
+                    j += 1
+                if (j - i) >= need and not m[i:j].any():
+                    false_runs += 1
+                i = j
+            else:
+                i += 1
+        gt_stats = {
+            "present": present, "absent": absent,
+            "recall_raw": float(rh[m].mean()) if present else 0.0,
+            "recall_gated": float(pa[m].mean()) if present else 0.0,
+            "fp_raw": float(rh[~m].mean()) if absent else 0.0,
+            "fp_gated": float(pa[~m].mean()) if absent else 0.0,
+            "false_triggers": false_runs,
+        }
+
     return {
+        "gt": gt_stats,
         "conf": conf, "total": len(frames), "stage": stage,
         "longest": longest, "need": need, "triggers": triggers,
         "cane_tracks": len(canes), "person_tracks": len(persons),
@@ -302,6 +339,22 @@ def _report(results: list[dict], args) -> None:
         pct = s["raw"] / r["total"] * 100 if r["total"] else 0
         print(f"{r['conf']:>6.2f} | {s['raw']:>6} ({pct:4.1f}%) {s['static']:>10} "
               f"{s['moved']:>9} {s['person']:>10} | {r['longest']:>8} {r['triggers']:>6}")
+    if results[0]["gt"]:
+        g0 = results[0]["gt"]
+        print()
+        print(f"정답 구간 기준 (지팡이 있음 {g0['present']}프레임 / 없음 {g0['absent']}프레임)")
+        print(f"{'conf':>6} | {'재현율(raw)':>12} {'재현율(게이트후)':>16}"
+              f" | {'오탐율(raw)':>12} {'오탐율(게이트후)':>16} {'헛트리거':>9}")
+        print("-" * 82)
+        for r in results:
+            g = r["gt"]
+            print(f"{r['conf']:>6.2f} | {g['recall_raw']*100:>11.1f}% {g['recall_gated']*100:>15.1f}%"
+                  f" | {g['fp_raw']*100:>11.1f}% {g['fp_gated']*100:>15.1f}% {g['false_triggers']:>9}")
+    else:
+        print()
+        print("정답 구간 없음 — 위 수치는 '전 구간에 지팡이 존재' 가정이다"
+              " (datasets/video_gt.json에 항목을 추가하면 분리 집계된다).")
+
     print()
     r0 = results[0]
     print(f"트랙 통계 (conf={r0['conf']:.2f}) — 디바운스 {args.debounce}s = 연속 {r0['need']}프레임 필요")
@@ -332,6 +385,9 @@ def main() -> None:
     p.add_argument("--no-require-person", action="store_true",
                    help="사람 동반 게이트를 끄고 측정 (배포 기본값은 켜짐)")
     p.add_argument("--stride", type=int, default=1, help="N프레임마다 1장만 평가 (빠른 확인용)")
+    p.add_argument("--gt", metavar="JSON", default="datasets/video_gt.json",
+                   help="정답 구간 파일. 영상 파일명을 키로 [[시작초, 끝초], ...]를 담는다. "
+                        "해당 영상의 항목이 없으면 전 구간에 지팡이가 있다고 가정한다.")
     p.add_argument("--cache", metavar="NPZ", help="추론 결과 캐시 경로 (있으면 재사용, 없으면 생성)")
     args = p.parse_args()
 
@@ -349,9 +405,26 @@ def main() -> None:
                 {"frames": frames, "shape": list(shape), "fps": fps}), encoding="utf-8")
             print(f"[INFO] 캐시 저장: {cache}")
 
+    gt = _load_gt(args, len(frames), fps)
     results = [run_gates(frames, shape, c, fps, args.debounce,
-                         not args.no_require_person) for c in thresholds]
+                         not args.no_require_person, gt=gt) for c in thresholds]
     _report(results, args)
+
+
+def _load_gt(args, n_frames: int, fps: float) -> np.ndarray | None:
+    """정답 구간(초) → 프레임 단위 불리언 마스크."""
+    path = Path(args.gt) if args.gt else None
+    if not path or not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    spans = data.get(Path(args.video).name)
+    if not spans:
+        return None
+    mask = np.zeros(n_frames, dtype=bool)
+    for a, b in spans:
+        # stride로 건너뛴 경우 마스크 인덱스도 같은 간격으로 줄어든다.
+        mask[int(round(a * fps)):int(round(b * fps)) + 1] = True
+    return mask
 
 
 if __name__ == "__main__":
