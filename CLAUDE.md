@@ -31,12 +31,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `edgetpu_infer.py` | Coral Edge TPU Python 3.9 서브프로세스 워커 |
 | `camera_config.py` | `CameraProfile` 다중 카메라 프로필 (`camera_config.json`) — load/save/validate. 표준 라이브러리만 사용 |
 | `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (큐+워커스레드 기반 순차 재생 — 여러 카메라가 공유해도 겹쳐 재생되지 않고 대기열에 쌓였다가 순서대로 나옴, mpg123/pygame) |
-| `simulator/app.py` | Streamlit PC 시뮬레이터 — ROI 폴리곤 편집, 실시간 탐지, 오디오 트리거 |
-| `simulator/detector.py` | 시뮬레이터용 탐지기 |
-| `simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
-| `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
-| `roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + 오디오 미리듣기(`/api/audio/file`, audio_dir 밖 경로 차단) + `/api/stats/timeseries`(기간별 유동인구 시계열) + `/api/events`(최근 감지 이벤트), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
-| `roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `EXPO-Dash-demo`의 디자인 토큰(accent/good/amber/danger, Pretendard)과 레이아웃(상단 탭 + 화면별 페이지)을 그대로 채용. 탭 4개: **모니터링**(카메라 상태 배지, 최근 감지 이벤트 표, 오늘 총 유동인구/지팡이 사용자 감지, ROI별 오디오 안내 테스트 재생) / **ROI 편집**("+ 새 구역 그리기" 명시적 토글로만 캔버스 클릭이 꼭짓점을 추가, 목록에서 기존 ROI 클릭 시 우측 폼에 로드되어 이름/안내텍스트/오디오/우선순위/구역유형 편집 및 삭제, 카메라 선택·설정·신뢰도 슬라이더 포함) / **통계**(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프) / **녹화**(수동 시작/중지 클립 목록·재생·다운로드) |
+| `apps/simulator/app.py` | Streamlit PC 시뮬레이터 — ROI 폴리곤 편집, 실시간 탐지, 오디오 트리거 |
+| `apps/simulator/detector.py` | 시뮬레이터용 탐지기 |
+| `apps/simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
+| `apps/simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
+| `apps/roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + 오디오 미리듣기(`/api/audio/file`, audio_dir 밖 경로 차단) + `/api/stats/timeseries`(기간별 유동인구 시계열) + `/api/events`(최근 감지 이벤트), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
+| `apps/roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `dashboard/demo`의 디자인 토큰(accent/good/amber/danger, Pretendard)과 레이아웃(상단 탭 + 화면별 페이지)을 그대로 채용. 탭 4개: **모니터링**(카메라 상태 배지, 최근 감지 이벤트 표, 오늘 총 유동인구/지팡이 사용자 감지, ROI별 오디오 안내 테스트 재생) / **ROI 편집**("+ 새 구역 그리기" 명시적 토글로만 캔버스 클릭이 꼭짓점을 추가, 목록에서 기존 ROI 클릭 시 우측 폼에 로드되어 이름/안내텍스트/오디오/우선순위/구역유형 편집 및 삭제, 카메라 선택·설정·신뢰도 슬라이더 포함) / **통계**(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프) / **녹화**(수동 시작/중지 클립 목록·재생·다운로드) |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -52,7 +52,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `resplit_dataset.py` + `tests/test_resplit_dataset.py` | 로컬 전용 1회성 — 누수 없는 **그룹 단위 재분할**(`datasets/v2/`, 하드링크). 증강 해시/AIHub 세션을 그룹으로 묶고 층별 md5로 배정한다. `--relabel-person`으로 cane_only의 누락 사람 라벨도 보완. 테스트가 split 쌍의 그룹키 교집합이 공집합인지 검증한다 |
 | `prepare_night_eval.py` | 로컬 전용 1회성 — 합성 야간 평가셋(`datasets/v2_night/`, 감마 0.35~0.55 + 노이즈 σ=6). **KPI 달성 근거가 아니라 회귀 감시용** |
 | `configs/train_*.yaml` | 학습 설정 — `yolo train cfg=<yaml>`로 재현 가능하게 고정. `project:`는 반드시 절대경로(상대경로면 `runs/detect/runs/<name>`으로 중첩된다) |
-| `label_tool/server.py` + `label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
+| `apps/label_tool/server.py` + `apps/label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `apps/label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
 
 ### 미구현 (계획)
 
@@ -214,7 +214,7 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   BBox/통계만 저장"을 명시하고 있다. `camera_live_pi.py`의 `ClipRecorder`는 이 정책과 정면으로
   상충하지만, **이 저장소의 데모/전시 범위에서는 사용자 승인으로 예외 적용**한다. 실제 상용 배치
   전에는 이 정책을 반드시 재검토해야 한다.
-- **녹화는 `camera_live_pi.py`(실제 프레임을 쥐고 있는 프로세스)에서만 구현** — `roi_editor/
+- **녹화는 `camera_live_pi.py`(실제 프레임을 쥐고 있는 프로세스)에서만 구현** — `apps/roi_editor/
   server.py`는 완전히 별도 프로세스이며 카메라 프레임에 직접 접근할 방법이 없다(공유하는 건
   `rois.json`/`camera_config.json`/`foot_traffic.db` 파일뿐). 브라우저는 이미 각 카메라의
   MJPEG 포트에 직접 접속하는 구조(`streamUrlFor(port)` → `http://<host>:<port>/stream.mjpg`,
@@ -274,7 +274,7 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   라벨 안 된 사람 영역을 "배경(사람 아님)"으로 잘못 가르치는 오염이다.
   **`resplit_dataset.py --relabel-person`으로 보완 완료**: `datasets/v2` 기준 지팡이+사람이
   동시에 라벨링된 이미지가 **9,228장**이고 cane_only는 426 → **75장**으로 줄었다
-  (`docs/model_evaluation_report_v3.md` §1). `label_tool/`은 남은 75장을 수동 검토할 때 쓴다.
+  (`docs/model_evaluation_report_v3.md` §1). `apps/label_tool/`은 남은 75장을 수동 검토할 때 쓴다.
 - **배경(네거티브) 이미지 228장**이 `datasets/train/`에 `bg_XXXX.jpg` + 빈 라벨로 들어가 있다
   (`prepare_background_dataset.py`가 `datasets/sources/background_photos/`에서 생성). YOLO는 빈 라벨 이미지를 배경으로
   학습해 오탐지를 억제한다. 원본 `datasets/sources/background_photos/`와 변환 스테이징 `datasets/staging/background/`는
@@ -413,7 +413,7 @@ Pi 로컬에서 `roi_editor` 웹 UI로 생성/수정하는 런타임 설정 파�
 `camera_config.json`이 없으면 기존처럼 `--source`/`--roi-config`/`--port` 단일 카메라 모드로
 동작한다 (마이그레이션 불필요).
 
-`roi_editor/` 디렉토리는 별도로 `make sync-roi-editor` (deploy에 포함됨)로 전송됩니다.
+`apps/roi_editor/` 디렉토리는 별도로 `make sync-roi-editor` (deploy에 포함됨)로 전송됩니다.
 
 새 Python 파일을 Pi에 배포해야 할 때는 `Makefile`의 `DEPLOY_PY`에 추가하세요.
 
@@ -570,8 +570,8 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 | `camera_live_pi.py` | Pi Camera/OpenCV 추상화 + 추론 + 추적 + MJPEG 송출 (`CameraPipeline` 다중 카메라 지원) | ✅ 구현됨 |
 | `camera_config.py` | 다중 카메라 프로필 로드/저장/검증 (`camera_config.json`) | ✅ 구현됨 |
 | `audio_trigger.py` | `StandaloneDispatcher` (디바운싱/쿨다운) + `AudioPlayer` (큐 기반 순차 재생 MP3) | ✅ 구현됨 |
-| `simulator/roi_manager.py` | Shapely 기반 ROI Point-in-Polygon 판별 | ✅ 구현됨 |
-| `simulator/trigger_dispatcher.py` | Streamlit 전용 디바운싱/쿨다운 (시뮬레이터용) | ✅ 구현됨 |
+| `apps/simulator/roi_manager.py` | Shapely 기반 ROI Point-in-Polygon 판별 | ✅ 구현됨 |
+| `apps/simulator/trigger_dispatcher.py` | Streamlit 전용 디바운싱/쿨다운 (시뮬레이터용) | ✅ 구현됨 |
 | `preprocess.py` | Letterbox 리사이즈 + CLAHE 야간 보정 | 미구현 (예정) |
 | `priority_policy.py` | 다중 ROI 동시 점유 시 heapq 우선순위 | 미구현 (예정) |
 | `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 | 미구현 (예정) |

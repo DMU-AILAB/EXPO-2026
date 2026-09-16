@@ -39,9 +39,9 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 
 | 파일 | 역할 |
 |------|------|
-| `roi_editor/network_manager.py` | nmcli 래퍼 — 네트워크 상태 조회, Wi-Fi 스캔, 연결, AP 전환 |
-| `roi_editor/server.py` | 네트워크 API 5개 + 캡티브 포털 엔드포인트 |
-| `roi_editor/static/index.html` | AP 배너 + 네트워크 카드 + Wi-Fi 설정 패널 UI |
+| `apps/roi_editor/network_manager.py` | nmcli 래퍼 — 네트워크 상태 조회, Wi-Fi 스캔, 연결, AP 전환 |
+| `apps/roi_editor/server.py` | 네트워크 API 5개 + 캡티브 포털 엔드포인트 |
+| `apps/roi_editor/static/index.html` | AP 배너 + 네트워크 카드 + Wi-Fi 설정 패널 UI |
 | `deploy/auto_ap.sh` | 부팅 시 네트워크 미연결이면 AP 자동 전환 + iptables 설정 |
 | `deploy/visionguide-auto-ap.service` | `auto_ap.sh`를 실행하는 oneshot systemd 유닛 |
 | `deploy/visionguide-network.sudoers` | ailab 유저가 nmcli/iptables를 NOPASSWD로 실행하는 sudoers 규칙 |
@@ -175,7 +175,7 @@ http://<새IP>:5000               ← discover.py로 조회
 
 ## 4. 네트워크 API
 
-`roi_editor/server.py`에 추가된 5개 엔드포인트:
+`apps/roi_editor/server.py`에 추가된 5개 엔드포인트:
 
 | Method | Path | 설명 |
 |--------|------|------|
@@ -388,8 +388,8 @@ sudo nmcli connection up VisionGuide-AP
 
 ```
 EXPO-2026/
-├── discover.py                        ← PC에서 Pi IP 탐색
-├── roi_editor/
+├── tools/dev/discover.py              ← PC에서 Pi IP 탐색
+├── apps/roi_editor/
 │   ├── network_manager.py             ← nmcli 래퍼 (신규)
 │   ├── server.py                      ← 네트워크 API + 캡티브 포털 엔드포인트
 │   └── static/index.html              ← AP 배너 + 네트워크 카드 + Wi-Fi 패널

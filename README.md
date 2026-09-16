@@ -23,21 +23,23 @@ Pi Camera → YOLOv8n (TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 
 | 파일 | 설명 |
 |------|------|
-| `camera_live_pi.py` | Pi 전용 추론 뷰어 — Coral EdgeTPU / TFLite INT8 / PyTorch 자동 선택 |
-| `camera_live.py` | PC용 추론 뷰어 (PyTorch) |
-| `detect.py` | `WhiteCaneDetector` 클래스 (PyTorch fallback) |
-| `edgetpu_infer.py` | Coral Edge TPU 서브프로세스 워커 (Python 3.9) |
-| `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (논블로킹 MP3 재생) |
-| `simulator/app.py` | Streamlit PC 시뮬레이터 (ROI 편집 + 실시간 탐지 + 오디오 트리거) |
-| `simulator/detector.py` | 시뮬레이터용 탐지기 |
-| `simulator/roi_manager.py` | ROI 폴리곤 관리 + Point-in-Polygon 판별 |
-| `simulator/trigger_dispatcher.py` | Streamlit 기반 디바운스/쿨다운 (시뮬레이터 전용) |
-| `rois_example.json` | ROI 설정 예시 (입구, 횡단보도) |
+| `device/camera_live_pi.py` | Pi 전용 추론 뷰어 — Coral EdgeTPU / TFLite INT8 / PyTorch 자동 선택 |
+| `device/detect.py` | `WhiteCaneDetector` 클래스 (PyTorch fallback) |
+| `device/edgetpu_infer.py` | Coral Edge TPU 서브프로세스 워커 (Python 3.9) |
+| `device/audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (큐 기반 순차 재생) |
+| `apps/roi_editor/` | Pi 로컬 ROI 웹 에디터 (포트 5000) — **기기에서 실제로 보이는 화면** |
+| `apps/simulator/app.py` | Streamlit PC 시뮬레이터 (ROI 편집 + 실시간 탐지 + 오디오 트리거) |
+| `apps/simulator/roi_manager.py` | ROI 폴리곤 관리 + Point-in-Polygon 판별 — **Pi와 공유** |
+| `apps/simulator/trigger_dispatcher.py` | Streamlit 기반 디바운스/쿨다운 (시뮬레이터 전용) |
+| `tools/dev/camera_live.py` | PC용 추론 뷰어 (PyTorch) |
+| `tools/eval/eval_video_recall.py` | 실영상 탐지/트리거 벤치 — **모델 채택 1차 기준** |
+| `tools/data/resplit_dataset.py` | 누수 없는 그룹 단위 재분할 |
+| `examples/rois_example.json` | ROI 설정 예시 (입구, 횡단보도) |
 
 ### 미구현 (계획)
 
 - `visionguide-backend/` — FastAPI 관리자 대시보드 백엔드
-- `visionguide-frontend/` — React + TypeScript 대시보드 프론트엔드
+- `dashboard/frontend/` — React + TypeScript 대시보드 프론트엔드 (**Pi 배포 경로 없음**)
 - GPIO 릴레이 트리거 (`gpiozero`)
 - 설정 폴링 (`config_syncer.py`)
 - 이벤트 로거 (`event_logger.py`)
@@ -114,7 +116,7 @@ python device/camera_live_pi.py --source 0 --conf 0.35
 
 ## 추론 백엔드 자동 선택
 
-`camera_live_pi.py` 실행 시 아래 순서로 사용 가능한 최선의 백엔드를 자동 선택합니다.
+`device/camera_live_pi.py` 실행 시 아래 순서로 사용 가능한 최선의 백엔드를 자동 선택합니다.
 
 | 우선순위 | 백엔드 | 모델 파일 | 비고 |
 |----------|--------|-----------|------|
@@ -151,24 +153,37 @@ python -m pytest tests/ -v
 
 ```
 expo/
-├── camera_live_pi.py          # Pi 전용 추론 뷰어 (메인)
-├── camera_live.py             # PC용 추론 뷰어
-├── detect.py                  # WhiteCaneDetector (PyTorch)
-├── edgetpu_infer.py           # Coral EdgeTPU 서브프로세스 워커
-├── audio_trigger.py           # 오디오 트리거 시스템
-├── rois_example.json          # ROI 설정 예시
-├── simulator/
-│   ├── app.py                 # Streamlit PC 시뮬레이터
-│   ├── detector.py            # 시뮬레이터용 탐지기
-│   ├── roi_manager.py         # ROI 폴리곤 관리
-│   └── trigger_dispatcher.py  # Streamlit 전용 디스패처
+├── device/                    # Pi에서 실행되는 런타임 17개 (Makefile의 DEPLOY_PY와 일치)
+│   ├── camera_live_pi.py      #   메인 — 카메라·추론·트래킹·ROI·MJPEG
+│   ├── yolo_postprocess.py    #   전처리(letterbox)·후처리 공유
+│   ├── detect.py              #   WhiteCaneDetector (PyTorch fallback)
+│   ├── edgetpu_infer.py       #   Coral EdgeTPU 서브프로세스 워커
+│   └── …                      #   트래킹·오디오·GPIO·RF 등
+├── tools/                     # PC 전용 스크립트
+│   ├── data/                  #   데이터 준비 (resplit_dataset, prepare_*, fetch_*)
+│   ├── eval/                  #   평가 (eval_video_recall, eval_background_fp)
+│   └── dev/                   #   개발 보조 (camera_live, discover, seed_dummy_traffic)
+├── apps/                      # 사람이 띄워 쓰는 앱
+│   ├── roi_editor/            #   Pi 웹 UI (:5000) — 실제 운영 화면
+│   ├── simulator/             #   Streamlit PC 시뮬레이터
+│   └── label_tool/            #   라벨 보완 툴
+├── dashboard/                 # 미구현 React 대시보드 + 디자인 자료
+├── configs/                   # 학습 설정 yaml
+├── deploy/                    # systemd 유닛 · sudoers · 배포 스크립트
+├── examples/                  # *_example.json
+├── weights/                   # COCO 사전학습 .pt (gitignore)
 ├── datasets/                  # 흰 지팡이 학습 이미지 + YOLO 라벨
-├── docs/                      # 기획 문서
 ├── runs/                      # 학습 결과 (가중치 파일)
+├── tests/                     # pytest + conftest.py
+├── docs/                      # 기획·평가 문서
 ├── requirements.txt           # PC 의존성
 ├── requirements-pi.txt        # Pi 의존성
 └── Makefile                   # Pi 배포 자동화
 ```
+
+> **Pi는 평면 배치다.** `make sync`가 `device/*.py`를 기기의 `~/visionguide/`에
+> 평평하게 풀어놓으므로, 기기에는 `device/` 디렉터리가 없다. 자세한 규칙은
+> `CLAUDE.md`의 "디렉터리 구조" 절 참고.
 
 ---
 
