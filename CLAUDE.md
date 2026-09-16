@@ -41,13 +41,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
 | `rois_example.json` | ROI 설정 파일 예시 |
-| `runs/white_cane_v1-2/weights/`, `runs/white_cane_v2/weights/`, `runs/white_cane_v3_320/weights/`, `runs/white_cane_v4_320/weights/`, `runs/white_cane_v5b_ft320/weights/`, `runs/white_cane_v6_ft320/weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v6_320`** (= `runs/white_cane_v6_ft320/weights`, 유사물 네거티브 보완으로 유사물 오탐지 75→6박스·지팡이 재현율 0.979→0.973, `docs/model_evaluation_report_v2.md` 8장). 이전 권장이던 `v5b_320`도 그대로 선택 가능 |
+| `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v10_320`** (= `runs/white_cane_v10_nolkc/weights`). v10은 **누수 없는 재분할(`datasets/v2`) 위에서 처음부터 학습한 계보**이고, 실영상 탐지율이 v9 계열 최고 수준이다(`docs/model_evaluation_report_v3.md`). `v11_yolo26n_320`은 백본 비교용으로 남겨둔 것이지 권장이 아니다(실영상 35.3% vs v10 73.2%). **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
 | `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
 | `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
 | `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
 | `lookalike_exclude.txt` | 유사물 네거티브에서 뺄 원본 파일명 + 근거 주석 (`--exclude-file`) — 흰지팡이가 찍힌 사진을 걸러내는 육안 검수 결과 |
 | `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `datasets/sources/lookalike_lvis_oi/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
 | `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
+| `eval_video_recall.py` | 로컬 전용 — **실영상 기준 지팡이 탐지/트리거 벤치마크. 모델 채택의 1차 기준.** `camera_live_pi.py`의 백엔드·게이트 상수·연관 로직을 그대로 import해 배포와 같은 경로로 잰다(복붙 금지). `--gt`로 정답 구간을 주면 재현율과 오탐지를 분리 집계한다(`datasets/video_gt.json`) |
+| `resplit_dataset.py` + `tests/test_resplit_dataset.py` | 로컬 전용 1회성 — 누수 없는 **그룹 단위 재분할**(`datasets/v2/`, 하드링크). 증강 해시/AIHub 세션을 그룹으로 묶고 층별 md5로 배정한다. `--relabel-person`으로 cane_only의 누락 사람 라벨도 보완. 테스트가 split 쌍의 그룹키 교집합이 공집합인지 검증한다 |
+| `prepare_night_eval.py` | 로컬 전용 1회성 — 합성 야간 평가셋(`datasets/v2_night/`, 감마 0.35~0.55 + 노이즈 σ=6). **KPI 달성 근거가 아니라 회귀 감시용** |
+| `configs/train_*.yaml` | 학습 설정 — `yolo train cfg=<yaml>`로 재현 가능하게 고정. `project:`는 반드시 절대경로(상대경로면 `runs/detect/runs/<name>`으로 중첩된다) |
 | `label_tool/server.py` + `label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
 
 ### 미구현 (계획)
@@ -214,11 +218,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `datasets/sources/cane_pool/{images,labels}`는 지팡이 전용 원본 풀(스플릿 전)로, `train/val/test`의
   cane_only 이미지 합계와 장수가 일치한다.
 - 라벨 형식: `<class_id> <cx> <cy> <w> <h>` (정규화 0~1), class 0 = 흰 지팡이, class 1 = 사람
+- **원본 해상도 상한: 지팡이 416×416 / 사람 224×224** (전수 조사). 따라서 **`imgsz > 416`
+  학습은 순수 업샘플링**이라 정보 이득 없이 연산만 늘어난다 — 640 학습을 하지 않는 이유다.
+  배포 추론에서 해상도를 올리는 것은 효과가 있지만(실측 640에서 탐지율 2.4배), 그건
+  "고해상도 학습"이 아니라 **추론 시 객체 픽셀 밀도 확보**(ROI 크롭)로 풀어야 한다.
+- **데이터를 추가할 때는 반드시 그룹 단위로 분할할 것** (`resplit_dataset.py`). 파일 단위로
+  나누면 (a) Roboflow 증강본(`<stem>_<EXT>.rf.<hash>.jpg`)이 원본과 흩어지고 (b) AIHub
+  연속 촬영(`20210514_HHMMSS_*`)의 같은 순간 프레임이 train/test에 걸친다. 실측 누수율은
+  각각 **69.4% / 99.7%**였고, 그 상태의 mAP50 0.98은 일반화가 아니라 train에서 본 사진의
+  증강본을 다시 맞힌 값이었다. 배정은 층별 md5 해시로 하므로(RNG 체이닝 금지) 층을
+  추가·제거해도 나머지 그룹의 split이 바뀌지 않는다.
 - **지팡이 데이터셋과 사람 데이터셋은 서로 다른 소스에서 각각 라벨링된 뒤 합쳐졌다**
-  (`merge_person_dataset.py` 참고) — 그래서 한 이미지에 지팡이+사람이 동시에 라벨링된 경우가
-  전혀 없다(cane_only 이미지에 사람이 찍혀 있어도 사람 라벨 없음, 반대도 마찬가지). 이 누락은
-  YOLO 학습 시 라벨 안 된 사람 영역을 "배경(사람 아님)"으로 잘못 가르치는 문제를 일으킨다.
-  `label_tool/`(아래 표)로 지팡이 데이터셋(cane_only)에 누락된 사람 라벨을 보완 중.
+  (`merge_person_dataset.py` 참고) — 원래는 한 이미지에 지팡이+사람이 동시에 라벨링된 경우가
+  거의 없었다(cane_only 이미지에 사람이 찍혀 있어도 사람 라벨 없음). 이 누락은 YOLO 학습 시
+  라벨 안 된 사람 영역을 "배경(사람 아님)"으로 잘못 가르치는 오염이다.
+  **`resplit_dataset.py --relabel-person`으로 보완 완료**: `datasets/v2` 기준 지팡이+사람이
+  동시에 라벨링된 이미지가 **9,228장**이고 cane_only는 426 → **75장**으로 줄었다
+  (`docs/model_evaluation_report_v3.md` §1). `label_tool/`은 남은 75장을 수동 검토할 때 쓴다.
 - **배경(네거티브) 이미지 228장**이 `datasets/train/`에 `bg_XXXX.jpg` + 빈 라벨로 들어가 있다
   (`prepare_background_dataset.py`가 `datasets/sources/background_photos/`에서 생성). YOLO는 빈 라벨 이미지를 배경으로
   학습해 오탐지를 억제한다. 원본 `datasets/sources/background_photos/`와 변환 스테이징 `datasets/staging/background/`는
@@ -282,7 +298,7 @@ python camera_live_pi.py --roi-config rois.json --headless
 python camera_live_pi.py --camera-config camera_config.json --headless
 
 # YOLOv8 학습 (PC/GPU 환경)
-yolo train data=data.yaml model=yolov8n.pt epochs=100 imgsz=640
+yolo train cfg=configs/train_v10_nolkc.yaml   # 설정은 yaml로 고정 — imgsz=320(원본 상한 416)
 
 # PT → TFLite INT8 변환
 yolo export model=best.pt format=tflite int8=True
@@ -523,6 +539,26 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 | `watchdog.py` | psutil CPU/온도/디스크, 픽셀 분산으로 렌즈 오염 탐지 | 미구현 (예정) |
 
 ---
+
+## 모델 채택 기준 (v3에서 개정)
+
+1. **1차 기준은 실영상 지표**(`eval_video_recall.py`)다. 이 시스템이 최적화해야 하는 것은
+   "정지 이미지에서 지팡이를 찾기"가 아니라 **"영상에서 지팡이를 끊기지 않고 따라가 ROI
+   트리거를 발동시키기"**이고, 이 지표만이 **split 변경과 무관한 공통 잣대**이기 때문이다.
+   배포와 같은 코드 경로(같은 백엔드·게이트 상수·연관 로직)로 재므로 배포 성능을 직접 반영한다.
+
+2. **정지 이미지 지표는 같은 split에서 잰 값끼리만 비교한다.** v1~v8(누수된 split)의
+   mAP50 0.98과 v9 이후(`datasets/v2`)의 0.94를 나란히 놓으면 안 된다 — 모델의 우열이
+   아니라 데이터셋의 차이다. 리포트에는 어느 split에서 잰 값인지 반드시 병기할 것.
+
+3. **실영상 지표의 표본 수를 반드시 병기한다.** 현재 깨끗한 평가 영상은 `test1.mp4`
+   805프레임 1개뿐이라, 수십 프레임 규모의 차이는 신호가 아니라 노이즈로 취급한다
+   (`docs/model_evaluation_report_v3.md` §3-2에 부호가 뒤집힌 실례가 있다).
+
+4. **INT8 두 경로(LiteRT / onnx2tf full-integer)의 우열은 모델마다 뒤집힌다** —
+   v3는 full-integer, v5b는 LiteRT, v10은 다시 full-integer가 우세했다. 어느 한쪽이
+   항상 낫다고 가정하지 말고 모델마다 다시 잴 것. calibration은 반드시
+   `split=train fraction=0.1`(val을 쓰면 recall이 급락하는 아티팩트가 있다).
 
 ## AI 모델 KPI
 
