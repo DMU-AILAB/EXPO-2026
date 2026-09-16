@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>VisionGuide - 라즈베리파이 네트워크 탐색 및 등록</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-bright": "#faf8ff",
+            "primary-fixed-dim": "#bac3ff",
+            "surface-container": "#ecedfa",
+            "tertiary-container": "#885000",
+            "on-error-container": "#93000a",
+            "surface-container-high": "#e6e7f4",
+            "background": "#faf8ff",
+            "secondary-fixed-dim": "#76daa6",
+            "secondary-fixed": "#92f7c1",
+            "tertiary": "#673b00",
+            "surface-container-lowest": "#ffffff",
+            "primary": "#002ec6",
+            "error": "#ba1a1a",
+            "surface-variant": "#e0e2ee",
+            "on-surface-variant": "#444655",
+            "surface-container-highest": "#e0e2ee",
+            "surface-container-low": "#f2f3ff",
+            "on-surface": "#181b24",
+            "secondary": "#006c46",
+            "secondary-container": "#e6f8ef",
+            "on-secondary-container": "#006c46",
+            "primary-container": "#2c4be0",
+            "surface-tint": "#2e4ce1",
+            "on-primary": "#ffffff",
+            "surface": "#faf8ff",
+            "outline": "#757687",
+            "outline-variant": "#c5c5d8"
+          },
+          fontFamily: {
+            sans: ["Inter", "sans-serif"],
+            code: ["JetBrains Mono", "monospace"]
+          }
+        }
+      }
+    };
+  </script>
+<style>
+    @layer base {
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Inter', sans-serif;
+      }
+      ::-webkit-scrollbar {
+        width: 5px;
+        height: 5px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(100, 116, 139, 0.2);
+        border-radius: 9999px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(100, 116, 139, 0.4);
+      }
+    }
+  </style>
+</head>
+<body class="bg-[#f4f6fb] text-[#0f172a] antialiased overflow-x-hidden min-h-screen">
+<!-- ========================================================================= -->
+<!-- 1. TOP HEADER (PRISTINE LIGHT THEME) -->
+<!-- ========================================================================= -->
+<header class="fixed top-0 w-full z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 shadow-[0_2px_12px_rgba(0,0,0,0.03)]">
+<div class="h-16 w-full px-8 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#002ec6] to-[#2c4be0] flex items-center justify-center shadow-md shadow-blue-500/20">
+<span class="material-symbols-outlined text-white text-[20px]">videocam</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="text-[17px] font-bold tracking-tight text-slate-900">VisionGuide</span>
+<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/80 text-[11px] font-semibold">CANE-AI NET</span>
+</div>
+<span class="text-[11px] text-slate-500 hidden sm:inline">서울역 통합관제센터 · 라즈베리파이 5 엣지 클러스터</span>
+</div>
+</div>
+<!-- Navigation links -->
+<nav class="hidden md:flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60">
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Overview</a>
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Devices <span class="text-xs bg-slate-200 px-1.5 py-0.2 rounded-full font-semibold">15</span></a>
+<a class="px-3.5 py-1.5 bg-white text-[#002ec6] font-semibold rounded-lg text-[13px] shadow-sm border border-slate-200/40 transition-all" href="#">Live Streams</a>
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Statistics</a>
+<a class="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/80 rounded-lg text-[13px] font-medium transition-all" href="#">Settings</a>
+</nav>
+<!-- Right cluster -->
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<span class="text-xs font-semibold">12 / 15 Online</span>
+</div>
+<div class="relative flex items-center justify-center w-9 h-9 rounded-xl hover:bg-slate-100 text-slate-600 transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-rose-500"></span>
+</div>
+<div class="flex items-center gap-2 pl-2 border-l border-slate-200">
+<div class="hidden lg:flex flex-col text-right">
+<span class="text-xs font-semibold text-slate-800">관제 Admin_Ops</span>
+<span class="text-[10px] text-slate-500">SecOps L3</span>
+</div>
+<div class="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-sm font-semibold text-sm">
+<span class="material-symbols-outlined text-[19px]">person</span>
+</div>
+</div>
+</div>
+</div>
+</header>
+<!-- ========================================================================= -->
+<!-- 2. UNDERNEATH LIGHT-MODE DASHBOARD LAYER (Subtle blurred context) -->
+<!-- ========================================================================= -->
+<main class="w-full pt-20 px-10 pb-12 select-none pointer-events-none filter blur-[3px] opacity-60">
+<div class="max-w-[1720px] mx-auto flex flex-col gap-6">
+<!-- Top Title & Controls -->
+<div class="flex items-center justify-between">
+<div>
+<div class="flex items-center gap-3">
+<h1 class="text-2xl font-bold text-slate-900">서울역 1-4호선 통합 모니터링</h1>
+<span class="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold">엣지 클러스터 실시간</span>
+</div>
+<p class="text-sm text-slate-500 mt-1">라즈베리파이 5 NPU 텐서 가속 신경망 노드 실시간 스트리밍</p>
+</div>
+<div class="flex items-center gap-2">
+<button class="px-4 py-2 bg-white rounded-xl border border-slate-200 text-sm font-medium text-slate-700 shadow-sm">필터 설정</button>
+<button class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold shadow-md shadow-blue-500/20">신규 Pi 등록</button>
+</div>
+</div>
+<!-- Metric Cards -->
+<div class="grid grid-cols-4 gap-5">
+<div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm">
+<div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+<span>온라인 Pi 노드</span>
+<span class="material-symbols-outlined text-[18px] text-emerald-600">memory</span>
+</div>
+<div class="mt-3 flex items-baseline gap-1.5 text-2xl font-bold text-slate-900">
+            12 <span class="text-sm font-normal text-slate-400">/ 15 대</span>
+</div>
+<div class="mt-2 text-xs text-emerald-600 font-medium">80% 가동률 정상</div>
+</div>
+<div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm">
+<div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+<span>오늘 총 탐지</span>
+<span class="material-symbols-outlined text-[18px] text-blue-600">visibility</span>
+</div>
+<div class="mt-3 flex items-baseline gap-1.5 text-2xl font-bold text-slate-900">
+            342 <span class="text-sm font-normal text-slate-400">건</span>
+</div>
+<div class="mt-2 text-xs text-blue-600 font-medium">전일 대비 +14.2%</div>
+</div>
+<div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm">
+<div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+<span>활성 위험 알림</span>
+<span class="material-symbols-outlined text-[18px] text-amber-500">warning</span>
+</div>
+<div class="mt-3 flex items-baseline gap-1.5 text-2xl font-bold text-slate-900">
+            3 <span class="text-sm font-normal text-slate-400">건 주의</span>
+</div>
+<div class="mt-2 text-xs text-amber-600 font-medium">시각장애인 유도선 적치물</div>
+</div>
+<div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm">
+<div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+<span>평균 SoC 온도</span>
+<span class="material-symbols-outlined text-[18px] text-cyan-600">device_thermostat</span>
+</div>
+<div class="mt-3 flex items-baseline gap-1.5 text-2xl font-bold text-slate-900">
+            54.2 <span class="text-sm font-normal text-slate-400">°C</span>
+</div>
+<div class="mt-2 text-xs text-cyan-600 font-medium">액티브 쿨러 가동 중</div>
+</div>
+</div>
+<!-- Feed Grid placeholder -->
+<div class="grid grid-cols-3 gap-5">
+<div class="h-64 rounded-2xl bg-white border border-slate-200/80 p-4"></div>
+<div class="h-64 rounded-2xl bg-white border border-slate-200/80 p-4"></div>
+<div class="h-64 rounded-2xl bg-white border border-slate-200/80 p-4"></div>
+</div>
+</div>
+</main>
+<!-- ========================================================================= -->
+<!-- 3. PRISTINE LIGHT GLASSMORPHIC MODAL SHOWCASE OVERLAY -->
+<!-- ========================================================================= -->
+<div class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-6 py-8 bg-slate-900/20 [backdrop-filter:blur(18px)_saturate(160%)]">
+<!-- Ambient Blue & Teal Light Bloom Flares (Subtle & Clean) -->
+<div class="fixed top-1/3 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[720px] h-[520px] bg-blue-400/15 rounded-full blur-[110px] pointer-events-none"></div>
+<div class="fixed bottom-1/4 right-1/3 w-[640px] h-[460px] bg-indigo-300/15 rounded-full blur-[100px] pointer-events-none"></div>
+<!-- Side-by-side Light Glass Panels Container (1920x1080 canvas fit) -->
+<div class="relative w-full max-w-[1240px] flex flex-col xl:flex-row items-stretch justify-center gap-7 z-10 my-auto">
+<!-- ===================================================================== -->
+<!-- MODAL 1: AUTO SCAN MODAL (자동 탐색 - LIGHT GLASSMORPHISM) -->
+<!-- ===================================================================== -->
+<div class="flex-1 rounded-[24px] bg-white/90 [backdrop-filter:blur(40px)_saturate(200%)] border border-white/95 shadow-[0_24px_64px_rgba(20,35,80,0.14),inset_0_1px_1px_rgba(255,255,255,1)] p-7 flex flex-col relative transition-all">
+<!-- Header -->
+<div class="flex items-start justify-between gap-3 pb-5 border-b border-slate-100">
+<div class="flex items-center gap-3.5">
+<!-- Pulsing Electric Radar Icon Badge -->
+<div class="relative flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-50 to-blue-100/80 border border-blue-200/60 shadow-sm text-blue-600">
+<span class="material-symbols-outlined text-[26px] animate-spin" style="animation-duration: 4s;">radar</span>
+<span class="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-blue-500 ring-4 ring-blue-100 animate-pulse"></span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<h2 class="text-lg font-bold text-slate-900 tracking-tight">네트워크에서 Pi 탐색</h2>
+<span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10.5px] font-bold tracking-wider uppercase">mDNS + ARP</span>
+</div>
+<p class="text-xs text-slate-500 mt-0.5">로컬 서브넷(192.168.1.0/24) 내 활성 라즈베리파이 엣지 노드 검색</p>
+</div>
+</div>
+<!-- Frosted Close Circle -->
+<button class="w-9 h-9 rounded-full bg-slate-100/80 hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-all cursor-pointer shadow-sm border border-slate-200/50" type="button">
+<span class="material-symbols-outlined text-[19px]">close</span>
+</button>
+</div>
+<!-- Pill Tab Switcher -->
+<div class="p-1 rounded-xl bg-slate-100/90 border border-slate-200/60 flex items-center gap-1 my-5">
+<button class="flex-1 py-2 px-3 rounded-lg bg-white text-blue-700 font-semibold text-xs shadow-sm border border-slate-200/50 flex items-center justify-center gap-1.5 transition-all">
+<span class="material-symbols-outlined text-[17px] text-blue-600">wifi_tethering</span>
+            자동 탐색
+          </button>
+<button class="flex-1 py-2 px-3 rounded-lg bg-transparent hover:bg-white/50 text-slate-600 font-medium text-xs flex items-center justify-center gap-1.5 transition-all">
+<span class="material-symbols-outlined text-[17px] text-slate-400">add_circle</span>
+            수동 추가
+          </button>
+</div>
+<!-- Scanning Status Banner (Frosted Blue) -->
+<div class="rounded-2xl bg-gradient-to-br from-blue-50/90 to-indigo-50/70 border border-blue-100/90 p-4 mb-4 shadow-[inset_0_1px_1px_rgba(255,255,255,0.8)]">
+<div class="flex items-center justify-between mb-2.5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-blue-600 text-[20px] animate-pulse">sensors</span>
+<span class="text-xs font-bold text-slate-800">192.168.1.0/24 스캔 중... <span class="font-code text-blue-600 font-medium">(23/254)</span></span>
+</div>
+<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold shadow-xs">현재 3개 신규 발견</span>
+</div>
+<!-- Progress Bar Track & Glow Head -->
+<div class="w-full h-2 rounded-full bg-slate-200/80 relative overflow-hidden">
+<div class="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full w-[38%] relative shadow-sm transition-all duration-300">
+<div class="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow-md"></div>
+</div>
+</div>
+<div class="flex justify-between items-center mt-2.5 text-[11px] text-slate-500">
+<span class="flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              ARP Broadcast (802.3)
+            </span>
+<span class="font-code text-slate-600 font-medium">경과 시간: 00:03.4</span>
+</div>
+</div>
+<!-- Detected Nodes List Header -->
+<div class="flex items-center justify-between px-1 mb-2.5">
+<span class="text-xs font-semibold text-slate-700">발견된 라즈베리파이 기기</span>
+<span class="text-[11px] text-slate-400 font-medium">기기 4대 확인됨</span>
+</div>
+<!-- Discovered Nodes List -->
+<div class="flex flex-col gap-2.5 flex-1 max-h-[310px] overflow-y-auto pr-1">
+<!-- Item 1: Already Added (Dimmed with Green Badge) -->
+<div class="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/50 flex items-center justify-between opacity-75">
+<div class="flex items-center gap-3">
+<div class="w-2.5 h-2.5 rounded-full bg-slate-400"></div>
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="text-[13px] font-semibold text-slate-700">cam-entrance-01.local</span>
+<span class="material-symbols-outlined text-slate-400 text-[14px]">lock</span>
+</div>
+<span class="font-code text-[11.5px] text-slate-400">192.168.1.42</span>
+</div>
+</div>
+<div class="flex items-center gap-2.5">
+<span class="hidden sm:inline-block px-2 py-0.5 rounded bg-slate-200/60 text-[11px] font-medium text-slate-600">포트 5000</span>
+<span class="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold">
+<span class="material-symbols-outlined text-[13px]">check</span>
+                등록됨
+              </span>
+</div>
+</div>
+<!-- Item 2: Ready to Add -->
+<div class="p-3.5 rounded-xl bg-white hover:bg-blue-50/40 border border-slate-200/80 hover:border-blue-300 flex items-center justify-between transition-all group shadow-sm">
+<div class="flex items-center gap-3">
+<div class="relative flex items-center justify-center">
+<span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></span>
+<span class="absolute w-4 h-4 rounded-full bg-emerald-400/40 animate-ping"></span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="text-[13px] font-bold text-slate-800 group-hover:text-blue-700 transition-colors">cam-corridor-04.local</span>
+<span class="px-1.5 py-0.5 rounded bg-blue-50 border border-blue-100 text-blue-700 text-[10.5px] font-semibold">Pi 5 (8GB)</span>
+</div>
+<span class="font-code text-[11.5px] text-slate-500">192.168.1.53</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="hidden sm:inline-block px-2 py-0.5 rounded bg-slate-100 text-[11px] text-slate-500">포트 5000</span>
+<button class="px-3.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 hover:border-blue-600 text-xs font-semibold transition-all shadow-xs flex items-center gap-1">
+<span class="material-symbols-outlined text-[15px]">add</span>
+                추가
+              </button>
+</div>
+</div>
+<!-- Item 3: Ready to Add -->
+<div class="p-3.5 rounded-xl bg-white hover:bg-blue-50/40 border border-slate-200/80 hover:border-blue-300 flex items-center justify-between transition-all group shadow-sm">
+<div class="flex items-center gap-3">
+<div class="relative flex items-center justify-center">
+<span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="text-[13px] font-bold text-slate-800 group-hover:text-blue-700 transition-colors">cam-braille-02.local</span>
+<span class="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 text-[10.5px] font-semibold">점자유도로</span>
+</div>
+<span class="font-code text-[11.5px] text-slate-500">192.168.1.67</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="hidden sm:inline-block px-2 py-0.5 rounded bg-slate-100 text-[11px] text-slate-500">포트 5000</span>
+<button class="px-3.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 hover:border-blue-600 text-xs font-semibold transition-all shadow-xs flex items-center gap-1">
+<span class="material-symbols-outlined text-[15px]">add</span>
+                추가
+              </button>
+</div>
+</div>
+<!-- Item 4: Ready to Add -->
+<div class="p-3.5 rounded-xl bg-white hover:bg-blue-50/40 border border-slate-200/80 hover:border-blue-300 flex items-center justify-between transition-all group shadow-sm">
+<div class="flex items-center gap-3">
+<div class="relative flex items-center justify-center">
+<span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="text-[13px] font-bold text-slate-800 group-hover:text-blue-700 transition-colors">cam-kiosk-south.local</span>
+<span class="px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10.5px] font-semibold">키오스크 남측</span>
+</div>
+<span class="font-code text-[11.5px] text-slate-500">192.168.1.88</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="hidden sm:inline-block px-2 py-0.5 rounded bg-slate-100 text-[11px] text-slate-500">포트 5000</span>
+<button class="px-3.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 hover:border-blue-600 text-xs font-semibold transition-all shadow-xs flex items-center gap-1">
+<span class="material-symbols-outlined text-[15px]">add</span>
+                추가
+              </button>
+</div>
+</div>
+</div>
+<!-- Footer Actions -->
+<div class="pt-5 mt-4 border-t border-slate-100 flex items-center justify-between">
+<button class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs flex items-center gap-1.5 transition-all">
+<span class="material-symbols-outlined text-[17px] text-rose-500">stop_circle</span>
+            스캔 중지
+          </button>
+<button class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-xs shadow-lg shadow-blue-500/25 flex items-center gap-1.5 transition-all">
+<span>전체 추가 (3개)</span>
+<span class="material-symbols-outlined text-[17px]">chevron_right</span>
+</button>
+</div>
+</div>
+<!-- ===================================================================== -->
+<!-- MODAL 2: MANUAL NODE ADD MODAL (수동 노드 연결 - LIGHT GLASSMORPHISM) -->
+<!-- ===================================================================== -->
+<div class="flex-1 rounded-[24px] bg-white/90 [backdrop-filter:blur(40px)_saturate(200%)] border border-white/95 shadow-[0_24px_64px_rgba(20,35,80,0.14),inset_0_1px_1px_rgba(255,255,255,1)] p-7 flex flex-col relative transition-all">
+<!-- Presentation Badge -->
+<div class="absolute -top-3 right-6 px-3 py-1 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10.5px] font-bold shadow-md uppercase tracking-wider">
+          탭 전환 뷰: 수동 추가 모드
+        </div>
+<!-- Header -->
+<div class="flex items-start justify-between gap-3 pb-5 border-b border-slate-100">
+<div class="flex items-center gap-3.5">
+<div class="relative flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-50 to-blue-100/80 border border-cyan-200/60 shadow-sm text-blue-600">
+<span class="material-symbols-outlined text-[26px]">settings_ethernet</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<h2 class="text-lg font-bold text-slate-900 tracking-tight">수동 노드 연결</h2>
+<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10.5px] font-bold tracking-wider uppercase">Static IP / FQDN</span>
+</div>
+<p class="text-xs text-slate-500 mt-0.5">고정 IP 또는 방화벽 내부 라즈베리파이 엔드포인트 직접 바인딩</p>
+</div>
+</div>
+<!-- Frosted Close Circle -->
+<button class="w-9 h-9 rounded-full bg-slate-100/80 hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-all cursor-pointer shadow-sm border border-slate-200/50" type="button">
+<span class="material-symbols-outlined text-[19px]">close</span>
+</button>
+</div>
+<!-- Pill Tab Switcher (Inactive Auto, Active Manual) -->
+<div class="p-1 rounded-xl bg-slate-100/90 border border-slate-200/60 flex items-center gap-1 my-5">
+<button class="flex-1 py-2 px-3 rounded-lg bg-transparent hover:bg-white/50 text-slate-600 font-medium text-xs flex items-center justify-center gap-1.5 transition-all">
+<span class="material-symbols-outlined text-[17px] text-slate-400">wifi_tethering</span>
+            자동 탐색
+          </button>
+<button class="flex-1 py-2 px-3 rounded-lg bg-white text-blue-700 font-semibold text-xs shadow-sm border border-slate-200/50 flex items-center justify-center gap-1.5 transition-all">
+<span class="material-symbols-outlined text-[17px] text-blue-600">add_circle</span>
+            수동 추가
+          </button>
+</div>
+<!-- Pristine Frosted Form Fields -->
+<div class="flex flex-col gap-4 flex-1">
+<!-- Field 1: Device Alias -->
+<div class="flex flex-col gap-1.5">
+<label class="text-xs font-semibold text-slate-700 flex items-center justify-between">
+<span>기기 별칭 (Device Name)</span>
+<span class="text-slate-400 text-[11px] font-normal">식별용 고유 ID</span>
+</label>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3.5 text-slate-400 text-[18px]">badge</span>
+<input class="w-full h-10 pl-10 pr-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 text-sm font-medium focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all outline-none" placeholder="예: cam-kiosk-02" type="text" value="cam-kiosk-south-02"/>
+</div>
+</div>
+<!-- Field 2: IP Address / Hostname -->
+<div class="flex flex-col gap-1.5">
+<label class="text-xs font-semibold text-slate-700 flex items-center justify-between">
+<span>IP 주소 / 호스트명</span>
+<span class="text-blue-600 font-code text-[11px]">IPv4 or .local</span>
+</label>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3.5 text-slate-400 text-[18px]">lan</span>
+<input class="w-full h-10 pl-10 pr-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-code text-sm font-medium focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all outline-none" type="text" value="192.168.1.88"/>
+</div>
+</div>
+<!-- Field 3: Stream Port -->
+<div class="flex flex-col gap-1.5">
+<label class="text-xs font-semibold text-slate-700 flex items-center justify-between">
+<span>스트림 포트 (RTSP / HTTP Control)</span>
+<span class="text-slate-400 text-[11px] font-normal">기본값 5000</span>
+</label>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3.5 text-slate-400 text-[18px]">router</span>
+<input class="w-full h-10 pl-10 pr-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-code text-sm font-medium focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all outline-none" type="text" value="5000"/>
+</div>
+</div>
+<!-- Verification Test Box -->
+<div class="mt-1 p-3.5 rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50/50 border border-slate-200/90 flex flex-col gap-2.5">
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px] text-blue-600">network_check</span>
+                네트워크 핑 &amp; NPU 엔진 통신
+              </span>
+<button class="px-2.5 py-1 rounded-lg bg-white hover:bg-blue-50 text-blue-700 border border-slate-200 text-xs font-semibold flex items-center gap-1 transition-all shadow-xs" type="button">
+<span class="material-symbols-outlined text-[14px]">sync</span>
+                재확인
+              </button>
+</div>
+<!-- Verification Success Status Pill -->
+<div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-emerald-600 text-[20px]">check_circle</span>
+<span class="text-xs font-semibold text-emerald-800">연결 성공 (12ms 응답 · YOLOv8n 가속 확인)</span>
+</div>
+<span class="font-code text-xs font-bold text-emerald-700">200 OK</span>
+</div>
+</div>
+</div>
+<!-- Footer Actions -->
+<div class="pt-5 mt-4 border-t border-slate-100 flex items-center justify-between">
+<button class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs transition-all">
+            취소
+          </button>
+<button class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-xs shadow-lg shadow-blue-500/25 flex items-center gap-1.5 transition-all">
+<span class="material-symbols-outlined text-[17px]">add_task</span>
+<span>수동 추가 완료</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</body></html>
