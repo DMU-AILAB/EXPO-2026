@@ -113,3 +113,13 @@ datasets/data_v2_nolkc.yaml
 
 # 평가 시각화 산출물 (재생성 가능)
 eval_out/
+
+# 학습/export 중간 산출물 — 배포에 쓰지 않고 best.pt에서 언제든 재생성된다
+# (docs/int8_320_quantization_report.md §5 참고). onnx는 12MB, best_saved_model은
+# 40~60MB라 저장소만 무겁게 만든다.
+runs/*/weights/best.onnx
+runs/*/weights/best_saved_model/
+runs/*/weights/keep_*.tflite
+runs/*/weights/last.pt
+# yolo val 부산물 — 실행할 때마다 val-N 디렉터리가 쌓인다
+runs/detect/
