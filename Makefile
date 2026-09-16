@@ -51,7 +51,9 @@ DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v3_320/weights \
 	runs/white_cane_v4_320/weights \
 	runs/white_cane_v5b_ft320/weights \
-	runs/white_cane_v6_ft320/weights
+	runs/white_cane_v6_ft320/weights \
+	runs/white_cane_v10_nolkc/weights \
+	runs/white_cane_v11_v26n/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor \
         install-edgetpu-py39 setup-pi-python310 install-service \
@@ -86,8 +88,17 @@ sync:
 	ssh $(USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
 	rsync -avz --progress rf_config_example.json $(DEST)/
+	@# 모델 파일은 **파일별로** 따로 전송한다. 한 rsync에 두 파일을 함께 넘기면
+	@# EdgeTPU 컴파일본이 없는 모델 디렉터리에서 rsync가 "No such file" 로 실패해
+	@# 배포 전체가 중단된다 — EdgeTPU 컴파일은 현재 범위 밖이라 v2 외에는 없다.
+	@# best_int8_edgetpu.tflite는 있으면 보내고 없으면 건너뛴다.
 	for d in $(DEPLOY_MODEL_DIRS); do \
-		rsync -avz --progress $$d/best_int8.tflite $$d/best_int8_edgetpu.tflite $(DEST)/$$d/; \
+		rsync -avz --progress $$d/best_int8.tflite $(DEST)/$$d/; \
+		if [ -f $$d/best_int8_edgetpu.tflite ]; then \
+			rsync -avz --progress $$d/best_int8_edgetpu.tflite $(DEST)/$$d/; \
+		else \
+			echo "[SKIP] $$d/best_int8_edgetpu.tflite 없음 (EdgeTPU 미컴파일 — CPU TFLite 경로로 동작)"; \
+		fi; \
 	done
 
 ## Pi로 ROI 에디터 파일만 전송

@@ -67,8 +67,25 @@ MODEL_VARIANTS = {
         "input_size": 320,
         "label": "white_cane_v6_320 (320, 유사물 오탐지 보완)",
     },
+    # v10 이후는 누수 없는 재분할(datasets/v2) 위에서 처음부터 학습한 계보다.
+    # v1~v6의 정지 이미지 지표(mAP50 0.98)는 증강본/연속촬영이 train과 test에
+    # 걸쳐 있던 값이라 v10과 직접 비교하면 안 된다(CLAUDE.md 채택 기준 참고).
+    "v10_320": {
+        "weights_dir": "runs/white_cane_v10_nolkc/weights",
+        "input_size": 320,
+        "label": "white_cane_v10_320 (320, 누수 제거 재분할 + 증강 튜닝 — 권장)",
+    },
+    # yolo26n 백본 비교용. 실영상 지표에서 yolov8n에 크게 뒤져(35.3% vs 73.2%)
+    # 채택하지 않았으나, 실기기에서 직접 확인할 수 있도록 선택지로 남긴다.
+    "v11_yolo26n_320": {
+        "weights_dir": "runs/white_cane_v11_v26n/weights",
+        "input_size": 320,
+        "label": "white_cane_v11_yolo26n_320 (320, yolo26n 백본 — 비교용)",
+    },
 }
-_DEFAULT_MODEL_VARIANT = "v2_640"
+# 기본값이 오랫동안 v2_640이었다 — 프레임 드랍의 원인이던 640 모델이라
+# camera_config.json 없이 뜬 Pi가 가장 느린 모델로 동작했다. 현행 권장으로 맞춘다.
+_DEFAULT_MODEL_VARIANT = "v10_320"
 # 사람 동반 필수 조건의 기본값 — dataclass 기본값과 load_camera_config()의 폴백이
 # 어긋나면 필드가 없는 기존 파일이 조용히 다른 값으로 로드되므로 한 곳에서만 정의한다.
 _DEFAULT_REQUIRE_PERSON = True

@@ -34,7 +34,7 @@ from detection_events import read_recent_events  # noqa: E402
 from fp_hotspots import clear_hotspots, read_hotspots  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CAPTURE_PRESETS, CameraProfile,
-    _DEFAULT_REQUIRE_PERSON, _DEFAULT_ROI_CROP_INFERENCE,
+    _DEFAULT_MODEL_VARIANT, _DEFAULT_REQUIRE_PERSON, _DEFAULT_ROI_CROP_INFERENCE,
     load_camera_config, save_camera_config, validate_camera_config,
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
@@ -313,7 +313,7 @@ class CameraProfilePayload(BaseModel):
     port: int = 8080
     traffic_db: str = "foot_traffic.db"
     swap_rb: bool = False
-    model_variant: str = "v2_640"
+    model_variant: str = _DEFAULT_MODEL_VARIANT
     capture_preset: str = "auto"
     # 아래 두 필드는 CameraProfile의 기본값을 그대로 따라간다 — 여기에 값을 다시
     # 적으면 두 곳이 어긋날 수 있다. pydantic은 선언되지 않은 필드를 model_dump()에서
