@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>VisionGuide — Light Glassmorphic Edge AI Dashboard</title>
+<!-- Pretendard / Inter Font -->
+<link as="style" crossorigin="" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet"/>
+<!-- Tailwind CSS CDN -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#3b82f6',
+              600: '#2c4be0',
+              700: '#1d35b5',
+            },
+            accent: {
+              blue: '#2c4be0',
+              emerald: '#059669',
+              amber: '#d97706',
+              red: '#dc2626',
+            }
+          },
+          animation: {
+            'pulse-glow': 'pulseGlow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'float-slow': 'float 10s ease-in-out infinite',
+            'pulse-dot': 'pulseDot 1.8s infinite',
+          },
+          keyframes: {
+            pulseGlow: {
+              '0%, 100%': { opacity: '0.45', transform: 'scale(1)' },
+              '50%': { opacity: '0.75', transform: 'scale(1.05)' },
+            },
+            pulseDot: {
+              '0%, 100%': { opacity: '1', transform: 'scale(1)' },
+              '50%': { opacity: '0.4', transform: 'scale(1.25)' },
+            },
+            float: {
+              '0%, 100%': { transform: 'translate(0px, 0px)' },
+              '50%': { transform: 'translate(20px, -15px)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+<style>
+    /* Pristine Light Glassmorphic Panels */
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.78);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 12px 32px -4px rgba(20, 35, 90, 0.06), 0 4px 12px -2px rgba(20, 35, 90, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+      border-radius: 20px;
+      position: relative;
+    }
+
+    .glass-panel-subtle {
+      background: rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(20px) saturate(170%);
+      -webkit-backdrop-filter: blur(20px) saturate(170%);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 8px 24px -4px rgba(20, 35, 90, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      border-radius: 16px;
+    }
+
+    .glass-device-card {
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      border-radius: 20px;
+      box-shadow: 0 10px 30px -4px rgba(30, 41, 75, 0.05), inset 0 1px 1px rgba(255, 255, 255, 1);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .glass-device-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px -8px rgba(44, 75, 224, 0.12), 0 2px 8px 0 rgba(44, 75, 224, 0.08);
+      border-color: rgba(44, 75, 224, 0.35);
+    }
+
+    .glass-device-card.offline-card {
+      background: rgba(254, 242, 242, 0.82);
+      border-color: rgba(252, 165, 165, 0.5);
+    }
+    .glass-device-card.offline-card:hover {
+      border-color: rgba(239, 68, 68, 0.5);
+      box-shadow: 0 20px 40px -8px rgba(239, 68, 68, 0.12);
+    }
+
+    .micro-pill {
+      background: rgba(241, 245, 249, 0.85);
+      border: 1px solid rgba(203, 213, 225, 0.6);
+      backdrop-filter: blur(8px);
+      border-radius: 9999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      line-height: 14px;
+      font-weight: 500;
+      color: #334155;
+      letter-spacing: -0.01em;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .micro-pill:hover {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(148, 163, 184, 0.8);
+      color: #0f172a;
+    }
+
+    /* Ambient radial glow blobs */
+    .glow-blob {
+      position: absolute;
+      border-radius: 9999px;
+      filter: blur(90px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Video feed styling in light dashboard */
+    .stream-scanlines {
+      background: linear-gradient(rgba(15, 23, 42, 0.02) 50%, rgba(15, 23, 42, 0.25) 50%), linear-gradient(90deg, rgba(44, 75, 224, 0.03), rgba(16, 185, 129, 0.02), rgba(44, 75, 224, 0.03));
+      background-size: 100% 3px, 6px 100%;
+    }
+  </style>
+</head>
+<body class="bg-[#f4f6fc] text-[#0f172a] min-h-screen relative overflow-x-hidden antialiased selection:bg-[#2c4be0]/20 selection:text-[#2c4be0]">
+<!-- Airy Pastel Ambient Glow Orbs for Light Theme -->
+<div class="glow-blob w-[680px] h-[680px] bg-[#dbeafe]/70 top-[-140px] left-[-80px] animate-float-slow"></div>
+<div class="glow-blob w-[620px] h-[620px] bg-[#dcfce7]/60 bottom-[-100px] right-[-60px] animate-pulse-glow"></div>
+<div class="glow-blob w-[500px] h-[500px] bg-[#ede9fe]/50 top-[30%] left-[45%]"></div>
+<div class="glow-blob w-[460px] h-[460px] bg-[#fef3c7]/40 top-[15%] right-[12%]"></div>
+<!-- Global App Top Navigation Frame (Light Glass Nav) -->
+<header class="sticky top-0 z-50 w-full border-b border-white/80 bg-white/75 backdrop-blur-2xl shadow-sm shadow-slate-200/50">
+<div class="max-w-[1720px] mx-auto px-8 h-[68px] flex items-center justify-between">
+<!-- Left: Logo & Station Context -->
+<div class="flex items-center space-x-4">
+<div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#2c4be0] via-[#4361ee] to-[#06b6d4] p-[1.5px] flex items-center justify-center shadow-lg shadow-[#2c4be0]/20">
+<div class="w-full h-full bg-white rounded-[14px] flex items-center justify-center">
+<i class="w-5 h-5 text-[#2c4be0] stroke-[2.4]" data-lucide="scan"></i>
+</div>
+</div>
+<div>
+<div class="flex items-center gap-2.5">
+<span class="font-bold text-[18px] tracking-tight text-[#0f172a] flex items-center gap-2">
+              VisionGuide
+              <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-[#2c4be0]/10 text-[#2c4be0] border border-[#2c4be0]/25">CANE-AI NET</span>
+</span>
+</div>
+<p class="text-[11.5px] font-medium text-slate-500 tracking-tight flex items-center gap-1.5">
+<span class="text-slate-700 font-semibold">서울역 통합관제센터</span>
+<span class="text-slate-300">•</span>
+<span>라즈베리파이 5 엣지 클러스터</span>
+</p>
+</div>
+</div>
+<!-- Center: Navigation Tabs -->
+<nav class="hidden lg:flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-200/50 border border-white/80 backdrop-blur-md shadow-inner">
+<a class="px-4 py-1.5 rounded-xl text-xs font-semibold bg-[#2c4be0] text-white shadow-md shadow-[#2c4be0]/25 transition-all flex items-center gap-2" href="#overview">
+<i class="w-3.5 h-3.5 stroke-[2.2]" data-lucide="layout-grid"></i>
+          Overview
+        </a>
+<a class="px-4 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-all flex items-center gap-2" href="#devices">
+<i class="w-3.5 h-3.5 stroke-[2]" data-lucide="cpu"></i>
+          Devices
+          <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-300/60 text-slate-700 font-semibold">15</span>
+</a>
+<a class="px-4 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-all flex items-center gap-2" href="#streams">
+<i class="w-3.5 h-3.5 stroke-[2]" data-lucide="video"></i>
+          Live Streams
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+</a>
+<a class="px-4 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-all flex items-center gap-2" href="#analytics">
+<i class="w-3.5 h-3.5 stroke-[2]" data-lucide="bar-chart-3"></i>
+          Statistics
+        </a>
+<a class="px-4 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-all flex items-center gap-2" href="#settings">
+<i class="w-3.5 h-3.5 stroke-[2]" data-lucide="sliders"></i>
+          Settings
+        </a>
+</nav>
+<!-- Right: System Status & User Actions -->
+<div class="flex items-center gap-3.5">
+<!-- Live Cluster Health Badge -->
+<div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 shadow-sm shadow-emerald-500/5">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-600"></span>
+</span>
+<span class="text-xs font-bold text-emerald-700 tracking-tight">12 / 15 Online</span>
+</div>
+<!-- Quick Notifications -->
+<button class="w-10 h-10 rounded-2xl bg-white/90 border border-slate-200/80 shadow-sm flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-white transition relative">
+<i class="w-4 h-4 stroke-[2]" data-lucide="bell"></i>
+<span class="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white"></span>
+</button>
+<!-- Admin Profile -->
+<div class="flex items-center gap-3 pl-2.5 border-l border-slate-200">
+<div class="w-9 h-9 rounded-2xl bg-gradient-to-tr from-[#2c4be0] to-[#7c3aed] flex items-center justify-center text-xs font-bold text-white shadow-md shadow-[#2c4be0]/20">
+            관제
+          </div>
+<div class="hidden xl:block text-left">
+<div class="text-xs font-bold text-slate-800 leading-tight">Admin_Ops</div>
+<div class="text-[10.5px] text-slate-500 font-medium">보행안전 통합팀</div>
+</div>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Container: 1920x1080 Optimized Desktop Workspace -->
+<main class="max-w-[1720px] mx-auto px-8 py-7 relative z-10">
+<!-- Page Title & Live Meta Header -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 gap-4 border-b border-slate-200/60 mb-6">
+<div>
+<div class="flex items-center gap-3 mb-1">
+<h1 class="text-2xl lg:text-[26px] font-extrabold tracking-tight text-slate-900 flex items-center gap-2.5">
+            실시간 엣지 관제 현황
+            <span class="text-xs px-2.5 py-0.5 rounded-lg bg-slate-200/70 text-slate-700 font-semibold border border-slate-300/60">Overview</span>
+</h1>
+</div>
+<p class="text-xs lg:text-[13px] font-medium text-slate-500">
+          시각장애인 흰 지팡이(White Cane) 및 점자블록 동선 AI 실시간 엣지 비전 모니터링
+        </p>
+</div>
+<!-- Quick Action Controls -->
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/80 border border-slate-200/80 text-xs text-slate-600 shadow-sm">
+<i class="w-3.5 h-3.5 text-[#2c4be0]" data-lucide="clock"></i>
+<span>자동 갱신: <strong class="text-slate-900 font-bold">1초 주기</strong></span>
+</div>
+<button class="px-4 py-2 rounded-xl text-xs font-semibold bg-[#2c4be0]/10 hover:bg-[#2c4be0]/15 text-[#2c4be0] border border-[#2c4be0]/30 shadow-sm transition flex items-center gap-2">
+<i class="w-3.5 h-3.5 stroke-[2.2]" data-lucide="radio"></i>
+          음성 유도기 일괄 테스트
+        </button>
+</div>
+</div>
+<!-- ========================================================================= -->
+<!-- TOP KPI ROW — 4 Light Glass Cards with Soft Radial Glowing Badges         -->
+<!-- ========================================================================= -->
+<section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+<!-- Card 1: 온라인 Pi (Emerald Accent) -->
+<div class="glass-panel p-5 flex flex-col justify-between group hover:border-emerald-300 transition-all duration-300">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-600 tracking-tight">온라인 Pi</span>
+<div class="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-center text-emerald-600 shadow-sm">
+<i class="w-4 h-4 stroke-[2.2]" data-lucide="wifi"></i>
+</div>
+</div>
+<div>
+<div class="text-[32px] font-black text-slate-900 tracking-tight leading-none mb-2">
+            12 / 15
+          </div>
+<div class="flex items-center gap-2 text-xs text-emerald-700 font-semibold">
+<span class="inline-block w-2 h-2 rounded-full bg-emerald-500 ring-4 ring-emerald-100"></span>
+<span>가동률 80.0% · 3대 점검 권장</span>
+</div>
+</div>
+<div class="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+<span>Subnet: 192.168.1.0/24</span>
+<span class="text-slate-800 font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded">MQTT: 11ms</span>
+</div>
+</div>
+<!-- Card 2: 오늘 총 탐지 (Electric Blue Accent) -->
+<div class="glass-panel p-5 flex flex-col justify-between group hover:border-blue-300 transition-all duration-300">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-600 tracking-tight">오늘 총 탐지</span>
+<div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200/80 flex items-center justify-center text-[#2c4be0] shadow-sm">
+<i class="w-4 h-4 stroke-[2.2]" data-lucide="scan"></i>
+</div>
+</div>
+<div>
+<div class="text-[32px] font-black text-slate-900 tracking-tight leading-none mb-2">
+            342건
+          </div>
+<div class="flex items-center gap-1.5 text-xs text-[#2c4be0] font-semibold">
+<i class="w-3.5 h-3.5 stroke-[2.4]" data-lucide="trending-up"></i>
+<span>전일 동시간 대비 +18.4%</span>
+</div>
+</div>
+<div class="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+<span>흰 지팡이 인식 정밀도</span>
+<span class="text-[#2c4be0] font-bold font-mono">96.2% mAP</span>
+</div>
+</div>
+<!-- Card 3: 활성 알림 (Amber Accent & Glowing Pulse Dot) -->
+<div class="glass-panel p-5 flex flex-col justify-between group hover:border-amber-300 transition-all duration-300">
+<div class="flex items-center justify-between mb-3">
+<div class="flex items-center gap-2">
+<span class="text-xs font-bold text-slate-600 tracking-tight">활성 알림</span>
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+</span>
+</div>
+<div class="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 shadow-sm">
+<i class="w-4 h-4 stroke-[2.2]" data-lucide="alert-triangle"></i>
+</div>
+</div>
+<div>
+<div class="text-[32px] font-black text-slate-900 tracking-tight leading-none mb-2 flex items-baseline gap-2.5">
+<span>3개</span>
+<span class="text-xs font-bold text-amber-700 px-2.5 py-0.5 rounded-full bg-amber-100/80 border border-amber-300/70">주의 2 · 경고 1</span>
+</div>
+<div class="flex items-center gap-1 text-xs text-amber-700 font-medium">
+<span>점자블록 전방 적치물 감지 외</span>
+</div>
+</div>
+<div class="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+<span>자동 음성안내 송출</span>
+<span class="text-slate-800 font-semibold">3회 연동 완료</span>
+</div>
+</div>
+<!-- Card 4: 평균 CPU 온도 (Neutral with Thermometer) -->
+<div class="glass-panel p-5 flex flex-col justify-between group hover:border-slate-300 transition-all duration-300">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-600 tracking-tight">평균 CPU 온도</span>
+<div class="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-emerald-600 shadow-sm">
+<i class="w-4 h-4 stroke-[2.2]" data-lucide="thermometer"></i>
+</div>
+</div>
+<div>
+<div class="text-[32px] font-black text-slate-900 tracking-tight leading-none mb-2 flex items-baseline gap-2.5">
+<span>54°C</span>
+<span class="text-xs font-bold text-emerald-700 px-2.5 py-0.5 rounded-full bg-emerald-100/80 border border-emerald-300/70">정상 범위</span>
+</div>
+<div class="flex items-center gap-2 text-xs text-slate-500 font-medium">
+<div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden flex-1">
+<div class="bg-gradient-to-r from-emerald-500 to-[#2c4be0] h-2 rounded-full" style="width: 54%"></div>
+</div>
+<span class="font-mono text-[11px] font-bold text-slate-600">Max 68°C</span>
+</div>
+</div>
+<div class="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+<span>액티브 쿨러 팬 가동</span>
+<span class="text-slate-800 font-mono font-bold">2,400 RPM</span>
+</div>
+</div>
+</section>
+<!-- ========================================================================= -->
+<!-- DEVICE GRID HEADER & CONTROLS                                             -->
+<!-- ========================================================================= -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3">
+<div class="flex items-center gap-3">
+<h2 class="text-lg lg:text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
+          라즈베리파이 엣지 노드 모니터링
+          <span class="text-xs px-2.5 py-0.5 rounded-lg bg-white border border-slate-200/80 text-slate-700 font-mono font-semibold shadow-xs">3 × 2 GRID</span>
+</h2>
+<span class="hidden md:inline-block text-slate-300">•</span>
+<div class="hidden md:flex items-center gap-3.5 text-xs font-semibold text-slate-600">
+<span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>온라인 5</span>
+<span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>오프라인 1</span>
+</div>
+</div>
+<div class="flex items-center gap-2.5">
+<div class="relative">
+<i class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" data-lucide="search"></i>
+<input class="bg-white border border-slate-200 rounded-xl pl-9 pr-3.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#2c4be0] focus:ring-2 focus:ring-[#2c4be0]/10 w-52 shadow-xs transition" placeholder="노드명 또는 IP 필터..." type="text"/>
+</div>
+<button class="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 shadow-xs transition flex items-center gap-1.5">
+<i class="w-3.5 h-3.5 text-slate-500" data-lucide="refresh-cw"></i>
+<span>새로고침</span>
+</button>
+</div>
+</div>
+<!-- ========================================================================= -->
+<!-- DEVICE GRID — 3×2 Crisp Light Glass Cards (Spacious 1920 Desktop View)    -->
+<!-- ========================================================================= -->
+<section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative">
+<!-- CARD 1 (ONLINE): cam-entrance-01 -->
+<div class="glass-device-card p-5 group flex flex-col justify-between">
+<div>
+<!-- Header Row -->
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></div>
+<h3 class="text-base font-bold text-slate-900 tracking-tight">cam-entrance-01</h3>
+</div>
+<div class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+<span>온라인</span>
+</div>
+</div>
+<!-- Location Subtext -->
+<p class="text-xs text-slate-500 mb-3.5 font-mono">
+            입구 캐노피 · 192.168.1.42
+          </p>
+<!-- Stream Thumbnail with high contrast overlay -->
+<div class="relative w-full h-48 rounded-xl bg-slate-900 border border-slate-800/80 overflow-hidden mb-4 flex items-center justify-center stream-scanlines shadow-inner">
+<!-- Simulated Station Perspective & Detection Graphics -->
+<svg class="absolute inset-0 w-full h-full opacity-70 pointer-events-none" fill="none" viewbox="0 0 320 180">
+<line stroke="rgba(255,255,255,0.2)" stroke-dasharray="3 3" x1="0" x2="160" y1="180" y2="80"></line>
+<line stroke="rgba(255,255,255,0.2)" stroke-dasharray="3 3" x1="320" x2="160" y1="180" y2="80"></line>
+<polygon fill="rgba(245,166,35,0.2)" points="120,180 145,100 175,100 200,180" stroke="rgba(245,166,35,0.5)" stroke-width="1.2"></polygon>
+<rect fill="rgba(96,165,250,0.2)" height="85" rx="3" stroke="#60a5fa" stroke-dasharray="4 2" stroke-width="2" width="70" x="140" y="70"></rect>
+<line stroke="#ffffff" stroke-linecap="round" stroke-width="2.5" x1="150" x2="195" y1="145" y2="90"></line>
+<text fill="#93c5fd" font-family="monospace" font-size="8.5" font-weight="bold" x="142" y="66">WHITE_CANE 96.4%</text>
+</svg>
+<!-- Top-Right: LIVE red pill badge -->
+<div class="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+<span>LIVE</span>
+</div>
+<!-- Top-Left Stream Resolution / FPS -->
+<div class="absolute top-2.5 left-2.5 text-[9.5px] font-mono text-slate-200 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded border border-white/15">
+              1080p · 30 FPS
+            </div>
+<!-- Center Camera Icon / Play Indicator -->
+<div class="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-[#2c4be0] transition-all shadow-md">
+<i class="w-5 h-5" data-lucide="camera"></i>
+</div>
+<!-- Bottom Stream Bar -->
+<div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10.5px] text-slate-200 bg-black/70 px-2.5 py-1.2 rounded-lg backdrop-blur-sm border border-white/10">
+<span class="flex items-center gap-1.5 font-medium"><i class="w-3.5 h-3.5 text-emerald-400" data-lucide="volume-2"></i> 음성유도 송출 대기</span>
+<span class="font-mono text-blue-300 font-bold">NPU 22ms</span>
+</div>
+</div>
+</div>
+<!-- Footer: frosted micro-stat pills -->
+<div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/70">
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-[#2c4be0]" data-lucide="target"></i> 탐지 12회</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="activity"></i> CPU 43%</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="thermometer"></i> 52°C</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-slate-500" data-lucide="video"></i> 카메라 2개</span>
+</div>
+</div>
+<!-- CARD 2 (ONLINE): cam-gate-02 -->
+<div class="glass-device-card p-5 group flex flex-col justify-between">
+<div>
+<!-- Header Row -->
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></div>
+<h3 class="text-base font-bold text-slate-900 tracking-tight">cam-gate-02</h3>
+</div>
+<div class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+<span>온라인</span>
+</div>
+</div>
+<!-- Location Subtext -->
+<p class="text-xs text-slate-500 mb-3.5 font-mono">
+            개찰구 서측 통로 · 192.168.1.43
+          </p>
+<!-- Stream Thumbnail -->
+<div class="relative w-full h-48 rounded-xl bg-slate-900 border border-slate-800/80 overflow-hidden mb-4 flex items-center justify-center stream-scanlines shadow-inner">
+<svg class="absolute inset-0 w-full h-full opacity-60 pointer-events-none" fill="none" viewbox="0 0 320 180">
+<line stroke="rgba(255,255,255,0.18)" x1="20" x2="140" y1="180" y2="60"></line>
+<line stroke="rgba(255,255,255,0.18)" x1="300" x2="180" y1="180" y2="60"></line>
+<rect fill="rgba(52,211,153,0.15)" height="75" rx="3" stroke="#34d399" stroke-width="1.8" width="60" x="70" y="80"></rect>
+<text fill="#34d399" font-family="monospace" font-size="8.5" font-weight="bold" x="72" y="75">PEDESTRIAN SAFE</text>
+</svg>
+<!-- Top-Right: LIVE red pill badge -->
+<div class="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+<span>LIVE</span>
+</div>
+<div class="absolute top-2.5 left-2.5 text-[9.5px] font-mono text-slate-200 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded border border-white/15">
+              1080p · 30 FPS
+            </div>
+<!-- Center Camera Icon -->
+<div class="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-[#2c4be0] transition-all shadow-md">
+<i class="w-5 h-5" data-lucide="camera"></i>
+</div>
+<div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10.5px] text-slate-200 bg-black/70 px-2.5 py-1.2 rounded-lg backdrop-blur-sm border border-white/10">
+<span class="flex items-center gap-1.5 font-medium"><i class="w-3.5 h-3.5 text-emerald-400" data-lucide="check-circle-2"></i> 게이트 통과 안전</span>
+<span class="font-mono text-blue-300 font-bold">NPU 19ms</span>
+</div>
+</div>
+</div>
+<!-- Footer: frosted micro-stat pills -->
+<div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/70">
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-[#2c4be0]" data-lucide="target"></i> 탐지 38회</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="activity"></i> CPU 39%</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="thermometer"></i> 49°C</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-slate-500" data-lucide="video"></i> 카메라 2개</span>
+</div>
+</div>
+<!-- CARD 3 (OFFLINE): cam-platform-03 (Distinct Alert Warning Style) -->
+<div class="glass-device-card offline-card p-5 group flex flex-col justify-between">
+<div>
+<!-- Header Row -->
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm"></div>
+<h3 class="text-base font-bold text-slate-900 tracking-tight">cam-platform-03</h3>
+</div>
+<div class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-300 shadow-xs flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+<span>오프라인</span>
+</div>
+</div>
+<!-- Location Subtext -->
+<p class="text-xs text-slate-500 mb-3.5 font-mono">
+            승강장 3호선 남단 · 192.168.1.58
+          </p>
+<!-- Offline Stream Thumbnail -->
+<div class="relative w-full h-48 rounded-xl bg-slate-900/95 border border-red-300/40 overflow-hidden mb-4 flex flex-col items-center justify-center shadow-inner">
+<div class="w-12 h-12 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mb-2 group-hover:scale-110 transition-transform shadow-md">
+<i class="w-5 h-5" data-lucide="unlink"></i>
+</div>
+<span class="text-xs font-bold text-red-300 tracking-tight">연결 끊김</span>
+<span class="text-[10.5px] text-slate-400 mt-0.5">RTSP 소켓 타임아웃 (14:28)</span>
+<div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10.5px] text-red-300 bg-red-950/70 px-2.5 py-1.2 rounded-lg border border-red-500/30 backdrop-blur-sm">
+<span class="flex items-center gap-1.5 font-medium"><i class="w-3.5 h-3.5 text-red-400" data-lucide="alert-circle"></i> 네트워크 응답 없음</span>
+<button class="underline font-bold text-red-200 hover:text-white transition">재연결 시도</button>
+</div>
+</div>
+</div>
+<!-- Footer: frosted micro-stat pills (showing offline state) -->
+<div class="flex flex-wrap items-center gap-2 pt-2 border-t border-red-200/60">
+<span class="micro-pill text-slate-400 bg-white/70 border-slate-200"><i class="w-3.5 h-3.5 text-slate-400" data-lucide="target"></i> 탐지 0회</span>
+<span class="micro-pill text-slate-400 bg-white/70 border-slate-200"><i class="w-3.5 h-3.5 text-slate-400" data-lucide="activity"></i> CPU --%</span>
+<span class="micro-pill text-slate-400 bg-white/70 border-slate-200"><i class="w-3.5 h-3.5 text-slate-400" data-lucide="thermometer"></i> --°C</span>
+<span class="micro-pill text-red-600 bg-red-50 border-red-200 font-bold"><i class="w-3.5 h-3.5 text-red-500" data-lucide="video-off"></i> 신호 두절</span>
+</div>
+</div>
+<!-- CARD 4 (ONLINE / ATTENTION): cam-braille-01 -->
+<div class="glass-device-card p-5 group flex flex-col justify-between">
+<div>
+<!-- Header Row -->
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></div>
+<h3 class="text-base font-bold text-slate-900 tracking-tight">cam-braille-01</h3>
+</div>
+<div class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+<span>온라인</span>
+</div>
+</div>
+<!-- Location Subtext -->
+<p class="text-xs text-slate-500 mb-3.5 font-mono">
+            점자블록 유도로 1구간 · 192.168.1.47
+          </p>
+<!-- Stream Thumbnail -->
+<div class="relative w-full h-48 rounded-xl bg-slate-900 border border-slate-800/80 overflow-hidden mb-4 flex items-center justify-center stream-scanlines shadow-inner">
+<svg class="absolute inset-0 w-full h-full opacity-70 pointer-events-none" fill="none" viewbox="0 0 320 180">
+<polygon fill="rgba(245,166,35,0.22)" points="100,180 140,80 180,80 220,180" stroke="#f59e0b" stroke-width="1.6"></polygon>
+<rect fill="rgba(245,158,11,0.25)" height="40" rx="2" stroke="#f59e0b" stroke-dasharray="3 2" stroke-width="1.8" width="45" x="155" y="110"></rect>
+<text fill="#fcd34d" font-family="monospace" font-size="8" font-weight="bold" x="142" y="105">OBSTACLE DETECTED</text>
+</svg>
+<!-- Top-Right: LIVE red pill badge -->
+<div class="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+<span>LIVE</span>
+</div>
+<div class="absolute top-2.5 left-2.5 text-[9.5px] font-mono text-slate-200 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded border border-white/15">
+              1080p · 30 FPS
+            </div>
+<!-- Center Camera Icon -->
+<div class="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-[#2c4be0] transition-all shadow-md">
+<i class="w-5 h-5" data-lucide="camera"></i>
+</div>
+<div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10.5px] text-amber-300 bg-black/75 px-2.5 py-1.2 rounded-lg backdrop-blur-sm border border-amber-400/40">
+<span class="flex items-center gap-1.5 font-bold"><i class="w-3.5 h-3.5 text-amber-400" data-lucide="alert-triangle"></i> 전방 1.5m 장애물 우회 안내</span>
+<span class="font-mono font-bold">CH-02</span>
+</div>
+</div>
+</div>
+<!-- Footer: frosted micro-stat pills -->
+<div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/70">
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-amber-600" data-lucide="target"></i> 탐지 64회</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-amber-600" data-lucide="activity"></i> CPU 78%</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-amber-600" data-lucide="thermometer"></i> 62°C</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-slate-500" data-lucide="video"></i> 카메라 2개</span>
+</div>
+</div>
+<!-- CARD 5 (ONLINE): cam-escalator-up -->
+<div class="glass-device-card p-5 group flex flex-col justify-between">
+<div>
+<!-- Header Row -->
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></div>
+<h3 class="text-base font-bold text-slate-900 tracking-tight">cam-escalator-up</h3>
+</div>
+<div class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+<span>온라인</span>
+</div>
+</div>
+<!-- Location Subtext -->
+<p class="text-xs text-slate-500 mb-3.5 font-mono">
+            상행 에스컬레이터 입구 · 192.168.1.50
+          </p>
+<!-- Stream Thumbnail -->
+<div class="relative w-full h-48 rounded-xl bg-slate-900 border border-slate-800/80 overflow-hidden mb-4 flex items-center justify-center stream-scanlines shadow-inner">
+<svg class="absolute inset-0 w-full h-full opacity-60 pointer-events-none" fill="none" viewbox="0 0 320 180">
+<line stroke="rgba(255,255,255,0.2)" stroke-width="2" x1="40" x2="200" y1="180" y2="20"></line>
+<line stroke="rgba(255,255,255,0.2)" stroke-width="2" x1="120" x2="280" y1="180" y2="20"></line>
+<circle cx="160" cy="100" fill="rgba(96,165,250,0.2)" r="18" stroke="#60a5fa" stroke-width="1.8"></circle>
+<text fill="#93c5fd" font-family="monospace" font-size="8.5" font-weight="bold" x="135" y="75">GUIDE ACTIVE</text>
+</svg>
+<!-- Top-Right: LIVE red pill badge -->
+<div class="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+<span>LIVE</span>
+</div>
+<div class="absolute top-2.5 left-2.5 text-[9.5px] font-mono text-slate-200 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded border border-white/15">
+              1080p · 30 FPS
+            </div>
+<!-- Center Camera Icon -->
+<div class="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-[#2c4be0] transition-all shadow-md">
+<i class="w-5 h-5" data-lucide="camera"></i>
+</div>
+<div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10.5px] text-slate-200 bg-black/70 px-2.5 py-1.2 rounded-lg backdrop-blur-sm border border-white/10">
+<span class="flex items-center gap-1.5 font-medium"><i class="w-3.5 h-3.5 text-emerald-400" data-lucide="volume-2"></i> 손잡이 안내 방송 중</span>
+<span class="font-mono text-blue-300 font-bold">NPU 21ms</span>
+</div>
+</div>
+</div>
+<!-- Footer: frosted micro-stat pills -->
+<div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/70">
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-[#2c4be0]" data-lucide="target"></i> 탐지 21회</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="activity"></i> CPU 35%</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="thermometer"></i> 48°C</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-slate-500" data-lucide="video"></i> 카메라 2개</span>
+</div>
+</div>
+<!-- CARD 6 (ONLINE): cam-elevator-hall -->
+<div class="glass-device-card p-5 group flex flex-col justify-between">
+<div>
+<!-- Header Row -->
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></div>
+<h3 class="text-base font-bold text-slate-900 tracking-tight">cam-elevator-hall</h3>
+</div>
+<div class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+<span>온라인</span>
+</div>
+</div>
+<!-- Location Subtext -->
+<p class="text-xs text-slate-500 mb-3.5 font-mono">
+            엘리베이터 전면 홀 · 192.168.1.61
+          </p>
+<!-- Stream Thumbnail -->
+<div class="relative w-full h-48 rounded-xl bg-slate-900 border border-slate-800/80 overflow-hidden mb-4 flex items-center justify-center stream-scanlines shadow-inner">
+<svg class="absolute inset-0 w-full h-full opacity-60 pointer-events-none" fill="none" viewbox="0 0 320 180">
+<rect height="110" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" width="100" x="110" y="40"></rect>
+<line stroke="rgba(255,255,255,0.2)" x1="160" x2="160" y1="40" y2="150"></line>
+<circle cx="160" cy="110" fill="rgba(52,211,153,0.2)" r="14" stroke="#34d399" stroke-width="1.8"></circle>
+<text fill="#34d399" font-family="monospace" font-size="8.5" font-weight="bold" x="135" y="32">DOOR CLEAR</text>
+</svg>
+<!-- Top-Right: LIVE red pill badge -->
+<div class="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+<span>LIVE</span>
+</div>
+<div class="absolute top-2.5 left-2.5 text-[9.5px] font-mono text-slate-200 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded border border-white/15">
+              1080p · 30 FPS
+            </div>
+<!-- Center Camera Icon -->
+<div class="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-[#2c4be0] transition-all shadow-md">
+<i class="w-5 h-5" data-lucide="camera"></i>
+</div>
+<div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10.5px] text-slate-200 bg-black/70 px-2.5 py-1.2 rounded-lg backdrop-blur-sm border border-white/10">
+<span class="flex items-center gap-1.5 font-medium"><i class="w-3.5 h-3.5 text-emerald-400" data-lucide="radio"></i> 승강기 호출 연동 완료</span>
+<span class="font-mono text-blue-300 font-bold">NPU 24ms</span>
+</div>
+</div>
+</div>
+<!-- Footer: frosted micro-stat pills -->
+<div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/70">
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-[#2c4be0]" data-lucide="target"></i> 탐지 15회</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="activity"></i> CPU 41%</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-emerald-600" data-lucide="thermometer"></i> 51°C</span>
+<span class="micro-pill"><i class="w-3.5 h-3.5 text-slate-500" data-lucide="video"></i> 카메라 2개</span>
+</div>
+</div>
+</section>
+<!-- Bottom Cluster Quick Summary Glass Bar -->
+<div class="mt-8 p-4 rounded-2xl glass-panel-subtle flex flex-col md:flex-row items-center justify-between gap-4 text-xs font-medium text-slate-600">
+<div class="flex items-center gap-3">
+<span class="relative flex h-2.5 w-2.5">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-600"></span>
+</span>
+<span>실시간 MQTT 브로커 스트림 연결: <strong class="text-slate-900 font-mono font-bold bg-white px-2 py-0.5 rounded border border-slate-200">broker.visionguide.internal:1883</strong> (지연시간 11ms)</span>
+</div>
+<div class="flex items-center gap-4 text-slate-500">
+<span class="font-semibold text-slate-700">YOLOv8n-Cane v2.4 엣지 모델 탑재 (Hailo-8 NPU)</span>
+<span class="text-slate-300">|</span>
+<span>보안 암호화: <span class="font-semibold text-slate-700">TLS 1.3</span> / eBPF 감시 활성</span>
+</div>
+</div>
+</main>
+<script>
+    // Initialize Lucide Icons
+    lucide.createIcons();
+  </script>
+</body></html>

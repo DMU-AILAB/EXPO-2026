@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VisionGuide — 글래스모피즘 컴포넌트 샘플</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css" />
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  background: #dde3f2;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 배경 블롭 ── */
+.blob {
+  position: fixed; border-radius: 9999px;
+  filter: blur(120px); pointer-events: none; z-index: 0;
+}
+@keyframes floatA { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(22px,-18px) scale(1.03)} }
+@keyframes floatB { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-18px,22px) scale(1.04)} }
+
+/* ── 섹션 컨테이너 ── */
+.page { position:relative; z-index:10; max-width:1360px; margin:0 auto; padding:44px 32px 72px; }
+
+/* ================================================================
+   공통 글래스 카드 — 배경+보더+그림자 모두 반투명
+================================================================ */
+.gc {
+  background: rgba(255,255,255,0.62);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  /* 보더: 바깥쪽 흰 선 + 안쪽 하이라이트 */
+  border: 1px solid rgba(255,255,255,0.70);
+  box-shadow:
+    0 14px 40px -8px rgba(20,30,80,0.10),
+    0 2px 8px -2px rgba(20,30,80,0.06),
+    inset 0 1px 0 rgba(255,255,255,0.90),   /* 상단 유리 반사 */
+    inset 0 -1px 0 rgba(255,255,255,0.30);  /* 하단 미세 반사 */
+  border-radius: 22px;
+  transition: transform 0.5s cubic-bezier(0.22,1,0.36,1),
+              box-shadow 0.5s cubic-bezier(0.22,1,0.36,1);
+}
+.gc:hover {
+  transform: translateY(-6px);
+  box-shadow:
+    0 28px 56px -12px rgba(20,30,80,0.14),
+    0 4px 12px -2px rgba(20,30,80,0.07),
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    inset 0 -1px 0 rgba(255,255,255,0.35);
+}
+
+/* 내부 인셋 카드 */
+.gc-inner {
+  background: rgba(255,255,255,0.48);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.65);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.85),
+    0 4px 16px -4px rgba(20,30,80,0.07);
+  border-radius: 14px;
+}
+
+/* ================================================================
+   글래스 배지 — 배경·보더 모두 반투명 흰색
+================================================================ */
+.gbadge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px;
+  background: rgba(255,255,255,0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.90), 0 1px 4px rgba(20,30,80,0.07);
+  border-radius: 9999px;
+  font-size: 11px; font-weight: 600; color: #1e293b;
+  white-space: nowrap;
+}
+.gbadge.offline { color: #94a3b8; }
+
+/* 상태 점 */
+@keyframes softDot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:0.45; transform:scale(1.35); }
+}
+.dot { display:inline-block; width:6px; height:6px; border-radius:9999px; flex-shrink:0; }
+.dot.live { animation: softDot 3s cubic-bezier(0.4,0,0.6,1) infinite; }
+
+/* ================================================================
+   글래스 버튼 — Primary / Secondary / Ghost
+================================================================ */
+
+/* Primary — 진한 파란색이지만 inset 하이라이트로 유리처럼 */
+.gbtn-primary {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 20px;
+  background: linear-gradient(160deg, rgba(56,84,220,0.92) 0%, rgba(35,60,185,0.96) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(120,144,255,0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.28),   /* 상단 유리 하이라이트 */
+    inset 0 -1px 0 rgba(0,0,20,0.18),        /* 하단 깊이 */
+    0 4px 16px rgba(44,75,224,0.35);
+  border-radius: 11px;
+  font-size: 13px; font-weight: 600; color: #fff;
+  cursor: pointer; letter-spacing: -0.01em;
+  transition: all 0.35s cubic-bezier(0.22,1,0.36,1);
+}
+.gbtn-primary:hover {
+  background: linear-gradient(160deg, rgba(70,100,240,0.94) 0%, rgba(44,75,224,0.98) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.32),
+    inset 0 -1px 0 rgba(0,0,20,0.20),
+    0 6px 22px rgba(44,75,224,0.45);
+  transform: translateY(-1px);
+}
+.gbtn-primary:active { transform: translateY(0); }
+
+/* Secondary — 흰 유리 */
+.gbtn-secondary {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 18px;
+  background: rgba(255,255,255,0.60);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,0.80);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    inset 0 -1px 0 rgba(20,30,80,0.06),
+    0 2px 8px rgba(20,30,80,0.08);
+  border-radius: 11px;
+  font-size: 13px; font-weight: 600; color: #334155;
+  cursor: pointer; letter-spacing: -0.01em;
+  transition: all 0.35s cubic-bezier(0.22,1,0.36,1);
+}
+.gbtn-secondary:hover {
+  background: rgba(255,255,255,0.80);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,1),
+    inset 0 -1px 0 rgba(20,30,80,0.08),
+    0 4px 14px rgba(20,30,80,0.11);
+  transform: translateY(-1px);
+}
+
+/* Ghost — 보더만 유리 */
+.gbtn-ghost {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 16px;
+  background: rgba(255,255,255,0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.55);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.70);
+  border-radius: 11px;
+  font-size: 13px; font-weight: 500; color: #475569;
+  cursor: pointer; letter-spacing: -0.01em;
+  transition: all 0.35s cubic-bezier(0.22,1,0.36,1);
+}
+.gbtn-ghost:hover {
+  background: rgba(255,255,255,0.45);
+  color: #1e293b;
+  transform: translateY(-1px);
+}
+
+/* ================================================================
+   인풋 — 글래스
+================================================================ */
+.ginput {
+  width: 100%;
+  background: rgba(255,255,255,0.50);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), inset 0 2px 6px rgba(20,30,80,0.04);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px; color: #1e293b;
+  outline: none;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  font-family: inherit;
+}
+.ginput::placeholder { color: #94a3b8; }
+.ginput:focus {
+  border-color: rgba(88,117,240,0.60);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.85),
+    inset 0 2px 6px rgba(20,30,80,0.04),
+    0 0 0 3px rgba(44,75,224,0.12);
+}
+
+/* ================================================================
+   마이크로 필
+================================================================ */
+.mpill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 9999px;
+  background: rgba(255,255,255,0.50);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.70);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+  font-size: 11px; font-weight: 500; color: #475569;
+  transition: background 0.3s ease;
+}
+.mpill:hover { background: rgba(255,255,255,0.72); }
+
+/* 스트림 썸네일 */
+.stream-bg {
+  background: #080f1e;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.012) 50%, transparent 50%),
+    linear-gradient(90deg, rgba(44,75,224,0.025), rgba(16,185,129,0.015), rgba(44,75,224,0.025));
+  background-size: 100% 2.5px, 5px 100%;
+}
+
+/* 섹션 헤더 */
+.scheme-tag { font-size:10px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#94a3b8; }
+.scheme-title { font-size:17px; font-weight:800; color:#0f172a; letter-spacing:-0.02em; margin:4px 0; }
+.scheme-desc { font-size:12px; color:#64748b; line-height:1.6; }
+
+/* 구분선 */
+.divider { border:none; border-top: 1px solid rgba(255,255,255,0.55); margin: 18px 0; }
+
+/* 토스트 */
+#toast {
+  position:fixed; bottom:32px; left:50%; transform:translateX(-50%);
+  background: rgba(15,23,42,0.82);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 24px rgba(0,0,0,0.25);
+  color:#f1f5f9; padding:12px 26px; border-radius:14px;
+  font-size:13px; font-weight:600;
+  opacity:0; pointer-events:none;
+  transition: opacity 0.35s ease;
+  z-index:999; white-space:nowrap;
+}
+#toast.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<!-- 배경 블롭 -->
+<div class="blob" style="width:750px;height:750px;background:rgba(180,200,255,0.50);top:-150px;left:-100px;animation:floatA 14s ease-in-out infinite"></div>
+<div class="blob" style="width:650px;height:650px;background:rgba(160,240,210,0.30);bottom:-80px;right:-80px;animation:floatB 16s ease-in-out infinite"></div>
+<div class="blob" style="width:520px;height:520px;background:rgba(220,200,255,0.28);top:38%;left:36%;animation:floatA 18s ease-in-out infinite 3s"></div>
+
+<div class="page">
+
+  <!-- 헤더 -->
+  <div style="margin-bottom:40px">
+    <h1 style="font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-0.025em;margin-bottom:8px">
+      글래스모피즘 컴포넌트 — 버튼 · 보더 · 배지
+    </h1>
+    <p style="font-size:13px;color:#64748b;line-height:1.7">
+      버튼·배지·인풋·보더 전체에 유리 효과를 적용했어요.<br>
+      <strong style="color:#334155">배경 배색(A~D)</strong>과 무관하게 이 컴포넌트 스타일이 기본으로 들어가고, 이 위에 팔레트를 덮어요.
+    </p>
+  </div>
+
+  <!-- ── 컴포넌트 쇼케이스 ── -->
+  <div class="gc" style="padding:32px;margin-bottom:28px">
+    <div class="scheme-tag">컴포넌트 공통 스펙</div>
+    <div class="scheme-title" style="margin-bottom:16px">버튼 · 배지 · 인풋 유리 처리</div>
+
+    <!-- 버튼 3종 -->
+    <p style="font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">버튼</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px">
+      <button class="gbtn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+        네트워크 스캔
+      </button>
+      <button class="gbtn-secondary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        ROI 편집
+      </button>
+      <button class="gbtn-ghost">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+        새로고침
+      </button>
+    </div>
+    <hr class="divider"/>
+
+    <!-- 배지 3종 -->
+    <p style="font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">상태 배지</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px">
+      <span class="gbadge"><span class="dot live" style="background:#059669"></span>온라인</span>
+      <span class="gbadge"><span class="dot live" style="background:#d97706;animation-delay:-1s"></span>주의</span>
+      <span class="gbadge offline"><span class="dot" style="background:#cbd5e1"></span>오프라인</span>
+      <span class="gbadge"><span class="dot live" style="background:#2c4be0;animation-delay:-0.5s"></span>스트리밍 중</span>
+    </div>
+    <hr class="divider"/>
+
+    <!-- 인풋 -->
+    <p style="font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">인풋</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <input class="ginput" placeholder="노드명 또는 IP 필터..." />
+      <input class="ginput" placeholder="192.168.1.100" />
+    </div>
+  </div>
+
+  <!-- ── 4개 팔레트 카드 ── -->
+  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:24px">
+
+    <!-- A: 피치블랙 온라인 -->
+    <div class="gc" style="padding:26px">
+      <div class="scheme-tag">A</div>
+      <div class="scheme-title">피치블랙 · 블루 액센트 · 뉴트럴 오프</div>
+      <p class="scheme-desc" style="margin-bottom:20px">가장 절제된 방향. 상태 색이 아닌 점의 존재감으로만 구분.</p>
+
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <span class="gbadge"><span class="dot live" style="background:#0f172a"></span>온라인</span>
+        <span class="gbadge"><span class="dot live" style="background:#2c4be0;animation-delay:-1s"></span>주의</span>
+        <span class="gbadge offline"><span class="dot" style="background:#cbd5e1"></span>오프라인</span>
+      </div>
+
+      <div class="gc-inner" style="padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="dot live" style="background:#0f172a;width:8px;height:8px"></span>
+            <span style="font-size:14px;font-weight:700;color:#0f172a">cam-entrance-01</span>
+          </div>
+          <span class="gbadge" style="font-size:10px;padding:2px 8px">
+            <span class="dot live" style="background:#0f172a;width:5px;height:5px"></span>온라인
+          </span>
+        </div>
+        <p style="font-size:11px;color:#94a3b8;font-family:monospace;margin-bottom:12px">입구 캐노피 · 192.168.1.42</p>
+        <div class="stream-bg" style="border-radius:12px;height:90px;position:relative;overflow:hidden;margin-bottom:12px">
+          <div style="position:absolute;top:7px;right:7px;display:flex;align-items:center;gap:4px;background:rgba(15,23,42,0.75);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);padding:2px 8px;border-radius:9999px;font-size:9px;color:#f8fafc;font-weight:700">
+            <span class="dot live" style="background:#f8fafc;width:4px;height:4px"></span>LIVE
+          </div>
+          <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:0.6" viewBox="0 0 320 90" fill="none">
+            <line x1="0" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <line x1="320" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <rect x="130" y="26" width="60" height="50" rx="2" stroke="#e2e8f0" stroke-width="1.6" stroke-dasharray="4 2" fill="rgba(226,232,240,0.07)"/>
+            <text x="132" y="22" fill="#94a3b8" font-family="monospace" font-size="7" font-weight="bold">WHITE_CANE 0.96</text>
+          </svg>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="mpill">탐지 12회</span>
+          <span class="mpill">CPU 43%</span>
+          <span class="mpill">52°C</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="gbtn-primary" style="flex:1;justify-content:center">설정</button>
+          <button class="gbtn-secondary" style="flex:1;justify-content:center">ROI 편집</button>
+          <button class="gbtn-ghost" style="padding:8px 12px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="gbtn-primary" onclick="pick('A','피치블랙 · 블루 액센트')">A 선택</button>
+      </div>
+    </div>
+
+    <!-- B: 에메랄드(진한) / 앰버 -->
+    <div class="gc" style="padding:26px">
+      <div class="scheme-tag">B</div>
+      <div class="scheme-title">딥에메랄드 · 딥앰버 · 뉴트럴 오프</div>
+      <p class="scheme-desc" style="margin-bottom:20px">기존 초록·노랑 유지하되 채도를 낮추고 배지는 모두 유리 처리.</p>
+
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <span class="gbadge"><span class="dot live" style="background:#059669"></span>온라인</span>
+        <span class="gbadge"><span class="dot live" style="background:#d97706;animation-delay:-1s"></span>주의</span>
+        <span class="gbadge offline"><span class="dot" style="background:#cbd5e1"></span>오프라인</span>
+      </div>
+
+      <div class="gc-inner" style="padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="dot live" style="background:#059669;width:8px;height:8px"></span>
+            <span style="font-size:14px;font-weight:700;color:#0f172a">cam-entrance-01</span>
+          </div>
+          <span class="gbadge" style="font-size:10px;padding:2px 8px">
+            <span class="dot live" style="background:#059669;width:5px;height:5px"></span>온라인
+          </span>
+        </div>
+        <p style="font-size:11px;color:#94a3b8;font-family:monospace;margin-bottom:12px">입구 캐노피 · 192.168.1.42</p>
+        <div class="stream-bg" style="border-radius:12px;height:90px;position:relative;overflow:hidden;margin-bottom:12px">
+          <div style="position:absolute;top:7px;right:7px;display:flex;align-items:center;gap:4px;background:rgba(5,150,105,0.70);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.25);padding:2px 8px;border-radius:9999px;font-size:9px;color:#f8fafc;font-weight:700">
+            <span class="dot live" style="background:#f8fafc;width:4px;height:4px"></span>LIVE
+          </div>
+          <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:0.6" viewBox="0 0 320 90" fill="none">
+            <line x1="0" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <line x1="320" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <rect x="130" y="26" width="60" height="50" rx="2" stroke="#34d399" stroke-width="1.6" stroke-dasharray="4 2" fill="rgba(52,211,153,0.09)"/>
+            <text x="132" y="22" fill="#6ee7b7" font-family="monospace" font-size="7" font-weight="bold">WHITE_CANE 0.96</text>
+          </svg>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="mpill">탐지 12회</span>
+          <span class="mpill">CPU 43%</span>
+          <span class="mpill">52°C</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="gbtn-primary" style="flex:1;justify-content:center">설정</button>
+          <button class="gbtn-secondary" style="flex:1;justify-content:center">ROI 편집</button>
+          <button class="gbtn-ghost" style="padding:8px 12px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="gbtn-primary" onclick="pick('B','딥에메랄드 · 딥앰버')">B 선택</button>
+      </div>
+    </div>
+
+    <!-- C: 인디고 / 앰버(딥) -->
+    <div class="gc" style="padding:26px">
+      <div class="scheme-tag">C</div>
+      <div class="scheme-title">인디고 · 앰버골드 · 뉴트럴 오프</div>
+      <p class="scheme-desc" style="margin-bottom:20px">브랜드 블루와 가까운 인디고. 경고는 골드 계열로 차별.</p>
+
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <span class="gbadge"><span class="dot live" style="background:#4f46e5"></span>온라인</span>
+        <span class="gbadge"><span class="dot live" style="background:#b45309;animation-delay:-1s"></span>주의</span>
+        <span class="gbadge offline"><span class="dot" style="background:#cbd5e1"></span>오프라인</span>
+      </div>
+
+      <div class="gc-inner" style="padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="dot live" style="background:#4f46e5;width:8px;height:8px"></span>
+            <span style="font-size:14px;font-weight:700;color:#0f172a">cam-entrance-01</span>
+          </div>
+          <span class="gbadge" style="font-size:10px;padding:2px 8px">
+            <span class="dot live" style="background:#4f46e5;width:5px;height:5px"></span>온라인
+          </span>
+        </div>
+        <p style="font-size:11px;color:#94a3b8;font-family:monospace;margin-bottom:12px">입구 캐노피 · 192.168.1.42</p>
+        <div class="stream-bg" style="border-radius:12px;height:90px;position:relative;overflow:hidden;margin-bottom:12px">
+          <div style="position:absolute;top:7px;right:7px;display:flex;align-items:center;gap:4px;background:rgba(79,70,229,0.70);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.25);padding:2px 8px;border-radius:9999px;font-size:9px;color:#f8fafc;font-weight:700">
+            <span class="dot live" style="background:#f8fafc;width:4px;height:4px"></span>LIVE
+          </div>
+          <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:0.6" viewBox="0 0 320 90" fill="none">
+            <line x1="0" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <line x1="320" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <rect x="130" y="26" width="60" height="50" rx="2" stroke="#818cf8" stroke-width="1.6" stroke-dasharray="4 2" fill="rgba(129,140,248,0.09)"/>
+            <text x="132" y="22" fill="#a5b4fc" font-family="monospace" font-size="7" font-weight="bold">WHITE_CANE 0.96</text>
+          </svg>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="mpill">탐지 12회</span>
+          <span class="mpill">CPU 43%</span>
+          <span class="mpill">52°C</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="gbtn-primary" style="flex:1;justify-content:center">설정</button>
+          <button class="gbtn-secondary" style="flex:1;justify-content:center">ROI 편집</button>
+          <button class="gbtn-ghost" style="padding:8px 12px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="gbtn-primary" onclick="pick('C','인디고 · 앰버골드')">C 선택</button>
+      </div>
+    </div>
+
+    <!-- D: 사이안 / 골드 -->
+    <div class="gc" style="padding:26px">
+      <div class="scheme-tag">D</div>
+      <div class="scheme-title">사이안 · 골드 · 뉴트럴 오프</div>
+      <p class="scheme-desc" style="margin-bottom:20px">차갑고 기술적인 느낌. 관제센터·공공 대시보드에 자주 쓰이는 톤.</p>
+
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <span class="gbadge"><span class="dot live" style="background:#0891b2"></span>온라인</span>
+        <span class="gbadge"><span class="dot live" style="background:#ca8a04;animation-delay:-1s"></span>주의</span>
+        <span class="gbadge offline"><span class="dot" style="background:#cbd5e1"></span>오프라인</span>
+      </div>
+
+      <div class="gc-inner" style="padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="dot live" style="background:#0891b2;width:8px;height:8px"></span>
+            <span style="font-size:14px;font-weight:700;color:#0f172a">cam-entrance-01</span>
+          </div>
+          <span class="gbadge" style="font-size:10px;padding:2px 8px">
+            <span class="dot live" style="background:#0891b2;width:5px;height:5px"></span>온라인
+          </span>
+        </div>
+        <p style="font-size:11px;color:#94a3b8;font-family:monospace;margin-bottom:12px">입구 캐노피 · 192.168.1.42</p>
+        <div class="stream-bg" style="border-radius:12px;height:90px;position:relative;overflow:hidden;margin-bottom:12px">
+          <div style="position:absolute;top:7px;right:7px;display:flex;align-items:center;gap:4px;background:rgba(8,145,178,0.70);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.25);padding:2px 8px;border-radius:9999px;font-size:9px;color:#f8fafc;font-weight:700">
+            <span class="dot live" style="background:#f8fafc;width:4px;height:4px"></span>LIVE
+          </div>
+          <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:0.6" viewBox="0 0 320 90" fill="none">
+            <line x1="0" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <line x1="320" y1="90" x2="160" y2="30" stroke="rgba(255,255,255,0.14)" stroke-dasharray="3 3"/>
+            <rect x="130" y="26" width="60" height="50" rx="2" stroke="#22d3ee" stroke-width="1.6" stroke-dasharray="4 2" fill="rgba(34,211,238,0.08)"/>
+            <text x="132" y="22" fill="#67e8f9" font-family="monospace" font-size="7" font-weight="bold">WHITE_CANE 0.96</text>
+          </svg>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="mpill">탐지 12회</span>
+          <span class="mpill">CPU 43%</span>
+          <span class="mpill">52°C</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="gbtn-primary" style="flex:1;justify-content:center">설정</button>
+          <button class="gbtn-secondary" style="flex:1;justify-content:center">ROI 편집</button>
+          <button class="gbtn-ghost" style="padding:8px 12px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="gbtn-primary" onclick="pick('D','사이안 · 골드')">D 선택</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+function pick(id, name) {
+  const t = document.getElementById('toast')
+  t.textContent = `✓ ${id} — ${name} 선택됨`
+  t.classList.add('show')
+  setTimeout(() => t.classList.remove('show'), 2800)
+}
+</script>
+</body>
+</html>
