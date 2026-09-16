@@ -39,17 +39,16 @@ expo/
 │   ├── frontend/        (구 visionguide-frontend)
 │   ├── mockups/         (구 dash — Stitch 목업)
 │   └── demo/            (구 EXPO-Dash-demo — 디자인 토큰 출처)
-├── configs/           학습 설정 yaml 10개
+├── configs/           학습 설정 yaml 10개 + examples/ 설정 예시 3개
 ├── deploy/            systemd 유닛 · sudoers · auto_ap.sh · deploy.ps1
 ├── tests/             pytest 20개 + conftest.py
 ├── weights/           COCO 사전학습 .pt (gitignore)
-├── examples/          *_example.json 3개
 ├── datasets/          학습 데이터 ★저장소의 59%
 ├── runs/              학습 산출물 ★저장소의 36%
 └── docs/              설계·평가 문서
 ```
 
-루트에 남는 파일은 9개다 — `README.md` `CLAUDE.md` `AGENTS.md` `인수인계.md`
+루트에 남는 파일은 8개다 — `README.md` `CLAUDE.md` `AGENTS.md` `Makefile`
 `Makefile` `environment.yml` `requirements.txt` `requirements-pi.txt` `.gitignore`.
 
 ## 2. ★ Pi는 평면 배치다 — 이 저장소 구조와 다르다

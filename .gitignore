@@ -39,6 +39,10 @@ datasets/data_local.yaml
 #       입력이고, 재다운로드할 외부 출처가 없다.
 datasets/sources/*
 !datasets/sources/cane_pool/
+# cane_pool/images 는 datasets/{train,val,test} 와 **동일한 git blob**이다(전수 확인).
+# 같은 이미지를 두 경로로 추적할 이유가 없어 제외한다. 반면 cane_pool/labels 는
+# 사람 라벨이 병합되기 전 원본이라 split 쪽과 9,303개가 다르다 — 반드시 남긴다.
+datasets/sources/cane_pool/images/
 
 # datasets/staging/ — prepare_*_dataset.py 가 640 jpg로 정규화한 중간 산출물.
 # 실제 학습에 쓰이는 bg_*.jpg 는 datasets/train/ 에 커밋되고(lk_*.jpg 는 아래 참고),

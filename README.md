@@ -34,7 +34,7 @@ Pi Camera → YOLOv8n (TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 | `tools/dev/camera_live.py` | PC용 추론 뷰어 (PyTorch) |
 | `tools/eval/eval_video_recall.py` | 실영상 탐지/트리거 벤치 — **모델 채택 1차 기준** |
 | `tools/data/resplit_dataset.py` | 누수 없는 그룹 단위 재분할 |
-| `examples/rois_example.json` | ROI 설정 예시 (입구, 횡단보도) |
+| `configs/examples/rois_example.json` | ROI 설정 예시 (입구, 횡단보도) |
 
 ### 미구현 (계획)
 
@@ -170,7 +170,7 @@ expo/
 ├── dashboard/                 # 미구현 React 대시보드 + 디자인 자료
 ├── configs/                   # 학습 설정 yaml
 ├── deploy/                    # systemd 유닛 · sudoers · 배포 스크립트
-├── examples/                  # *_example.json
+│   └── examples/              #   *_example.json (rois·camera_config·rf)
 ├── weights/                   # COCO 사전학습 .pt (gitignore)
 ├── datasets/                  # 흰 지팡이 학습 이미지 + YOLO 라벨
 ├── runs/                      # 학습 결과 (가중치 파일)

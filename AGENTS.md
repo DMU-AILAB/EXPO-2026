@@ -16,8 +16,9 @@ Source is split by **where the code runs**:
   `apps/label_tool/`.
 - `dashboard/` — the unimplemented React admin dashboard plus design references.
   **It has no deployment path to the Pi.**
-- `tests/`, `deploy/` (systemd units), `configs/` (training YAML), `docs/`,
-  `datasets/`, `runs/` (model outputs), `weights/`, `examples/`.
+- `tests/`, `deploy/` (systemd units), `configs/` (training YAML and
+  `configs/examples/` sample JSON), `docs/`,
+  `datasets/`, `runs/` (model outputs), and `weights/`.
 
 Keep local `rois.json`, `camera_config.json`, recordings, databases, and
 environment files out of commits.

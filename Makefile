@@ -89,7 +89,7 @@ sync:
 	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
 	ssh $(USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
-	rsync -avz --progress examples/rf_config_example.json $(DEST)/
+	rsync -avz --progress configs/examples/rf_config_example.json $(DEST)/
 	@# 모델 파일은 **파일별로** 따로 전송한다. 한 rsync에 두 파일을 함께 넘기면
 	@# EdgeTPU 컴파일본이 없는 모델 디렉터리에서 rsync가 "No such file" 로 실패해
 	@# 배포 전체가 중단된다 — EdgeTPU 컴파일은 현재 범위 밖이라 v2 외에는 없다.

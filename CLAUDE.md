@@ -72,7 +72,7 @@ device/     Pi에서 실행되는 런타임 17개 — Makefile의 DEPLOY_PY와 �
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
-configs/ deploy/ tests/ docs/ datasets/ runs/ weights/ examples/
+configs/ deploy/ tests/ docs/ datasets/ runs/ weights/
 ```
 
 **새 파일을 어디에 둘지**는 "Pi에서 도는가"로 먼저 가른다. Pi에서 돌면 `device/`에
