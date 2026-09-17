@@ -233,7 +233,8 @@ def _unmap(dets: list[dict], mode: str, size: int, w: int, h: int) -> list[dict]
 def run_gates(frames: list[list[dict]], shape: tuple[int, int],
               conf: float, fps: float, debounce: float, require_person: bool,
               gt: np.ndarray | None = None, use_entity: bool = True,
-              entity_virtual_sec: float | None = None) -> dict:
+              entity_virtual_sec: float | None = None,
+              on_frame=None) -> dict:
     h, w = shape
     moved_min = ((w ** 2 + h ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
     tracker = SimpleTracker()
@@ -245,6 +246,10 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
     ) if use_entity else None
     latched_ever: set[int] = set()
     virtual_frames = 0
+
+    # `on_frame(state)`는 프레임별 내부 상태를 그대로 넘겨주는 훅이다 —
+    # `render_entity_overlay.py`가 게이트 로직을 복붙하지 않고 그리기 위해 쓴다.
+    # 로직을 두 벌로 두면 배포 코드가 바뀔 때 그림이 조용히 어긋난다.
 
     stage = {"raw": 0, "static": 0, "moved": 0, "person": 0}
     passing = []           # 프레임별 최종 게이트 통과 여부
@@ -297,6 +302,15 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
         if not cane and virtual:
             virtual_frames += 1
         passing.append(bool(cane) or bool(virtual))
+
+        if on_frame is not None:
+            on_frame({
+                "index": fi, "now": now, "tracks": tracks,
+                "passed_cane": cane, "virtual": virtual,
+                "latched": latched, "moved_min": moved_min,
+                "entities": entities if entity_tracker is not None else [],
+                "passing": passing[-1],
+            })
 
     # 최장 연속 통과 구간 + 디바운스를 채운 트리거 횟수
     need = max(1, int(round(fps * debounce)))
