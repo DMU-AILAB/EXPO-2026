@@ -26,6 +26,9 @@ class _TrackStat:
     last_seen: float = 0.0
     frames_total: int = 0
     frames_with_cane: int = 0
+    # 엔티티 래치 판정. None이면 호출부가 래치를 안 넘겼다는 뜻이라 기존 비율
+    # 방식으로 떨어진다(하위호환). 한 번 True가 되면 유지된다.
+    latched: bool | None = None
 
 
 class FootTrafficCounter:
@@ -63,7 +66,21 @@ class FootTrafficCounter:
         person_tracks: list[dict],
         cane_person_map: dict[int, bool],
         now: float,
+        cane_user_ids: set[int] | None = None,
     ) -> None:
+        """프레임마다 호출. `cane_user_ids`는 `pedestrian_entity`의 래치 결과다.
+
+        넘기면 지팡이 사용자 판정이 **비율에서 래치로** 바뀐다. 비율 방식
+        (`cane_ratio_threshold`)에는 구조적 결함이 있다 — 사람 트랙 프레임 중
+        지팡이가 동반된 비율로 판정하는데, **트래킹이 좋아질수록 불리해진다.**
+        트랙이 길어질수록 "사람이 멀어 지팡이가 안 잡히는 구간"이 분모에 쌓이기
+        때문이다. 실측에서 사람 트랙이 805프레임 전체를 살아남은 v6는 23.1%로
+        미달했고, 522프레임에서 끊긴 v5b는 30.7%로 통과했다. 탐지 품질이 아니라
+        트랙 길이가 판정을 가르는 구조다.
+
+        래치는 "연속 N프레임 동반이 확인되면 확정하고 유지"라서 이 역설이 없다.
+        생략하면 기존 비율 경로 그대로 동작한다.
+        """
         current_ids: set[int] = set()
         for pt in person_tracks:
             tid = pt["track_id"]
@@ -73,6 +90,8 @@ class FootTrafficCounter:
             st.frames_total += 1
             if cane_person_map.get(tid, False):
                 st.frames_with_cane += 1
+            if cane_user_ids is not None:
+                st.latched = bool(st.latched) or (tid in cane_user_ids)
 
         died = self._active_ids - current_ids
         for tid in died:
@@ -108,7 +127,10 @@ class FootTrafficCounter:
         hour_start = datetime.fromtimestamp(st.last_seen).strftime("%Y-%m-%dT%H:00:00")
         bucket = self._pending.setdefault(hour_start, {"total": 0, "cane": 0})
         bucket["total"] += 1
-        if st.frames_with_cane / st.frames_total >= self.cane_ratio_threshold:
+        is_cane_user = (st.latched if st.latched is not None
+                        else st.frames_with_cane / st.frames_total
+                        >= self.cane_ratio_threshold)
+        if is_cane_user:
             bucket["cane"] += 1
 
     def _flush(self) -> None:

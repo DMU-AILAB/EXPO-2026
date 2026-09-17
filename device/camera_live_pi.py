@@ -64,6 +64,15 @@ from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
                            load_camera_config, validate_camera_config)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 from simple_tracker import SimpleTracker
+# 표준 라이브러리만 쓰는 하드 의존성이라 try/except로 감싸지 않는다 — 여기서
+# 조용히 실패하면 ROIManager처럼 기능이 말없이 꺼진다. DEPLOY_PY 누락은 시끄럽게
+# 터지는 편이 낫다.
+from pedestrian_entity import (
+    EntityTracker,
+    cane_user_person_ids,
+    latched_cane_ids,
+    virtual_cane_boxes,
+)
 
 try:
     from simulator.roi_manager import ROIManager
@@ -1054,7 +1063,9 @@ def _draw_rois(frame: np.ndarray, roi_manager: "ROIManager",
 # ── 그리기 헬퍼 ────────────────────────────────────────────────────
 
 def _draw_gate_debug(frame, all_cane_tracks: list, passed_ids: set,
-                     moved_min: float, with_person: dict, require_person: bool) -> None:
+                     moved_min: float, with_person: dict, require_person: bool,
+                     entities: list | None = None,
+                     latched_ids: set | None = None) -> None:
     """3중 게이트가 각 지팡이 트랙을 왜 막았는지 화면에 표시한다 (--debug-gates 전용).
 
     평상시 오버레이는 "탐지됐다"까지만 보여줘서, 트리거가 안 나갈 때 어느 게이트가
@@ -1075,7 +1086,12 @@ def _draw_gate_debug(frame, all_cane_tracks: list, passed_ids: set,
             color, key = (0, 140, 255), "MOVE"
             why = f"MOVE {trk.get('max_disp', 0.0):.0f}/{moved_min:.0f}px"
         elif require_person and not with_person.get(tid, False):
-            color, why, key = (0, 255, 255), "NO-PERSON", "NOPERSON"
+            if tid in (latched_ids or ()):
+                # 프레임 단위 연관은 끊겼지만 래치로 통과한 경우 — 완화가 실제로
+                # 일하고 있는 순간이라 따로 보여야 한다.
+                color, why, key = (0, 220, 0), "PASS(latch)", "PASS"
+            else:
+                color, why, key = (0, 255, 255), "NO-PERSON", "NOPERSON"
         else:
             color, why, key = (0, 220, 0), "PASS", "PASS"
         counts[key] += 1
@@ -1085,8 +1101,21 @@ def _draw_gate_debug(frame, all_cane_tracks: list, passed_ids: set,
         # 기본 오버레이의 라벨과 겹치지 않게 박스 아래에 쓴다
         cv2.putText(frame, f"#{tid} {why}", (x1, min(y2 + 22, fh - 4)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
+    # 가상 지팡이 박스 — 실제 탐지가 아니므로 얇은 박스 + 다른 색으로 구분한다.
+    # 이게 실제 지팡이 위치와 맞는지는 눈으로 보는 것 말고 확인할 방법이 없다.
+    virtual = virtual_cane_boxes(entities) if entities else []
+    for eid, bbox in virtual:
+        x1, y1, x2, y2 = (max(0, min(int(v), lim - 1))
+                          for v, lim in zip(bbox, (fw, fh, fw, fh)))
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 1)
+        cv2.putText(frame, f"E{eid} VIRTUAL", (x1, max(14, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2, cv2.LINE_AA)
+
+    latched_n = len(latched_ids or ()) + len(virtual)
     hud = (f"GATE  pass {counts['PASS']}  static {counts['STATIC']}  "
-           f"move {counts['MOVE']}  no-person {counts['NOPERSON']}")
+           f"move {counts['MOVE']}  no-person {counts['NOPERSON']}  "
+           f"| entity {len(entities or [])}  latched {latched_n}  "
+           f"virtual {len(virtual)}")
     cv2.rectangle(frame, (0, fh - 44), (fw, fh), (0, 0, 0), -1)
     cv2.putText(frame, hud, (10, fh - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                 (255, 255, 255), 2, cv2.LINE_AA)
@@ -1317,6 +1346,9 @@ class CameraPipeline:
                 return
 
             tracker = SimpleTracker()
+            # 사람+지팡이를 하나의 보행자로 묶어 프레임 사이에 상태를 유지한다.
+            # 트래커와 생애주기가 같으므로 같은 자리에서 만든다.
+            entity_tracker = EntityTracker()
             # 정지 억제로 걸러낸 지팡이 트랙 id — 핫스팟은 트랙당 1회만 기록한다
             # (매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다).
             logged_static: set[int] = set()
@@ -1464,20 +1496,41 @@ class CameraPipeline:
                 # 다니므로, 사람 없이 잡힌 지팡이는 배경 오탐지일 가능성이 높다. 움직임
                 # 게이트가 못 막는 "움직이지만 사람이 없는" 유사물(흔들리는 나뭇가지 등)을
                 # 막는다 — 두 게이트는 서로 다른 실패 유형을 담당한다.
+                # 보행자 엔티티 갱신 — 입력은 **여기까지의 두 게이트를 통과한** 지팡이다.
+                # 사람 동반 게이트의 결과를 넣으면 순환이 생긴다(그쪽이 엔티티의 출력을
+                # 쓰므로). 이 분리 덕에 래치는 "이미 검증된 지팡이"의 연장이 되고,
+                # 배경 오탐지가 래치되는 경로가 닫힌다.
+                entities = entity_tracker.update(
+                    tracks, {t["track_id"] for t in cane_tracks}, now)
+                latched_ids = latched_cane_ids(entities)
+
                 with_person: dict[int, bool] = {}
                 if profile.require_person_for_trigger and (cane_tracks or self.shared.debug_gates):
                     with_person = associate_canes(tracks)
-                    cane_tracks = [t for t in cane_tracks if with_person.get(t["track_id"], False)]
+                    # 프레임 단위 판정 **또는** 래치 — OR이므로 지금 통과하던 지팡이는
+                    # 전부 계속 통과한다(단조 완화). 새로 통과하는 것은 "직전까지
+                    # 사람과 함께 확인됐는데 이번 프레임만 연관이 끊긴" 경우뿐이고,
+                    # 그게 디바운스를 리셋시켜 안내를 놓치던 원인이다.
+                    cane_tracks = [t for t in cane_tracks
+                                   if with_person.get(t["track_id"], False)
+                                   or t["track_id"] in latched_ids]
 
                 if self.shared.debug_gates:
                     _draw_gate_debug(frame, all_cane_tracks,
                                      {t["track_id"] for t in cane_tracks},
                                      moved_min, with_person,
-                                     profile.require_person_for_trigger)
+                                     profile.require_person_for_trigger,
+                                     entities, latched_ids)
                 if foot_counter is not None:
                     person_tracks   = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
                     cane_person_map = associate(tracks)
-                    foot_counter.update(person_tracks, cane_person_map, now)
+                    # 래치를 함께 넘긴다 — 동반 프레임 "비율"로 판정하면 트래킹이
+                    # 좋아질수록 불리해진다(트랙이 길수록 분모에 지팡이가 안 잡히는
+                    # 먼 구간이 들어간다). 실측에서 사람 트랙이 805프레임 전체를
+                    # 살아남은 v6는 23.1%로 미달하고, 522프레임에서 끊긴 v5b는
+                    # 30.7%로 통과했다 — 탐지 품질이 아니라 트랙 길이가 판정을 갈랐다.
+                    foot_counter.update(person_tracks, cane_person_map, now,
+                                        cane_user_ids=cane_user_person_ids(entities))
 
                 # ROI 설정 변경/신규 생성 감지 (roi_editor 저장 → 재시작 없이 자동 반영)
                 if profile.roi_config and _TRIGGER_AVAILABLE and now - last_roi_check >= ROI_CHECK_INTERVAL:
@@ -1508,8 +1561,12 @@ class CameraPipeline:
                 if roi_manager is not None:
                     fh, fw = frame.shape[:2]
                     active: set[str] = set()
-                    for trk in cane_tracks:
-                        x1, y1, x2, y2 = trk["bbox"]
+                    # 판정 대상 = 게이트를 통과한 실제 지팡이 박스 + 지팡이 트랙이
+                    # 끊긴 래치 엔티티의 **가상 지팡이 박스**. 아래 판정 로직(하단
+                    # 10% strip -> check_region)은 건드리지 않고 입력만 늘린다.
+                    roi_boxes = [t["bbox"] for t in cane_tracks]
+                    roi_boxes += [bbox for _eid, bbox in virtual_cane_boxes(entities)]
+                    for x1, y1, x2, y2 in roi_boxes:
                         # 바운딩 박스 하단 10% 구간(지팡이 끝이 바닥에 닿는 지점)으로 ROI
                         # 교차 판정 — 박스 전체 중심점은 손으로 쥔 위치까지 포함해 실제
                         # 접지 지점과 어긋날 수 있다 (simulator/app.py와 동일 로직).
