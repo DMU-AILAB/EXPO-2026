@@ -342,6 +342,15 @@ Camera {
   서버 테이블은 캐시다.
 - **`id`는 문자열이다.** Pi의 `camera_config.json`, `roi_editor`의 `?camera=<id>` 쿼리,
   ROI 파일 분리(`rois.<camera_id>.json`)가 모두 문자열 id를 쓴다.
+- **`id`의 문자셋은 백엔드가 `^[A-Za-z0-9_-]{1,32}$`로 제한한다.** id가 URL 경로 세그먼트
+  (`/cameras/{camera_id}/stream`)와 파일명(`rois.<id>.json`)에 그대로 들어가는데, **Pi의
+  `validate_camera_config()`는 id 중복만 검사하고 문자 구성은 검사하지 않는다** — 공백이나
+  `/`가 섞인 id가 저장되면 경로가 깨진다. 검증 지점은 두 곳이다:
+  - **경로 파라미터로 들어온 `camera_id`** — 패턴 불일치면 Pi에 전달하지 않고 400으로 끊는다.
+    (Pi는 프로필 목록과 대조해 매칭하므로 경로 조작 위험 자체는 낮지만, URL 인코딩 문제를
+    원천 차단한다.)
+  - **Pi에 카메라 프로필을 쓸 때의 `id`**(§13.2) — 저장 전에 검증한다.
+  - 현재 운용 중인 id(`dev-cam0` · `dev-cam1`)는 이 패턴을 만족하므로 마이그레이션은 없다.
 - **`capture_preset`은 자유로운 해상도 문자열이 아니라 `CAPTURE_PRESETS`의 키다.**
   Full HD 이상 프리셋은 Pi 4에서 캡처 단계가 병목이 되어 의도적으로 없다. 목록 밖의 값은
   `validate_camera_config()`가 저장 단계에서 거부한다.
@@ -1350,6 +1359,7 @@ CREATE TABLE device_status_cache (
 |------|-------|------|
 | 400 | VALIDATION_ERROR | 요청 바디 유효성 오류 |
 | 400 | INVALID_POLYGON | ROI 폴리곤 자기교차 등 유효하지 않은 도형 |
+| 400 | INVALID_CAMERA_ID | `camera_id`가 `^[A-Za-z0-9_-]{1,32}$` 패턴에 맞지 않음 |
 | 400 | DATE_RANGE_TOO_LARGE | 통계 조회 기간 90일 초과 |
 | 401 | UNAUTHORIZED | 인증 정보 없음 또는 만료 |
 | 401 | INVALID_CREDENTIALS | 로그인 실패 |
