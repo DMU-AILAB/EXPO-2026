@@ -43,7 +43,7 @@ Run `python -m pytest tests/ -v` on the development machine. On the Pi, first
 verify SPI/device detection, then run:
 
 ```bash
-python camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
+python device/camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
 ```
 
 Confirm one `RF:KICS-358.5000` log entry and one audio playback per button

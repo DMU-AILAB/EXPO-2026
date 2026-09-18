@@ -17,7 +17,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 _spec = importlib.util.spec_from_file_location(
-    "label_tool_server", Path(__file__).parent.parent / "label_tool" / "server.py"
+    "label_tool_server", Path(__file__).parent.parent / "apps" / "label_tool" / "server.py"
 )
 srv = importlib.util.module_from_spec(_spec)
 sys.modules["label_tool_server"] = srv

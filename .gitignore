@@ -39,9 +39,13 @@ datasets/data_local.yaml
 #       입력이고, 재다운로드할 외부 출처가 없다.
 datasets/sources/*
 !datasets/sources/cane_pool/
+# cane_pool/images 는 datasets/{train,val,test} 와 **동일한 git blob**이다(전수 확인).
+# 같은 이미지를 두 경로로 추적할 이유가 없어 제외한다. 반면 cane_pool/labels 는
+# 사람 라벨이 병합되기 전 원본이라 split 쪽과 9,303개가 다르다 — 반드시 남긴다.
+datasets/sources/cane_pool/images/
 
 # datasets/staging/ — prepare_*_dataset.py 가 640 jpg로 정규화한 중간 산출물.
-# 실제 학습에 쓰이는 bg_*.jpg 는 datasets/train/ 에 커밋되고(lk_*.jpg 는 아래 참고),
+# 실제 학습에 쓰이는 bg_*.jpg 는 datasets/v1/train/ 에 커밋되고(lk_*.jpg 는 아래 참고),
 # holdout/manifest 는 재실행하면 동일하게 재생성되므로(seed 고정) 스테이징째로 제외.
 datasets/staging/
 
@@ -89,8 +93,8 @@ calibration_image_sample_data_*.npy
 # 로 재생성이 가능하다 — 재현 경로가 스크립트로 남아 있으므로 바이너리는 넣지 않는다.
 # 주의: clone한 환경에서 그냥 학습하면 유사물 네거티브 없이 학습돼 v6가 재현되지 않는다.
 # 수집 절차는 docs/FILE_INVENTORY.md 참고.
-datasets/train/images/lk_*.jpg
-datasets/train/labels/lk_*.txt
+datasets/v1/train/images/lk_*.jpg
+datasets/v1/train/labels/lk_*.txt
 
 # resplit_dataset.py 산출물 — datasets/{train,val,test}의 하드링크 재배치라
 # 원본이 커밋돼 있으면 언제든 재생성된다(python resplit_dataset.py).
@@ -102,8 +106,8 @@ datasets/staging/person_relabel/
 
 # CCTV 각도 유사물 네거티브 (lkc_*.jpg) — lk_와 같은 원칙으로 커밋하지 않는다
 # (원본이 공개 Roboflow 데이터셋이라 prepare_stick_cctv_dataset.py로 재생성 가능)
-datasets/train/images/lkc_*.jpg
-datasets/train/labels/lkc_*.txt
+datasets/v1/train/images/lkc_*.jpg
+datasets/v1/train/labels/lkc_*.txt
 datasets/staging/stick_cctv/
 
 # 합성 야간 평가셋 / lkc 대조군 — 스크립트로 재생성 가능
@@ -111,8 +115,6 @@ datasets/v2_night/
 datasets/v2_nolkc/
 datasets/data_v2_nolkc.yaml
 
-# 평가 시각화 산출물 (재생성 가능)
-eval_out/
 
 # 학습/export 중간 산출물 — 배포에 쓰지 않고 best.pt에서 언제든 재생성된다
 # (docs/int8_320_quantization_report.md §5 참고). onnx는 12MB, best_saved_model은
@@ -123,3 +125,26 @@ runs/*/weights/keep_*.tflite
 runs/*/weights/last.pt
 # yolo val 부산물 — 실행할 때마다 val-N 디렉터리가 쌓인다
 runs/detect/
+
+# COCO 사전학습 가중치 — ultralytics가 자동 다운로드한다
+weights/*.pt
+
+# ─────────────────────────────────────────────────────────────
+# local/ — 재생성 가능한 로컬 산출물을 한 곳에 모은다.
+# 평가 시각화(eval_out), 학습 로그, export 부산물, pytest 캐시 등.
+# 저장소 루트가 이런 파일로 어질러지지 않게 하려는 것이며, 통째로 지워도
+# 무방하다(전부 재생성된다).
+local/
+
+# 아래 둘은 코드가 **실행 디렉터리 기준**으로 만들기 때문에 local/ 로 옮길 수
+# 없다. camera_live_pi.py가 Path("recordings")를, camera_config가
+# "foot_traffic.db"를 기본값으로 쓴다 — 옮기려면 코드를 고쳐야 하고 그러면
+# Pi의 저장 위치도 함께 바뀐다(기존 클립이 고아가 된다).
+recordings/
+foot_traffic.db
+calibration_image_sample_data_*.npy
+
+# 평가용 실영상 — 용량이 크고(개당 6~13MB) 재현에 필수가 아니다.
+# **test2/test3는 학습에 절대 쓰면 안 되는 평가 전용 영상**이라(누수 재발)
+# 저장소에 두지 않는 편이 실수를 줄인다. 원본은 별도로 보관할 것.
+datasets/videos/*.mp4

@@ -95,12 +95,12 @@ make deploy
 
 | 순서 | 타겟 | 내용 |
 |------|------|------|
-| 1 | `sync` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, TFLite 모델 전송 |
-| 2 | `sync-roi-editor` | `roi_editor/`, `simulator/roi_manager.py` 전송 |
+| 1 | `sync` | `device/*.py` 17개 + TFLite 모델 전송 (**Pi에는 평면으로 전개**) |
+| 2 | `sync-roi-editor` | `apps/roi_editor/`, `apps/simulator/roi_manager.py` 전송 |
 | 3 | `deps` | `ai-edge-litert`, `opencv`, `shapely`, `pillow`, `fonts-nanum` 설치 |
 | 4 | `deps-roi-editor` | `fastapi`, `uvicorn` 설치 |
 
-완료 후 Pi 디렉토리 구조:
+완료 후 Pi 디렉토리 구조 (**저장소의 device/ 는 여기서 평면으로 풀린다**):
 
 ```
 ~/visionguide/
@@ -216,7 +216,7 @@ tmux new -s visionguide
 
 # 창 1: 카메라 앱 실행
 cd ~/visionguide
-~/.pyenv/versions/3.10.14/bin/python camera_live_pi.py --headless --port 8080 --roi-config rois.json
+~/.pyenv/versions/3.10.14/bin/python device/camera_live_pi.py --headless --port 8080 --roi-config rois.json
 ```
 
 ```
@@ -226,7 +226,7 @@ Ctrl+B, C    새 창 열기
 ```bash
 # 창 2: ROI 에디터 실행
 cd ~/visionguide
-~/.pyenv/versions/3.10.14/bin/python roi_editor/server.py
+~/.pyenv/versions/3.10.14/bin/python apps/roi_editor/server.py
 ```
 
 ```
@@ -310,5 +310,5 @@ mpg123 ~/visionguide/audio/crosswalk.mp3
 
 ### FPS가 낮은 경우 (목표 ≥ 10 FPS)
 
-- `camera_live_pi.py` 내 `_INPUT_SIZE = 640` → `320`으로 낮추고 `make sync`
+- `device/yolo_postprocess.py` 의 `INPUT_SIZE` 를 낮추고 `make sync`
 - 카메라 해상도 파라미터 조정 검토

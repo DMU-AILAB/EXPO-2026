@@ -10,7 +10,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import camera_live_pi as m
 from simulator.roi_manager import ROIManager

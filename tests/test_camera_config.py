@@ -2,7 +2,6 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from camera_config import (
     CameraProfile,

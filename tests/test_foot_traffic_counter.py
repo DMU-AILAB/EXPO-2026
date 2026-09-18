@@ -4,7 +4,6 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from foot_traffic_counter import read_hourly_breakdown, read_range_daily_totals
 

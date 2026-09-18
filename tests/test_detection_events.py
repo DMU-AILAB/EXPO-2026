@@ -2,7 +2,6 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from detection_events import log_event, read_recent_events
 

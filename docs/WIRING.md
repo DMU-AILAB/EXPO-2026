@@ -274,7 +274,7 @@ sudo raspi-config                 # Interface Options → SPI → Enable
 ls -l /dev/spidev0.0              # SPI0 CE0 장치 확인
 cp rf_config_example.json rf_config.json
 # rf_config.json에서 enabled=true와 audio_file을 설정
-python camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
+python device/camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
 ```
 
 시작 시 SPI 장치 ID가 읽히지 않으면 전원을 끄고 VCC/GND, MISO/MOSI,
