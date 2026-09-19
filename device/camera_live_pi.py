@@ -1442,10 +1442,12 @@ class CameraPipeline:
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
                 dets = _filter_excluded(dets, roi_manager, frame)
 
-                tracks = tracker.update(dets)
+                # now를 트래킹 **앞에서** 잡는다 — 재식별(무덤 보관 기간)이 초 단위라
+                # 이 값을 넘겨야 한다. fps 계산은 같은 값을 그대로 쓴다.
+                now    = time.time()
+                tracks = tracker.update(dets, now)
                 _draw_detections(frame, tracks)
 
-                now    = time.time()
                 fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
                 prev_t = now
 

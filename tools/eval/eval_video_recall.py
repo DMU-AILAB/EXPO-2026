@@ -242,10 +242,12 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
               gt: np.ndarray | None = None, use_entity: bool = True,
               entity_virtual_sec: float | None = None,
               on_frame=None, subject_aware: bool = True,
-              audio_sec: float = 2.0) -> dict:
+              audio_sec: float = 2.0, tracker_kwargs: dict | None = None) -> dict:
     h, w = shape
     moved_min = ((w ** 2 + h ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
-    tracker = SimpleTracker()
+    # 트래커 파라미터는 지금껏 한 번도 튜닝된 적이 없다. 백본 판정을 가른 축이
+    # 트랙 지속성이었으므로(§4-0) 스윕할 수 있게 열어 둔다.
+    tracker = SimpleTracker(**(tracker_kwargs or {}))
     # 보행자 엔티티 레이어. `use_entity=False`가 이 작업의 A/B 기준선이다 —
     # 같은 추론 결과 위에서 게이트만 바꿔 비교하므로 비용이 거의 0이다.
     entity_tracker = EntityTracker(
@@ -281,7 +283,7 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
         if hit:
             stage["raw"] += 1
 
-        tracks = tracker.update(dets)
+        tracks = tracker.update(dets, now)
         for t in tracks:
             rec = seen.setdefault(t["track_id"], {"cls": t["class"], "frames": 0, "disp": 0.0})
             rec["frames"] += 1

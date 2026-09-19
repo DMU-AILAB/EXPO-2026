@@ -84,7 +84,7 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `yolo_postprocess.py` | 전처리(letterbox)·후처리 공유 — CPU/EdgeTPU 양쪽이 쓴다 |
 | `edgetpu_infer.py` | Coral EdgeTPU Python 3.9 서브프로세스 워커 |
 | `detect.py` | `WhiteCaneDetector` (PyTorch 폴백) |
-| `simple_tracker.py` · `cane_person_assoc.py` | 트래킹 · 지팡이–사람 짝짓기 |
+| `simple_tracker.py` · `cane_person_assoc.py` | 트래킹(IoU + 거리 폴백 + **재식별**) · 지팡이–사람 짝짓기 |
 | `pedestrian_entity.py` | 사람+지팡이를 하나의 보행자 엔티티로 묶어 추적 (래치 · 가상 지팡이 박스) |
 | `camera_config.py` | 다중 카메라 프로필 + `MODEL_VARIANTS` |
 | `audio_trigger.py` · `announcement_router.py` | 디바운스·쿨다운·순차 재생 · 안내 라우팅 |

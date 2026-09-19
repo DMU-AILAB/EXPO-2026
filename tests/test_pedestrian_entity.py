@@ -15,6 +15,7 @@ from pedestrian_entity import (
 DT = 0.25
 TEST_LATCH_SEC = 0.5
 TEST_VIRTUAL_SEC = 1.0
+TEST_GRACE_SEC = 1.0
 # 첫 프레임이 기준점이 되므로 경과 시간을 채우려면 한 프레임이 더 필요하다.
 LATCH_TICKS = round(TEST_LATCH_SEC / DT) + 1
 
@@ -33,7 +34,8 @@ class _Clock:
 
 def _tracker():
     return (EntityTracker(latch_sec=TEST_LATCH_SEC,
-                          virtual_max_sec=TEST_VIRTUAL_SEC), _Clock())
+                          virtual_max_sec=TEST_VIRTUAL_SEC,
+                          person_grace_sec=TEST_GRACE_SEC), _Clock())
 
 
 def _person(tid, x1, y1=100, x2=None, y2=300):
@@ -206,18 +208,46 @@ def test_no_virtual_box_before_the_latch():
 # 생애주기
 # --------------------------------------------------------------------- #
 
-def test_entity_dies_with_its_person_track():
-    """`SimpleTracker`는 track_id를 부활시키지 않으므로 사람이 죽으면 엔티티도 죽는다.
+def test_absent_person_is_not_returned_even_while_remembered():
+    """보관은 '신원을 기억한다'까지다 — 낡은 사람 bbox로 가상 지팡이를 만들면 안 된다."""
+    tracker, clock = _tracker()
+    _feed(tracker, clock, [_person(1, 100), _cane(10, 195)], {10}, times=LATCH_TICKS)
+    assert tracker.update([_cane(10, 195)], {10}, clock.tick()) == []
 
-    유예를 두면 낡은 사람 bbox에 가상 지팡이를 계속 투영하게 된다.
+
+def test_entity_survives_a_short_person_gap_and_keeps_the_latch():
+    """트래커 재식별이 같은 track_id로 사람을 되살리면 래치도 이어져야 한다.
+
+    엔티티를 즉시 없애면 되살아난 사람에게 새 엔티티가 붙어 지팡이 사용자 확정과
+    안내 주체가 끊기고, 같은 사람에게 안내가 다시 나간다 — 재식별로 얻으려던 것이
+    바로 그 연속성이다.
     """
+    tracker, clock = _tracker()
+    ents = _feed(tracker, clock, [_person(1, 100), _cane(10, 195)], {10},
+                 times=LATCH_TICKS)
+    eid = ents[0].entity_id
+    assert ents[0].is_cane_user is True
+
+    _feed(tracker, clock, [], set(), times=round(TEST_GRACE_SEC / DT))   # 유예 안
+    back = tracker.update([_person(1, 100), _cane(10, 195)], {10}, clock.tick())[0]
+    assert back.entity_id == eid
+    assert back.is_cane_user is True
+
+
+def test_entity_is_dropped_after_the_grace_window():
     tracker, clock = _tracker()
     _feed(tracker, clock, [_person(1, 100), _cane(10, 195)], {10}, times=LATCH_TICKS)
 
-    assert tracker.update([_cane(10, 195)], {10}, clock.tick()) == []   # 사람만 사라짐
+    _feed(tracker, clock, [], set(), times=round(TEST_GRACE_SEC / DT) + 2)  # 유예 초과
+    back = tracker.update([_person(1, 100), _cane(10, 195)], {10}, clock.tick())[0]
+    assert back.is_cane_user is False          # 신원을 잊었으므로 다시 래치해야 한다
 
+
+def test_a_different_person_never_inherits_the_latch():
+    tracker, clock = _tracker()
+    _feed(tracker, clock, [_person(1, 100), _cane(10, 195)], {10}, times=LATCH_TICKS)
     ents = tracker.update([_person(2, 100), _cane(10, 195)], {10}, clock.tick())
-    assert ents[0].is_cane_user is False                    # 새 사람 = 새 엔티티
+    assert ents[0].is_cane_user is False
     assert ents[0].entity_id != 0
 
 

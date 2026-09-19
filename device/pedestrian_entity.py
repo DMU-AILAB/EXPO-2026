@@ -36,14 +36,23 @@
 부수 효과로, 래치는 "이미 두 게이트를 통과한 지팡이"의 연장이 되어 배경 오탐지가
 래치되는 경로가 닫힌다.
 
-사람 트랙이 죽으면 엔티티도 죽는다
-----------------------------------
+사람 트랙이 사라져도 재식별 창만큼은 기다린다
+--------------------------------------------
 
-`SimpleTracker`는 `max_age`(기본 10프레임)만큼 coasting으로 트랙을 살려둔 뒤
-제거하며 **같은 track_id를 부활시키지 않는다**. 따라서 "사람 트랙이 사라졌다"는
-곧 영구 소멸이고, 유예 기간을 두는 것은 의미가 없다 — 낡은 사람 bbox에 가상
-지팡이를 계속 투영하는 위험만 남는다. 트래커의 coasting 자체가 이미 유예 기간
-역할을 한다.
+처음에는 "사람 트랙이 죽으면 엔티티도 죽는다"로 만들었다. 근거는 `SimpleTracker`가
+`max_age` 뒤 트랙을 제거하며 **같은 track_id를 부활시키지 않는다**는 것이었고, 그렇다면
+유예를 두어봐야 낡은 bbox에 가상 지팡이를 투영하는 위험만 남기 때문이었다.
+
+**그 전제는 트래커에 재식별이 들어오면서 무효가 됐다.** 이제 트랙은 죽은 뒤
+`SimpleTracker.revive_sec` 안에 같은 자리에서 다시 잡히면 **원래 track_id로 되살아난다.**
+엔티티를 즉시 없애면 되살아난 사람에게 새 엔티티가 붙어 래치(지팡이 사용자 확정)와
+안내 주체가 끊기고, 같은 사람에게 안내가 다시 나간다 — 재식별로 얻으려던 것이 바로
+그 연속성이므로 여기서 버리면 앞뒤가 맞지 않는다.
+
+그래서 사람이 안 보이는 엔티티를 `person_grace_sec`(기본 2.0초, 트래커의 재식별 창과
+같은 값) 동안 보관한다. **다만 그동안 `update()`의 반환 목록에는 넣지 않는다** —
+낡은 사람 bbox로 가상 지팡이를 만들지 않기 위해서다. 보관은 "신원을 기억한다"까지이고
+"계속 존재하는 것처럼 군다"가 아니다.
 """
 
 from __future__ import annotations
@@ -55,6 +64,7 @@ from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, candidate_pairs
 __all__ = [
     "LATCH_SEC",
     "OFFSET_ALPHA",
+    "PERSON_GRACE_SEC",
     "VIRTUAL_MAX_SEC",
     "PedestrianEntity",
     "EntityTracker",
@@ -75,6 +85,12 @@ __all__ = [
 # 디바운스(0.5초)와 같은 수준 — 더 짧으면 스쳐 지나가는 단발 오연관이 래치되고,
 # 더 길면 짧게 잡히는 실제 사용자를 놓친다.
 LATCH_SEC = 0.4
+
+# 사람 트랙이 사라진 뒤 엔티티를 보관하는 시간 — 트래커의 재식별 창
+# (`simple_tracker._DEFAULT_REVIVE_SEC`)과 같은 값으로 맞춘다. 트래커가 되살릴 수 있는
+# 동안은 엔티티도 신원을 기억해야 래치와 안내 주체가 끊기지 않는다. 위 "사람 트랙이
+# 사라져도 재식별 창만큼은 기다린다" 참고.
+PERSON_GRACE_SEC = 2.0
 
 # 지팡이-사람 상대 오프셋의 지수평활 계수(높을수록 최신 프레임에 빠르게 반응).
 # 흰 지팡이는 짚는 동작으로 앞뒤를 오가므로 마지막 한 프레임 값만 쓰면 가상 박스가
@@ -118,6 +134,7 @@ class PedestrianEntity:
     pair_since: float | None = None     # 현재 연속 동반이 시작된 시각 (끊기면 None)
     last_cane_seen: float | None = None  # 실제 지팡이가 마지막으로 게이트를 통과한 시각
     frames: int = 0                     # 엔티티 생존 프레임 수
+    absent_since: float | None = None   # 사람 트랙이 사라진 시각 (보관 중이면 not None)
     # 사람 bbox 크기로 정규화한 지팡이의 상대 위치 (x1, y1, x2, y2).
     # 픽셀 절대값이 아니라 비율인 이유는 원근(가까우면 크게, 멀면 작게 찍힘)에 따라
     # 같은 오프셋이 유지되어야 하기 때문이다 — `max_gap_ratio`와 같은 논리.
@@ -136,10 +153,12 @@ class EntityTracker:
 
     def __init__(self, latch_sec: float = LATCH_SEC,
                  offset_alpha: float = OFFSET_ALPHA,
-                 virtual_max_sec: float = VIRTUAL_MAX_SEC) -> None:
+                 virtual_max_sec: float = VIRTUAL_MAX_SEC,
+                 person_grace_sec: float = PERSON_GRACE_SEC) -> None:
         self.latch_sec = latch_sec
         self.offset_alpha = offset_alpha
         self.virtual_max_sec = virtual_max_sec
+        self.person_grace_sec = person_grace_sec
         self._by_person: dict[int, PedestrianEntity] = {}
         self._next_id = 0
 
@@ -168,9 +187,17 @@ class EntityTracker:
 
         pairing = self._assign(cands, gated)
 
-        # 사람 트랙이 사라진 엔티티는 함께 소멸한다 (모듈 docstring 참고).
-        self._by_person = {pid: e for pid, e in self._by_person.items()
-                           if pid in person_bbox}
+        # 사람 트랙이 사라진 엔티티는 재식별 창만큼 보관했다가 버린다 — 트래커가
+        # 되살릴 수 있는 동안은 신원을 기억해야 래치와 안내 주체가 이어진다
+        # (모듈 docstring 참고). 보관 중인 엔티티는 아래 반환 목록에 넣지 않으므로
+        # 낡은 사람 bbox로 가상 지팡이를 만들지는 않는다.
+        for pid, e in list(self._by_person.items()):
+            if pid in person_bbox:
+                e.absent_since = None
+            elif e.absent_since is None:
+                e.absent_since = now
+            elif now - e.absent_since > self.person_grace_sec:
+                del self._by_person[pid]
 
         out: list[PedestrianEntity] = []
         for pid, bbox in person_bbox.items():
