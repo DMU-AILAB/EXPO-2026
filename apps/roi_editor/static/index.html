@@ -1183,10 +1183,29 @@ function recordingUrlFor(port, path) { return `http://${location.hostname}:${por
 
 let currentPort = 8080;  // 녹화 제어 API도 이 포트로 직접 호출 — stream.mjpg와 동일한 포트
 
+// 카메라 스트림은 **ROI 편집 탭이 열릴 때** 연결한다.
+//
+// 이 <img>는 숨어 있어도 src를 넣는 순간 요청이 나가는데, 카메라 앱이 안 떠 있으면
+// (PC에서 검증 탭만 쓰는 경우) 그 요청이 대기 상태로 남아 브라우저의 페이지 로딩
+// 표시가 영영 멈추지 않는다. 기기에서는 카메라가 항상 떠 있어 체감 차이가 없다.
+let pendingStreamPort = null;
+
 function setStream(port) {
   currentPort = port;
-  stream.src = streamUrlFor(port);
   refreshRecordButton();
+  if (!document.getElementById('page-roi').classList.contains('active')) {
+    pendingStreamPort = port;      // 탭이 열릴 때 연결한다
+    return;
+  }
+  pendingStreamPort = null;
+  stream.src = streamUrlFor(port);
+}
+
+function connectStreamIfPending() {
+  if (pendingStreamPort === null) return;
+  const port = pendingStreamPort;
+  pendingStreamPort = null;
+  stream.src = streamUrlFor(port);
 }
 
 setStream(8080); // 카메라 프로필이 없는 레거시 단일 카메라 기본값 — loadCameras()가 있으면 덮어씀
@@ -2531,6 +2550,7 @@ function switchTab(name) {
     loadStats();
     refreshAudioTestOptions();
   } else if (name === 'roi') {
+    connectStreamIfPending();
     syncSize();
   } else if (name === 'stats') {
     requestAnimationFrame(() => loadStatsTimeseries(statsPeriod));
