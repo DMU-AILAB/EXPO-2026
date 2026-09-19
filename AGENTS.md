@@ -5,7 +5,7 @@
 VisionGuide is a Python computer-vision system for Raspberry Pi with a PC simulator.
 Source is split by **where the code runs**:
 
-- `device/` — the 20 modules that run on the Pi. The edge entry point is
+- `device/` — the 22 modules that run on the Pi. The edge entry point is
   `device/camera_live_pi.py`; `device/yolo_postprocess.py` holds the shared
   pre/post-processing, and the rest cover tracking, audio, GPIO, and RF triggers.
   **This directory must stay in sync with `DEPLOY_PY` in the `Makefile`.**

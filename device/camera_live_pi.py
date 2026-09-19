@@ -110,6 +110,14 @@ except ImportError:
     _EVENTS_AVAILABLE = False
 
 try:
+    # 서버 전송 대기열. 여기서는 **sqlite에 한 줄 쓸 뿐** 네트워크를 건드리지 않는다 —
+    # 실제 전송은 roi_editor의 EventSender가 맡는다(event_logger.py 헤더 참고).
+    from event_logger import queue_event
+    _OUTBOX_AVAILABLE = True
+except ImportError:
+    _OUTBOX_AVAILABLE = False
+
+try:
     from fp_hotspots import log_suppressed
     _HOTSPOTS_AVAILABLE = True
 except ImportError:
@@ -1545,12 +1553,19 @@ class CameraPipeline:
                               f"audio={r.audio_file or '없음'}")
                         _roi_name = r.name
                         _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
+                        # 서버로 보낼 신뢰도 — 이번 프레임에 **실제로 탐지된** 지팡이
+                        # 중 최고값이다. 가상 지팡이 박스만으로 발사된 경우에는 실제
+                        # 탐지가 없으므로 None으로 두어 "추정으로 나간 안내"임을 남긴다.
+                        _conf = max((t.get("conf", 0.0) for t in g.cane_tracks),
+                                    default=None)
                         announcement = Announcement(
                             source="camera",
                             trigger_id=r.name,
                             audio_file=r.audio_file,
                             event_db=profile.traffic_db,
                             event_class=CLASS_NAMES[CANE_CLASS_ID],
+                            camera_id=tag,
+                            confidence=_conf,
                         )
                         if self.shared.announcements is not None:
                             self.shared.announcements.submit(announcement, on_done=_done_cb)
@@ -1638,7 +1653,9 @@ def main() -> None:
 
     audio_player = AudioPlayer() if _TRIGGER_AVAILABLE else None
     announcements = (
-        AnnouncementRouter(audio_player, log_event if _EVENTS_AVAILABLE else None)
+        AnnouncementRouter(audio_player,
+                           log_event if _EVENTS_AVAILABLE else None,
+                           outbox=queue_event if _OUTBOX_AVAILABLE else None)
         if _TRIGGER_AVAILABLE else None
     )
 

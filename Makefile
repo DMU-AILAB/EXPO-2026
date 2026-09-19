@@ -43,6 +43,8 @@ DEPLOY_PY = \
 	device/pedestrian_entity.py \
 	device/gate_chain.py \
 	device/replay_engine.py \
+	device/device_identity.py \
+	device/event_logger.py \
 	device/foot_traffic_counter.py \
 	device/camera_config.py \
 	device/detection_events.py \

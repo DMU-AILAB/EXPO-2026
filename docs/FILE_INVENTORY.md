@@ -26,7 +26,7 @@
 
 ```
 expo/
-├── device/            Pi에서 실행되는 런타임 20개 ★ Makefile의 DEPLOY_PY와 정확히 일치
+├── device/            Pi에서 실행되는 런타임 22개 ★ Makefile의 DEPLOY_PY와 정확히 일치
 ├── tools/             PC 전용 스크립트 17개
 │   ├── data/            데이터 준비 9 + lookalike_exclude.txt
 │   ├── eval/            평가 2 (eval_video_recall · eval_background_fp)
@@ -41,7 +41,7 @@ expo/
 │   └── demo/            (구 EXPO-Dash-demo — 디자인 토큰 출처)
 ├── configs/           학습 설정 yaml 10개 + examples/ 설정 예시 3개
 ├── deploy/            systemd 유닛 · sudoers · auto_ap.sh · deploy.ps1
-├── tests/             pytest 20개 + conftest.py
+├── tests/             pytest 24개 + conftest.py
 ├── weights/           COCO 사전학습 .pt (gitignore)
 ├── datasets/          학습 데이터 ★저장소의 59%
 ├── runs/              학습 산출물 ★저장소의 36%
@@ -76,7 +76,7 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 `DEPLOY_PY`에도 추가**한다 — 둘이 어긋나면 기기에서 ImportError가 나거나, 더 나쁘게는
 구버전 파일이 조용히 남는다. PC에서만 쓰면 `tools/` 아래 용도별 디렉터리에 넣는다.
 
-## 2-1. `device/` — Pi 런타임 20개 (= `DEPLOY_PY`)
+## 2-1. `device/` — Pi 런타임 22개 (= `DEPLOY_PY`)
 
 | 파일 | 역할 |
 |---|---|
@@ -87,6 +87,8 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `simple_tracker.py` · `cane_person_assoc.py` | 트래킹(IoU + 거리 폴백 + **재식별**) · 지팡이–사람 짝짓기 |
 | `gate_chain.py` | **게이트 체인 단일 구현** — 배포·평가·재생검증이 같은 순서·같은 상수를 쓴다 |
 | `replay_engine.py` | 저장된 영상을 배포 경로로 재생해 주석 프레임 생성 (roi_editor 검증 탭) |
+| `device_identity.py` | 서버가 발급한 `device_id`·`api_key` 보관 (다중 Pi 운용) |
+| `event_logger.py` | 감지 이벤트 outbox + 비동기 서버 전송 (표준 라이브러리만) |
 | `pedestrian_entity.py` | 사람+지팡이를 하나의 보행자 엔티티로 묶어 추적 (래치 · 가상 지팡이 박스) |
 | `camera_config.py` | 다중 카메라 프로필 + `MODEL_VARIANTS` |
 | `audio_trigger.py` · `announcement_router.py` | 디바운스·쿨다운·순차 재생 · 안내 라우팅 |
@@ -111,7 +113,7 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `apps/label_tool/` | `server.py`, `static/index.html`, OpenVINO 모델 3.6MB | ❌ 로컬 전용 |
 | `configs/` | `train_v9_*.yaml`(증강 실험 6) · `train_v10_*`(데이터 2) · `train_v11_*`(백본 2) | ❌ |
 | `deploy/` | systemd 유닛 7 + sudoers 2 + `auto_ap.sh` | `make install-service` |
-| `tests/` | pytest 20개 파일 | ❌ |
+| `tests/` | pytest 24개 파일 | ❌ |
 
 > **`apps/simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유한다.** 변경 시 양쪽 확인 필요.
 
@@ -219,7 +221,7 @@ Pi에는 아무 영향이 없다 — 배포 경로 자체가 없다.
 ## 9. 배포 경로 요약
 
 ```
-PC 작업본 ──┬── make sync            → DEPLOY_PY 20개 + DEPLOY_MODEL_DIRS의 tflite
+PC 작업본 ──┬── make sync            → DEPLOY_PY 22개 + DEPLOY_MODEL_DIRS의 tflite
             ├── make sync-roi-editor → roi_editor/ + simulator/roi_manager.py
             └── make install-service → deploy/ 의 systemd 유닛
                                           ↓

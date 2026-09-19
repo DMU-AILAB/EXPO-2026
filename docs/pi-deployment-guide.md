@@ -95,7 +95,7 @@ make deploy
 
 | 순서 | 타겟 | 내용 |
 |------|------|------|
-| 1 | `sync` | `device/*.py` 20개 + TFLite 모델 전송 (**Pi에는 평면으로 전개**) |
+| 1 | `sync` | `device/*.py` 22개 + TFLite 모델 전송 (**Pi에는 평면으로 전개**) |
 | 2 | `sync-roi-editor` | `apps/roi_editor/`, `apps/simulator/roi_manager.py` 전송 |
 | 3 | `deps` | `ai-edge-litert`, `opencv`, `shapely`, `pillow`, `fonts-nanum` 설치 |
 | 4 | `deps-roi-editor` | `fastapi`, `uvicorn` 설치 |

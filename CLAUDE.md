@@ -40,6 +40,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스** · 안내 주체 매핑(`subject_for_canes`). 표준 라이브러리만 사용 |
 | `gate_chain.py` | **게이트 체인의 단일 구현** — 정지 억제 → 움직임 → 엔티티 갱신 → 사람 동반(래치 완화) 순서와 상수(`STATIC_CANE_SUPPRESS_FRAMES`·`MOVED_MIN_DIAG_RATIO`)를 한 곳에 둔다. `camera_live_pi.py`·`eval_video_recall.py`·`replay_engine.py`가 **같은 것**을 돌린다 |
 | `replay_engine.py` | 저장된 영상을 **배포와 같은 경로**로 재생하며 주석 프레임을 만든다 — roi_editor의 "검증" 탭이 MJPEG로 띄운다. 오디오는 재생하지 않고 발사 시점만 기록 |
+| `device_identity.py` | 서버가 발급한 `device_id`·`api_key`·`server_url` 보관. **값의 주인은 서버** — 등록 시 `POST /api/identity`로 심긴다. `rois.json`과 같은 Pi 로컬 런타임 파일(rsync·git 대상 아님) |
+| `event_logger.py` | 감지 이벤트를 sqlite outbox에 쌓고 **비동기로** 서버에 전송. 탐지 루프는 sqlite 한 줄만 쓰고, 전송은 `roi_editor`의 백그라운드 스레드가 맡는다. `urllib`만 써서 Pi 의존성을 늘리지 않는다 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -71,7 +73,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 20개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 22개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
