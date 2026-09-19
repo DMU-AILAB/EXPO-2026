@@ -214,3 +214,77 @@ def test_thread_exception_hook_actually_catches(thread_exceptions):
     assert len(thread_exceptions) == 1
     assert thread_exceptions[0].exc_type is RuntimeError
     thread_exceptions.clear()          # 이 테스트는 예외가 나는 게 정상이다
+
+
+# --------------------------------------------------------------------- #
+# raw 녹화 — 학습용 촬영은 오버레이가 없어야 한다
+#
+# 기본 녹화본은 탐지 박스·ROI가 이미 그려진 최종 프레임이라 학습에 넣으면 모델이
+# **그려진 박스를 단서로 배우는** 오염이 생긴다(docs/data_collection_plan.md §1-2).
+# --------------------------------------------------------------------- #
+
+def test_recorder_defaults_to_annotated_frames(tmp_path):
+    """기존 동작 보존 — 데모·검토용 녹화는 오버레이가 있는 쪽이 쓸모 있다."""
+    rec = m.ClipRecorder(tmp_path)
+    assert rec.wants_raw is False
+    rec.start((60, 80), 10.0)
+    assert rec.wants_raw is False
+    rec.stop()
+
+
+def test_raw_mode_reports_wants_raw_only_while_recording(tmp_path):
+    """`wants_raw`는 호출부가 **복사 비용을 낼지** 정하는 신호다 — 녹화 중이 아니면
+    원본을 뜰 이유가 없다(1080p 한 장 복사가 Pi에서 1~2ms)."""
+    rec = m.ClipRecorder(tmp_path)
+    assert rec.wants_raw is False              # 시작 전
+    rec.start((60, 80), 10.0, raw=True)
+    assert rec.wants_raw is True
+    rec.stop()
+    assert rec.wants_raw is False              # 종료 후
+
+
+def test_raw_flag_is_recorded_in_the_sidecar(tmp_path):
+    """파일만 보고는 학습에 쓸 수 있는 클립인지 알 수 없다."""
+    import json
+
+    rec = m.ClipRecorder(tmp_path)
+    rec.start((60, 80), 10.0, raw=True)
+    rec.write(np.zeros((60, 80, 3), dtype=np.uint8))
+    rec.stop()
+
+    sidecars = list(tmp_path.glob("*.json"))
+    assert sidecars, "사이드카가 만들어지지 않았다"
+    assert json.loads(sidecars[0].read_text())["raw"] is True
+
+
+def test_push_records_raw_but_streams_annotated(tmp_path):
+    """★ 핵심 계약 — 화면/스트리밍은 오버레이, **녹화만** 원본.
+
+    둘을 헷갈리면 학습 데이터가 오염되거나(오버레이 저장) 운영 화면에서 탐지 결과가
+    사라진다(원본 스트리밍).
+    """
+    srv = m.MJPEGServer(port=18199, recordings_dir=tmp_path)
+    annotated = np.full((60, 80, 3), 200, dtype=np.uint8)   # 밝게 = 그려진 것
+    raw = np.zeros((60, 80, 3), dtype=np.uint8)             # 어둡게 = 원본
+
+    written = []
+    srv.recorder.write = lambda f: written.append(f)
+    srv.recorder._raw = True
+    srv.recorder._writer = object()                          # wants_raw True 조건
+
+    srv.push(annotated, fps=10.0, raw=raw)
+
+    assert written and int(written[0].mean()) == 0, "녹화에 오버레이본이 들어갔다"
+    with srv._lock:
+        assert srv._jpeg, "스트리밍 프레임이 만들어지지 않았다"
+
+
+def test_push_falls_back_to_annotated_when_raw_is_off(tmp_path):
+    srv = m.MJPEGServer(port=18198, recordings_dir=tmp_path)
+    written = []
+    srv.recorder.write = lambda f: written.append(f)
+
+    annotated = np.full((60, 80, 3), 200, dtype=np.uint8)
+    srv.push(annotated, fps=10.0, raw=np.zeros((60, 80, 3), dtype=np.uint8))
+
+    assert written and int(written[0].mean()) == 200, "raw가 꺼졌는데 원본이 저장됐다"
