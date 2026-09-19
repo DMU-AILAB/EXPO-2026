@@ -14,11 +14,14 @@ import os
 import re
 import sys
 import tempfile
+import time
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, RedirectResponse, StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from shapely.geometry import Polygon
@@ -346,7 +349,8 @@ async def get_model_variants():
     """카메라 편집 UI가 드롭다운을 채울 때 쓰는 모델 목록 — camera_config.MODEL_VARIANTS가
     유일한 출처라서 UI에 라벨을 하드코딩해도 드리프트가 안 나지만, API로 노출해두면
     새 모델을 추가할 때 index.html을 건드릴 필요가 없다."""
-    return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()]}
+    return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()],
+            "default": _DEFAULT_MODEL_VARIANT}
 
 
 @app.get("/api/capture-presets")
@@ -492,6 +496,141 @@ async def switch_to_ap():
 # ---------------------------------------------------------------------------
 # iptables가 AP 클라이언트의 포트 80 요청을 5000으로 리다이렉트할 때
 # OS별 캡티브 포털 감지 URL이 여기로 들어오면 대시보드로 302 응답.
+# ---------------------------------------------------------------------------
+# 검증 재생 — 저장된 영상을 배포와 같은 경로로 돌려 화면에서 확인한다.
+#
+# 게이트 로직은 `device/replay_engine.py`가 `gate_chain.GateChain`으로 돌린다.
+# 여기서는 세션 하나를 만들고 MJPEG로 내보내는 것만 한다.
+# ---------------------------------------------------------------------------
+
+# 영상을 찾을 디렉터리. PC 개발 트리에는 datasets/videos/ 가 있고, 기기에는 보통
+# ~/visionguide/videos/ 에 사람이 직접 올려둔다.
+def _video_dirs() -> list[Path]:
+    return [d for d in (_ROOT / "datasets" / "videos", _ROOT / "videos",
+                        Path(__file__).parent.parent / "videos") if d.is_dir()]
+
+
+_replay = {"session": None}
+
+
+class ReplayStart(BaseModel):
+    video: str
+    conf: float = 0.55
+    model_variant: str = _DEFAULT_MODEL_VARIANT
+    require_person: bool = _DEFAULT_REQUIRE_PERSON
+    speed: float = 1.0
+    loop: bool = False
+    debug_gates: bool = True
+
+
+def _resolve_video(name: str) -> Path:
+    """이름으로 영상을 찾는다. 경로 탈출(../)을 막으려고 파일명만 받는다."""
+    safe = Path(name).name
+    for d in _video_dirs():
+        cand = d / safe
+        if cand.is_file():
+            return cand
+    raise HTTPException(404, f"영상을 찾을 수 없습니다: {safe}")
+
+
+@app.get("/api/replay/videos")
+def replay_videos():
+    out = []
+    for d in _video_dirs():
+        for f in sorted(d.glob("*.mp4")) + sorted(d.glob("*.avi")):
+            out.append({"name": f.name, "size_mb": round(f.stat().st_size / 1e6, 1),
+                        "dir": str(d)})
+    # 같은 이름이 여러 디렉터리에 있으면 먼저 찾은 것만 남긴다(_resolve_video와 동일 순서).
+    seen, uniq = set(), []
+    for v in out:
+        if v["name"] in seen:
+            continue
+        seen.add(v["name"])
+        uniq.append(v)
+    return {"videos": uniq}
+
+
+@app.post("/api/replay/start")
+def replay_start(req: ReplayStart):
+    from replay_engine import ReplaySession
+
+    path = _resolve_video(req.video)
+    variant = MODEL_VARIANTS.get(req.model_variant)
+    if variant is None:
+        raise HTTPException(400, f"알 수 없는 모델: {req.model_variant}")
+
+    old = _replay["session"]
+    if old is not None:
+        old.stop()
+
+    # ROI는 지금 편집 중인 파일을 그대로 쓴다 — 그려 놓고 바로 "이 영상이면 안내가
+    # 나갔을까"를 확인하는 것이 이 기능의 목적이다.
+    roi_manager = None
+    try:
+        from roi_manager import ROIManager           # Pi 평면 배치
+    except ImportError:
+        try:
+            from simulator.roi_manager import ROIManager
+        except ImportError:
+            ROIManager = None
+    if ROIManager is not None and rois_path.exists():
+        try:
+            roi_manager = ROIManager.load(str(rois_path))
+        except Exception as exc:                      # noqa: BLE001
+            print(f"[WARN] ROI 로드 실패 — ROI 없이 재생합니다: {exc}")
+
+    weights_dir = str(_ROOT / variant["weights_dir"])
+    session = ReplaySession(
+        path, weights_dir, conf=req.conf,
+        input_size=variant.get("input_size", 320), roi_manager=roi_manager,
+        require_person=req.require_person, speed=req.speed, loop=req.loop,
+        debug_gates=req.debug_gates,
+    )
+    session.start()
+    _replay["session"] = session
+    return {"ok": True, "video": path.name, "weights_dir": weights_dir,
+            "rois": len(roi_manager.rois) if roi_manager else 0}
+
+
+@app.post("/api/replay/stop")
+def replay_stop():
+    s = _replay["session"]
+    if s is not None:
+        s.stop()
+        _replay["session"] = None
+    return {"ok": True}
+
+
+@app.get("/api/replay/status")
+def replay_status():
+    s = _replay["session"]
+    return s.status() if s is not None else {"running": False, "done": False}
+
+
+@app.get("/api/replay/stream.mjpg")
+def replay_stream():
+    s = _replay["session"]
+    if s is None:
+        raise HTTPException(409, "재생 중인 세션이 없습니다")
+
+    def gen():
+        last = None
+        while True:
+            frame = s.latest_jpeg
+            if frame is None or frame is last:
+                if s.status()["done"] and frame is None:
+                    break
+                time.sleep(0.02)
+                continue
+            last = frame
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                   + frame + b"\r\n")
+
+    return StreamingResponse(
+        gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
 _CAPTIVE_REDIRECT = f"http://{_nm.AP_IP}:5000"
 
 

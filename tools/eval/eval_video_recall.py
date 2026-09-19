@@ -41,22 +41,14 @@ sys.path.insert(0, str(ROOT))
 # 배포 런타임 모듈은 device/ 에 있다 — 복붙 금지 원칙상 그대로 import한다.
 sys.path.insert(0, str(ROOT / "device"))
 
-# 배포 코드에서 그대로 가져온다 — 복붙 금지. 상수가 바뀌면 평가도 따라가야 한다.
-from camera_live_pi import (  # noqa: E402
-    CANE_CLASS_ID,
-    MOVED_MIN_DIAG_RATIO,
-    PERSON_CLASS_ID,
-    STATIC_CANE_SUPPRESS_FRAMES,
-    build_backend,
-)
+# 배포 코드에서 그대로 가져온다 — 복붙 금지. 게이트 순서·상수·연관 로직은 전부
+# `gate_chain.GateChain`에 있고 배포(`camera_live_pi.py`)·재생검증(`replay_engine.py`)이
+# 같은 것을 돌린다. 여기서 재현하지 않는다.
+from camera_live_pi import build_backend  # noqa: E402
 from audio_trigger import StandaloneDispatcher  # noqa: E402
-from cane_person_assoc import associate_canes  # noqa: E402
-from pedestrian_entity import (  # noqa: E402
-    EntityTracker,
-    subject_for_canes,
-    latched_cane_ids,
-    virtual_cane_boxes,
-)
+from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID  # noqa: E402
+from gate_chain import GateChain  # noqa: E402
+from pedestrian_entity import EntityTracker  # noqa: E402
 
 # 배포의 안내 디스패처를 그대로 태울 때 쓰는 가상 ROI 이름. 평가 영상에는 ROI
 # 정의가 없으므로 "게이트를 통과한 주체는 전부 이 구역 안에 있다"고 본다 —
@@ -243,17 +235,16 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
               entity_virtual_sec: float | None = None,
               on_frame=None, subject_aware: bool = True,
               audio_sec: float = 2.0, tracker_kwargs: dict | None = None) -> dict:
-    h, w = shape
-    moved_min = ((w ** 2 + h ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
-    # 트래커 파라미터는 지금껏 한 번도 튜닝된 적이 없다. 백본 판정을 가른 축이
-    # 트랙 지속성이었으므로(§4-0) 스윕할 수 있게 열어 둔다.
-    tracker = SimpleTracker(**(tracker_kwargs or {}))
-    # 보행자 엔티티 레이어. `use_entity=False`가 이 작업의 A/B 기준선이다 —
-    # 같은 추론 결과 위에서 게이트만 바꿔 비교하므로 비용이 거의 0이다.
-    entity_tracker = EntityTracker(
-        **({"virtual_max_sec": entity_virtual_sec}
-           if entity_virtual_sec is not None else {})
-    ) if use_entity else None
+    # 게이트 체인은 배포와 **같은 것**을 쓴다. 트래커 파라미터는 지금껏 한 번도
+    # 튜닝된 적이 없어(§10) 스윕할 수 있게 열어 두고, `use_entity=False`가 엔티티
+    # 레이어의 A/B 기준선이다 — 같은 추론 결과 위에서 게이트만 바꿔 비교한다.
+    chain = GateChain(
+        require_person=require_person, use_entity=use_entity,
+        tracker=SimpleTracker(**(tracker_kwargs or {})),
+        entity_tracker=(EntityTracker(**({"virtual_max_sec": entity_virtual_sec}
+                                         if entity_virtual_sec is not None else {}))
+                        if use_entity else None),
+    )
     latched_ever: set[int] = set()
     virtual_frames = 0
 
@@ -283,51 +274,35 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
         if hit:
             stage["raw"] += 1
 
-        tracks = tracker.update(dets, now)
+        g = chain.step(dets, shape, now)
+        tracks = g.tracks
         for t in tracks:
             rec = seen.setdefault(t["track_id"], {"cls": t["class"], "frames": 0, "disp": 0.0})
             rec["frames"] += 1
             rec["disp"] = max(rec["disp"], t.get("max_disp", 0.0))
 
-        cane = [t for t in tracks if t["class"] == CANE_CLASS_ID]
-        cane = [t for t in cane if t.get("static_frames", 0) < STATIC_CANE_SUPPRESS_FRAMES]
-        if cane:
+        # 단계별 통과 프레임 — GateChain이 돌려준 결과를 세기만 한다(재현 금지).
+        cane, virtual = g.cane_tracks, g.virtual
+        after_static = [t for t in g.all_cane_tracks
+                        if t.get("static_frames", 0) < chain.static_suppress_frames]
+        if after_static:
             stage["static"] += 1
-        cane = [t for t in cane if t.get("max_disp", 0.0) >= moved_min]
-        if cane:
+        if [t for t in after_static if t.get("max_disp", 0.0) >= g.moved_min]:
             stage["moved"] += 1
-
-        # 엔티티 갱신 — 입력은 여기까지의 두 게이트를 통과한 지팡이다
-        # (배포 코드 `camera_live_pi.py`와 같은 순서·같은 입력).
-        latched: set[int] = set()
-        virtual: list = []
-        if entity_tracker is not None:
-            entities = entity_tracker.update(
-                tracks, {t["track_id"] for t in cane}, now)
-            latched = latched_cane_ids(entities)
-            virtual = virtual_cane_boxes(entities)
-            latched_ever |= {e.entity_id for e in entities if e.is_cane_user}
-
-        if require_person and cane:
-            wp = associate_canes(tracks)
-            cane = [t for t in cane
-                    if wp.get(t["track_id"], False) or t["track_id"] in latched]
         if cane:
             stage["person"] += 1
+        latched_ever |= {e.entity_id for e in g.entities if e.is_cane_user}
         # 가상 지팡이 박스도 ROI 판정 대상이다 — 배포 경로에서 실제 박스와 같은
         # 목록에 들어가므로, 여기서도 통과 프레임으로 센다.
         if not cane and virtual:
             virtual_frames += 1
-        passing.append(bool(cane) or bool(virtual))
+        passing.append(g.passing)
 
         # --- 안내 디스패처 (배포 경로 그대로) ---------------------------------
         # 주체는 camera_live_pi.py와 같은 규칙으로 정한다: 지팡이를 쥔 엔티티,
         # 없으면 지팡이 트랙 id 폴백, 가상 박스는 그 엔티티.
-        if subject_aware and entity_tracker is not None:
-            owner = subject_for_canes(entities, tracks)
-            subjects = {owner.get(t["track_id"], ("cane", t["track_id"]))
-                        for t in cane}
-            subjects |= {eid for eid, _b in virtual}
+        if subject_aware and use_entity:
+            subjects = {sid for sid, _b in g.roi_targets}
         else:
             # 주체 구분 이전의 동작 재현 — ROI 하나에 주체도 하나뿐이라, 먼저 온
             # 사람의 쿨다운이 뒤에 오는 사람의 안내를 그대로 잡아먹는다.
@@ -345,8 +320,8 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
             on_frame({
                 "index": fi, "now": now, "tracks": tracks,
                 "passed_cane": cane, "virtual": virtual,
-                "latched": latched, "moved_min": moved_min,
-                "entities": entities if entity_tracker is not None else [],
+                "latched": g.latched_ids, "moved_min": g.moved_min,
+                "entities": g.entities,
                 "passing": passing[-1],
             })
 

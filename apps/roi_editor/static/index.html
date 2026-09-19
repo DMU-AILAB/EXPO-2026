@@ -667,6 +667,28 @@ main {
   .btn-sm { padding: 7px 10px; }
 }
 </style>
+<style>
+.replay-controls { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
+.replay-controls label { display:flex; flex-direction:column; gap:4px;
+  font-size:12px; color:var(--ink-soft); }
+.replay-controls select, .replay-controls input[type=range] { min-width:130px; }
+.replay-check { flex-direction:row !important; align-items:center; gap:6px !important; }
+.replay-body { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; }
+@media (max-width: 900px) { .replay-body { grid-template-columns:1fr; } }
+.replay-view { background:#000; border-radius:10px; overflow:hidden;
+  min-height:240px; display:flex; align-items:center; justify-content:center; }
+.replay-view img { width:100%; display:block; }
+.replay-empty { color:#888; font-size:13px; padding:60px 20px; text-align:center; }
+.replay-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; }
+.replay-legend i { display:inline-block; width:10px; height:10px; border-radius:2px;
+  margin-right:5px; vertical-align:middle; }
+.replay-stats { padding:14px; }
+.replay-progress { height:6px; background:rgba(127,127,127,.25); border-radius:3px;
+  overflow:hidden; }
+.replay-progress > div { height:100%; width:0; background:var(--accent, #3ca0c8);
+  transition:width .2s; }
+.replay-counters td:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+</style>
 </head>
 <body>
 
@@ -677,6 +699,7 @@ main {
     <button class="tab-btn" data-tab="roi">ROI 편집</button>
     <button class="tab-btn" data-tab="stats">통계</button>
     <button class="tab-btn" data-tab="recordings">녹화</button>
+    <button class="tab-btn" data-tab="replay">검증</button>
   </nav>
 </header>
 
@@ -985,6 +1008,94 @@ main {
       </div>
     </div>
   </div>
+
+  <!-- ============================================================
+       검증 — 저장된 영상을 배포와 같은 경로로 돌려 눈으로 확인한다.
+       ROI 편집 탭에서 그린 구역을 그대로 쓰므로 "이 영상이면 안내가
+       나갔을까"를 바로 볼 수 있다.
+  ============================================================= -->
+  <div class="page" id="page-replay">
+    <div class="page-title">영상 검증 재생</div>
+    <div class="roi-meta" style="margin-bottom:12px">
+      저장된 영상을 실제 배포와 <strong>같은 추론·게이트 경로</strong>로 돌립니다.
+      현재 <strong>ROI 편집 탭의 구역</strong>을 그대로 사용하며,
+      확인용이므로 <strong>오디오는 재생하지 않습니다</strong>.
+    </div>
+
+    <div class="sum-card" style="padding:14px; margin-bottom:14px">
+      <div class="replay-controls">
+        <label>영상
+          <select id="replayVideo"><option value="">불러오는 중...</option></select>
+        </label>
+        <label>모델
+          <select id="replayModel"></select>
+        </label>
+        <label>신뢰도 <span id="replayConfVal" class="roi-meta">0.55</span>
+          <input type="range" id="replayConf" min="0.05" max="0.9" step="0.05" value="0.55">
+        </label>
+        <label>속도
+          <select id="replaySpeed">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
+        </label>
+        <label class="replay-check">
+          <input type="checkbox" id="replayRequirePerson" checked> 사람 동반 필수
+        </label>
+        <label class="replay-check">
+          <input type="checkbox" id="replayDebug" checked> 게이트 사유 표시
+        </label>
+        <label class="replay-check">
+          <input type="checkbox" id="replayLoop"> 반복
+        </label>
+        <button class="btn btn-save" id="replayStartBtn">▶ 재생</button>
+        <button class="btn" id="replayStopBtn">■ 정지</button>
+      </div>
+    </div>
+
+    <div class="replay-body">
+      <div>
+        <div id="replayViewWrap" class="replay-view">
+          <div class="replay-empty">영상을 고르고 <strong>▶ 재생</strong>을 누르세요.</div>
+        </div>
+        <div class="replay-legend roi-meta">
+          <span><i style="background:#00dc00"></i> 게이트 통과 지팡이</span>
+          <span><i style="background:#ff8c00"></i> 게이트 차단</span>
+          <span><i style="background:#ff00ff"></i> 가상 지팡이(추정)</span>
+          <span><i style="background:#3ca0c8"></i> 사람</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="sum-card replay-stats">
+          <div class="page-title" style="margin:0 0 10px">진행 상태</div>
+          <div class="replay-progress"><div id="replayBar"></div></div>
+          <div id="replayProgressText" class="roi-meta" style="margin:6px 0 12px">-</div>
+          <table class="events-table replay-counters">
+            <tbody>
+              <tr><td>지팡이 탐지 프레임</td><td id="rcRaw">0</td></tr>
+              <tr><td>게이트 통과 프레임</td><td id="rcGated">0</td></tr>
+              <tr><td>가상 박스 프레임</td><td id="rcVirtual">0</td></tr>
+              <tr><td>래치된 보행자</td><td id="rcLatched">0</td></tr>
+              <tr><td><strong>안내 발사</strong></td><td id="rcAnn"><strong>0</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="page-title" style="margin-top:16px">안내 발사 기록</div>
+        <div class="sum-card" style="padding:0; overflow:hidden">
+          <table class="events-table">
+            <thead><tr><th>시각</th><th>구역</th><th>대상</th></tr></thead>
+            <tbody id="replayEventsBody">
+              <tr><td colspan="3" class="roi-meta" style="padding:12px">아직 없음</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <div id="statusbar"><span id="status" class="s-ok">서버에 연결 중...</span></div>
@@ -2411,12 +2522,115 @@ function switchTab(name) {
     closeClipModal();
     populateRecordingsCameraFilter();
     loadClipList();
+  } else if (name === 'replay') {
+    initReplayTab();
   }
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
+
+/* ================================================================
+   검증 재생 — /api/replay/*
+   서버가 배포와 같은 게이트 체인을 돌리고, 여기서는 MJPEG와 상태만 본다.
+================================================================ */
+let replayPoll = null;
+let replayInit = false;
+
+async function initReplayTab() {
+  if (replayInit) return;
+  replayInit = true;
+  const sel = document.getElementById('replayVideo');
+  try {
+    const r = await fetch('/api/replay/videos').then(x => x.json());
+    sel.innerHTML = r.videos.length
+      ? r.videos.map(v => `<option value="${v.name}">${v.name} (${v.size_mb}MB)</option>`).join('')
+      : '<option value="">영상 없음 — datasets/videos/ 또는 videos/ 에 넣으세요</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">영상 목록을 불러오지 못했습니다</option>';
+  }
+  try {
+    const m = await fetch('/api/model-variants').then(x => x.json());
+    const cur = m.default;
+    document.getElementById('replayModel').innerHTML = (m.variants || [])
+      .map(v => `<option value="${v.key}"${v.key === cur ? ' selected' : ''}>`
+                + `${v.label || v.key}</option>`).join('');
+  } catch (e) { /* 모델 목록 실패는 치명적이지 않다 — 서버 기본값으로 시작된다 */ }
+}
+
+document.getElementById('replayConf').addEventListener('input', e => {
+  document.getElementById('replayConfVal').textContent = Number(e.target.value).toFixed(2);
+});
+
+document.getElementById('replayStartBtn').addEventListener('click', async () => {
+  const video = document.getElementById('replayVideo').value;
+  if (!video) { setStatus('먼저 영상을 고르세요', 'warn'); return; }
+  const body = {
+    video,
+    conf: Number(document.getElementById('replayConf').value),
+    model_variant: document.getElementById('replayModel').value,
+    require_person: document.getElementById('replayRequirePerson').checked,
+    speed: Number(document.getElementById('replaySpeed').value),
+    loop: document.getElementById('replayLoop').checked,
+    debug_gates: document.getElementById('replayDebug').checked,
+  };
+  setStatus('재생 준비 중...', 'ok');
+  const res = await fetch('/api/replay/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    setStatus('재생 시작 실패: ' + (await res.text()), 'err');
+    return;
+  }
+  const info = await res.json();
+  setStatus(`재생 중 — ${info.video} (ROI ${info.rois}개)`, 'ok');
+  document.getElementById('replayViewWrap').innerHTML =
+    `<img src="/api/replay/stream.mjpg?t=${Date.now()}" alt="검증 재생">`;
+  document.getElementById('replayEventsBody').innerHTML =
+    '<tr><td colspan="3" class="roi-meta" style="padding:12px">아직 없음</td></tr>';
+  if (replayPoll) clearInterval(replayPoll);
+  replayPoll = setInterval(pollReplay, 500);
+});
+
+document.getElementById('replayStopBtn').addEventListener('click', async () => {
+  await fetch('/api/replay/stop', { method: 'POST' });
+  if (replayPoll) { clearInterval(replayPoll); replayPoll = null; }
+  document.getElementById('replayViewWrap').innerHTML =
+    '<div class="replay-empty">정지했습니다.</div>';
+  setStatus('재생 정지', 'ok');
+});
+
+async function pollReplay() {
+  let st;
+  try { st = await fetch('/api/replay/status').then(r => r.json()); }
+  catch (e) { return; }
+  if (st.error) {
+    setStatus('재생 오류: ' + st.error, 'err');
+    if (replayPoll) { clearInterval(replayPoll); replayPoll = null; }
+    return;
+  }
+  const c = st.counters || {};
+  document.getElementById('rcRaw').textContent = c.raw ?? 0;
+  document.getElementById('rcGated').textContent = c.gated ?? 0;
+  document.getElementById('rcVirtual').textContent = c.virtual ?? 0;
+  document.getElementById('rcLatched').textContent = c.latched ?? 0;
+  document.getElementById('rcAnn').innerHTML = `<strong>${c.announcements ?? 0}</strong>`;
+
+  const pct = st.total ? Math.min(100, (st.frame / st.total) * 100) : 0;
+  document.getElementById('replayBar').style.width = pct + '%';
+  document.getElementById('replayProgressText').textContent =
+    `${st.frame}/${st.total || '?'} 프레임 · ${st.fps}fps` + (st.done ? ' · 완료' : '');
+
+  const ev = st.events || [];
+  document.getElementById('replayEventsBody').innerHTML = ev.length
+    ? ev.slice().reverse().map(e =>
+        `<tr><td>${e.t}s</td><td>${e.roi}</td><td>${e.subject}</td></tr>`).join('')
+    : '<tr><td colspan="3" class="roi-meta" style="padding:12px">아직 없음</td></tr>';
+
+  if (st.done && replayPoll) { clearInterval(replayPoll); replayPoll = null; }
+}
 
 /* ================================================================
    Utilities

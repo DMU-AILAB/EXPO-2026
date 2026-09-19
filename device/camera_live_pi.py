@@ -64,15 +64,19 @@ from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
                            load_camera_config, validate_camera_config)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 from simple_tracker import SimpleTracker
+# 게이트 순서·상수·연관 로직의 단일 출처. 배포/평가/재생검증이 같은 것을 써야 한다.
+# 상수는 여기서 재수출한다 — `eval_video_recall.py`가 camera_live_pi에서 import해 왔다.
+from gate_chain import (  # noqa: F401  (재수출)
+    MOVED_MIN_DIAG_RATIO,
+    STATIC_CANE_SUPPRESS_FRAMES,
+    GateChain,
+)
 # 표준 라이브러리만 쓰는 하드 의존성이라 try/except로 감싸지 않는다 — 여기서
 # 조용히 실패하면 ROIManager처럼 기능이 말없이 꺼진다. DEPLOY_PY 누락은 시끄럽게
 # 터지는 편이 낫다.
 from pedestrian_entity import (
-    EntityTracker,
-    subject_for_canes,
-    cane_user_person_ids,
-    latched_cane_ids,
-    virtual_cane_boxes,
+    cane_user_person_ids,      # 유동인구 래치 전달
+    virtual_cane_boxes,        # 디버그 오버레이의 가상 박스 표시
 )
 
 try:
@@ -1221,18 +1225,8 @@ def _led_watchdog(led: "_GPIOLed", heartbeat: dict, stop_flag: threading.Event,
 
 ROI_CHECK_INTERVAL = 2.0
 
-# 지팡이 트랙이 이만큼 연속으로 거의 안 움직이면(SimpleTracker.static_frames)
-# 배경 오탐지(케이블/문틀 경계선 등)로 간주해 ROI 트리거 대상에서 제외한다.
-# 실측 FPS(~8~9)에서 대략 3초 정도에 해당 — 사람이 잠시 멈춰 서서 지팡이를
-# 짚고 있는 정상적인 상황보다는 넉넉하게 잡았다.
-STATIC_CANE_SUPPRESS_FRAMES = 24
-
-# 지팡이 트랙이 트리거 자격을 얻으려면 생성 지점 대비 이 비율(프레임 대각선 기준)만큼
-# 움직인 적이 있어야 한다. 픽셀 절대값이 아니라 비율인 이유는 회전(90/270)으로 가로세로가
-# 바뀌어도 같은 기준이 유지되어야 하기 때문이다. 640x480이면 약 16px로, 트래커의 지터
-# 임계값(static_move_px=3.0)의 5배 여유가 있다 — 실측상 고정 물체는 300프레임 뒤에도
-# 원점 대비 4px를 넘지 않고, 이동하는 물체는 30프레임 만에 100px를 넘는다.
-MOVED_MIN_DIAG_RATIO = 0.02
+# STATIC_CANE_SUPPRESS_FRAMES · MOVED_MIN_DIAG_RATIO 는 gate_chain.py 로 옮겼다
+# (배포·평가·재생검증이 같은 값을 써야 하므로). 위에서 재수출한다.
 
 # 파이프라인이 (설정 변경이 아니라) 예기치 않게 죽었을 때 재시작을 시도하는 최소
 # 간격 — 예: 카메라 여러 대가 Coral USB 동글 하나를 동시에 열려다 충돌해서 한쪽이
@@ -1346,10 +1340,10 @@ class CameraPipeline:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
                 return
 
-            tracker = SimpleTracker()
-            # 사람+지팡이를 하나의 보행자로 묶어 프레임 사이에 상태를 유지한다.
-            # 트래커와 생애주기가 같으므로 같은 자리에서 만든다.
-            entity_tracker = EntityTracker()
+            # 트래커 + 엔티티 + 3중 게이트를 한 묶음으로 든다. 순서와 상수는
+            # gate_chain.py에만 있다 — 평가(`eval_video_recall.py`)와 재생검증
+            # (`replay_engine.py`)이 같은 것을 돌려야 하기 때문이다.
+            gates = GateChain(require_person=profile.require_person_for_trigger)
             # 정지 억제로 걸러낸 지팡이 트랙 id — 핫스팟은 트랙당 1회만 기록한다
             # (매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다).
             logged_static: set[int] = set()
@@ -1442,10 +1436,11 @@ class CameraPipeline:
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
                 dets = _filter_excluded(dets, roi_manager, frame)
 
-                # now를 트래킹 **앞에서** 잡는다 — 재식별(무덤 보관 기간)이 초 단위라
-                # 이 값을 넘겨야 한다. fps 계산은 같은 값을 그대로 쓴다.
+                # now를 게이트 **앞에서** 잡는다 — 재식별(무덤 보관 기간)과 래치가
+                # 초 단위라 이 값을 넘겨야 한다. fps 계산은 같은 값을 그대로 쓴다.
                 now    = time.time()
-                tracks = tracker.update(dets, now)
+                g      = gates.step(dets, frame.shape[:2], now)
+                tracks = g.tracks
                 _draw_detections(frame, tracks)
 
                 fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
@@ -1453,22 +1448,12 @@ class CameraPipeline:
 
                 self.shared.led_heartbeat["t"] = now
 
-                # 클래스별 분리 — ROI/오디오 트리거는 지팡이 트랙만, 유동인구
-                # 집계는 사람 트랙만 대상으로 한다 (2-class 모델 기준).
-                # 배경의 케이블/문틀 경계선 같은 고정 오탐지 대상은 지팡이와 달리 절대
-                # 움직이지 않는다 — static_frames가 임계값을 넘은 트랙은 ROI 트리거
-                # 대상에서 제외한다(화면 표시는 그대로 두어 디버깅은 가능하게 함).
-                all_cane_tracks = [t for t in tracks if t["class"] == CANE_CLASS_ID]
-                cane_tracks = [
-                    t for t in all_cane_tracks
-                    if t.get("static_frames", 0) < STATIC_CANE_SUPPRESS_FRAMES
-                ]
-                # 억제된(= 배경 지형지물이 거의 확실한) 위치를 누적해두면 roi_editor가
-                # "여기에 제외구역을 만드시겠습니까?"라고 제안할 수 있다 — 카메라가 고정이라
-                # 같은 지형지물은 항상 같은 화면 좌표에 나타난다.
+                # 정지 억제로 걸러낸(= 배경 지형지물이 거의 확실한) 위치를 누적해두면
+                # roi_editor가 "여기에 제외구역을 만드시겠습니까?"라고 제안할 수 있다 —
+                # 카메라가 고정이라 같은 지형지물은 항상 같은 화면 좌표에 나타난다.
                 if _HOTSPOTS_AVAILABLE and profile.traffic_db:
                     fh0, fw0 = frame.shape[:2]
-                    for trk in all_cane_tracks:
+                    for trk in g.all_cane_tracks:
                         if (trk.get("static_frames", 0) >= STATIC_CANE_SUPPRESS_FRAMES
                                 and trk["track_id"] not in logged_static):
                             logged_static.add(trk["track_id"])
@@ -1482,50 +1467,16 @@ class CameraPipeline:
                     if len(logged_static) > 256:
                         alive = {t["track_id"] for t in tracks}
                         logged_static &= alive
-                # 움직임 게이트 — 한 번이라도 움직인 적이 있는 지팡이 트랙만 통과시킨다.
-                # 위의 정지 억제는 새 트랙의 static_frames가 0에서 시작하는 탓에 임계값
-                # (24프레임 ≈ 2.7초)에 도달하기 전까지 배경 오탐지를 통과시키는데, 디바운스는
-                # 0.5초라 그 사이에 이미 음성이 나간다. "정지가 증명되기 전까지 통과"를
-                # "움직임이 증명되기 전까지 억제"로 뒤집어 그 공백을 닫는다.
-                # 사람이 동반돼도 면제하지 않는다 — 사람 발치의 기둥/난간이 정확히 그
-                # 유형이고(실측 오탐지 사례), 사람 동반 조건만으로는 막히지 않는다.
-                fh_g, fw_g = frame.shape[:2]
-                moved_min = ((fw_g ** 2 + fh_g ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
-                if cane_tracks:
-                    cane_tracks = [t for t in cane_tracks
-                                   if t.get("max_disp", 0.0) >= moved_min]
-
-                # 사람 동반 필수 조건(카메라 설정, 기본 켜짐) — 흰 지팡이는 항상 사람이 들고
-                # 다니므로, 사람 없이 잡힌 지팡이는 배경 오탐지일 가능성이 높다. 움직임
-                # 게이트가 못 막는 "움직이지만 사람이 없는" 유사물(흔들리는 나뭇가지 등)을
-                # 막는다 — 두 게이트는 서로 다른 실패 유형을 담당한다.
-                # 보행자 엔티티 갱신 — 입력은 **여기까지의 두 게이트를 통과한** 지팡이다.
-                # 사람 동반 게이트의 결과를 넣으면 순환이 생긴다(그쪽이 엔티티의 출력을
-                # 쓰므로). 이 분리 덕에 래치는 "이미 검증된 지팡이"의 연장이 되고,
-                # 배경 오탐지가 래치되는 경로가 닫힌다.
-                entities = entity_tracker.update(
-                    tracks, {t["track_id"] for t in cane_tracks}, now)
-                latched_ids = latched_cane_ids(entities)
-
-                with_person: dict[int, bool] = {}
-                if profile.require_person_for_trigger and (cane_tracks or self.shared.debug_gates):
-                    with_person = associate_canes(tracks)
-                    # 프레임 단위 판정 **또는** 래치 — OR이므로 지금 통과하던 지팡이는
-                    # 전부 계속 통과한다(단조 완화). 새로 통과하는 것은 "직전까지
-                    # 사람과 함께 확인됐는데 이번 프레임만 연관이 끊긴" 경우뿐이고,
-                    # 그게 디바운스를 리셋시켜 안내를 놓치던 원인이다.
-                    cane_tracks = [t for t in cane_tracks
-                                   if with_person.get(t["track_id"], False)
-                                   or t["track_id"] in latched_ids]
 
                 if self.shared.debug_gates:
-                    _draw_gate_debug(frame, all_cane_tracks,
-                                     {t["track_id"] for t in cane_tracks},
-                                     moved_min, with_person,
+                    _draw_gate_debug(frame, g.all_cane_tracks,
+                                     {t["track_id"] for t in g.cane_tracks},
+                                     g.moved_min,
+                                     g.with_person or gates.debug_with_person(tracks),
                                      profile.require_person_for_trigger,
-                                     entities, latched_ids)
+                                     g.entities, g.latched_ids)
                 if foot_counter is not None:
-                    person_tracks   = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
+                    person_tracks   = g.person_tracks
                     cane_person_map = associate(tracks)
                     # 래치를 함께 넘긴다 — 동반 프레임 "비율"로 판정하면 트래킹이
                     # 좋아질수록 불리해진다(트랙이 길수록 분모에 지팡이가 안 잡히는
@@ -1533,7 +1484,7 @@ class CameraPipeline:
                     # 살아남은 v6는 23.1%로 미달하고, 522프레임에서 끊긴 v5b는
                     # 30.7%로 통과했다 — 탐지 품질이 아니라 트랙 길이가 판정을 갈랐다.
                     foot_counter.update(person_tracks, cane_person_map, now,
-                                        cane_user_ids=cane_user_person_ids(entities))
+                                        cane_user_ids=cane_user_person_ids(g.entities))
 
                 # ROI 설정 변경/신규 생성 감지 (roi_editor 저장 → 재시작 없이 자동 반영)
                 if profile.roi_config and _TRIGGER_AVAILABLE and now - last_roi_check >= ROI_CHECK_INTERVAL:
@@ -1568,21 +1519,11 @@ class CameraPipeline:
                     # **주체(subject)는 사람 한 명(entity_id)**이다 — 안내 발사를 ROI가
                     # 아니라 사람 단위로 판정해야 지나가는 두 번째 사람이 안내를 놓치지
                     # 않는다(`audio_trigger.StandaloneDispatcher` docstring 참고).
-                    cane_owner = subject_for_canes(entities, tracks)
-                    roi_targets = [
-                        # 엔티티가 없는 지팡이(사람 동반 게이트를 끈 경우)는 트랙 id로
-                        # 폴백한다 — 주체가 없다고 판정을 건너뛰면 그 경로가 죽는다.
-                        (cane_owner.get(t["track_id"], ("cane", t["track_id"])), t["bbox"])
-                        for t in cane_tracks
-                    ]
-                    roi_targets += [(eid, bbox)
-                                    for eid, bbox in virtual_cane_boxes(entities)]
-
                     # ROI별로 이번 프레임에 안에 있는 주체를 모은다. dispatcher.update()는
                     # ROI마다 **프레임당 정확히 한 번** 불러야 한다(이탈 판정이 "이번
                     # 프레임에 없었다"에 달려 있다).
                     present: dict[str, set] = {}
-                    for subject, (x1, y1, x2, y2) in roi_targets:
+                    for subject, (x1, y1, x2, y2) in g.roi_targets:
                         # 바운딩 박스 하단 10% 구간(지팡이 끝이 바닥에 닿는 지점)으로 ROI
                         # 교차 판정 — 박스 전체 중심점은 손으로 쥔 위치까지 포함해 실제
                         # 접지 지점과 어긋날 수 있다 (simulator/app.py와 동일 로직).

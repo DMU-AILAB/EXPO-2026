@@ -41,6 +41,8 @@ DEPLOY_PY = \
 	device/simple_tracker.py \
 	device/cane_person_assoc.py \
 	device/pedestrian_entity.py \
+	device/gate_chain.py \
+	device/replay_engine.py \
 	device/foot_traffic_counter.py \
 	device/camera_config.py \
 	device/detection_events.py \

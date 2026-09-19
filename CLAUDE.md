@@ -38,6 +38,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `apps/roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + 오디오 미리듣기(`/api/audio/file`, audio_dir 밖 경로 차단) + `/api/stats/timeseries`(기간별 유동인구 시계열) + `/api/events`(최근 감지 이벤트), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
 | `apps/roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `dashboard/demo`의 디자인 토큰(accent/good/amber/danger, Pretendard)과 레이아웃(상단 탭 + 화면별 페이지)을 그대로 채용. 탭 4개: **모니터링**(카메라 상태 배지, 최근 감지 이벤트 표, 오늘 총 유동인구/지팡이 사용자 감지, ROI별 오디오 안내 테스트 재생) / **ROI 편집**("+ 새 구역 그리기" 명시적 토글로만 캔버스 클릭이 꼭짓점을 추가, 목록에서 기존 ROI 클릭 시 우측 폼에 로드되어 이름/안내텍스트/오디오/우선순위/구역유형 편집 및 삭제, 카메라 선택·설정·신뢰도 슬라이더 포함) / **통계**(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프) / **녹화**(수동 시작/중지 클립 목록·재생·다운로드) |
 | `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스** · 안내 주체 매핑(`subject_for_canes`). 표준 라이브러리만 사용 |
+| `gate_chain.py` | **게이트 체인의 단일 구현** — 정지 억제 → 움직임 → 엔티티 갱신 → 사람 동반(래치 완화) 순서와 상수(`STATIC_CANE_SUPPRESS_FRAMES`·`MOVED_MIN_DIAG_RATIO`)를 한 곳에 둔다. `camera_live_pi.py`·`eval_video_recall.py`·`replay_engine.py`가 **같은 것**을 돌린다 |
+| `replay_engine.py` | 저장된 영상을 **배포와 같은 경로**로 재생하며 주석 프레임을 만든다 — roi_editor의 "검증" 탭이 MJPEG로 띄운다. 오디오는 재생하지 않고 발사 시점만 기록 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -69,7 +71,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 18개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 20개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
@@ -258,6 +260,40 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   않도록 큐 방식으로 변경했다.
 
 ---
+
+## 게이트 체인은 한 곳에만 있다 (`gate_chain.py`)
+
+같은 판정을 돌려야 하는 곳이 셋이다 — 배포(`device/camera_live_pi.py`), 모델 채택
+판정(`tools/eval/eval_video_recall.py`), 화면 검증(`device/replay_engine.py`).
+각자 구현을 들고 있으면 **배포가 바뀔 때 나머지가 조용히 어긋나** 평가가 실제와 다른
+것을 재고 화면이 실제와 다른 것을 보여준다. `GateChain.step()`이 유일한 구현이고,
+세 곳 모두 이것을 호출한다. 게이트를 추가·수정할 때는 반드시 여기만 고칠 것.
+
+- **순서에 의미가 있다.** `정지 억제 → 움직임 게이트 → 엔티티 갱신 → 사람 동반`.
+  엔티티 갱신이 움직임 게이트 **뒤**, 사람 동반 게이트 **앞**에 오는 것이 핵심이다 —
+  래치의 입력은 앞의 두 게이트를 통과한 지팡이이고 출력은 사람 동반 게이트의
+  완화라, 순서를 바꾸면 순환이 생긴다.
+- `STATIC_CANE_SUPPRESS_FRAMES`·`MOVED_MIN_DIAG_RATIO`는 여기 있다.
+  `camera_live_pi.py`가 재수출하므로 기존 `from camera_live_pi import ...`는 그대로 쓴다.
+- `GateResult.roi_targets`는 `(주체, bbox)` 목록이다 — 실제 지팡이 박스와 가상 지팡이
+  박스가 같은 목록에 들어가므로, ROI 판정부는 둘을 구분할 필요가 없다.
+
+## 영상 검증 재생 (`replay_engine.py` + roi_editor "검증" 탭)
+
+게이트 동작을 터미널 숫자로만 볼 수 있던 것을 화면으로 옮긴 것이다. **가상 지팡이
+박스가 맞는 자리에 그려졌는지 같은 것은 수치로 판단할 수 없고**, ROI를 그려 놓고
+"이 영상이면 안내가 나갔을까"를 확인할 방법도 없었다.
+
+- **ROI는 지금 편집 중인 `rois.json`을 그대로 쓴다** — 그려 놓고 바로 확인하는 것이
+  이 기능의 목적이다.
+- **시각은 영상 시간**(프레임 ÷ fps)이다. 벽시계를 쓰면 디코딩 속도에 따라 래치·
+  재식별·쿨다운 판정이 달라져 같은 영상에서 결과가 재현되지 않는다.
+- **오디오는 재생하지 않는다.** 기기에서는 실제 안내 서비스가 같은 사운드 장치를
+  쓰고 있어 검증 재생이 끼어들면 안 된다. 발사 시점은 이벤트 목록으로 남는다.
+- 영상은 `datasets/videos/` 또는 기기의 `~/visionguide/videos/`에서 찾는다.
+  경로 탈출을 막으려고 **파일명만** 받는다.
+- 추론 백엔드 import는 재생을 시작할 때 한다 — 검증 탭을 쓰지 않는 기기에서
+  roi_editor 기동이 무거워지지 않게.
 
 ## 보행자 엔티티 (`pedestrian_entity.py`) — 설계 결정
 
