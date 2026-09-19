@@ -50,7 +50,7 @@ def test_two_camera_pipelines_run_concurrently_and_shut_down_cleanly(monkeypatch
     fake_cameras = {}
     fake_backends = {}
 
-    def fake_build_camera(source, backend="auto"):
+    def fake_build_camera(source, backend="auto", capture_preset="auto", tag=""):
         cam = _FakeCamera()
         fake_cameras[source] = cam
         return cam
@@ -113,7 +113,9 @@ def test_pipeline_restart_on_same_port_does_not_leak_socket(monkeypatch):
     파이프라인을 재생성할 때 "Address already in use"로 스레드가 처리되지 않은 예외와
     함께 죽는다 (카메라 프로필 변경 시 _reconcile_pipelines가 겪었던 실제 버그).
     """
-    monkeypatch.setattr(m, "build_camera", lambda source, backend="auto": _InfiniteFakeCamera())
+    monkeypatch.setattr(m, "build_camera",
+                        lambda source, backend="auto", capture_preset="auto", tag="":
+                        _InfiniteFakeCamera())
     monkeypatch.setattr(m, "build_backend", lambda conf, prefer="auto", weights_dir=None, input_size=640: _FakeBackend(conf))
 
     shared = m.SharedResources(

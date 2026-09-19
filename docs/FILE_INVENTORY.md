@@ -41,7 +41,7 @@ expo/
 │   └── demo/            (구 EXPO-Dash-demo — 디자인 토큰 출처)
 ├── configs/           학습 설정 yaml 10개 + examples/ 설정 예시 3개
 ├── deploy/            systemd 유닛 · sudoers · auto_ap.sh · deploy.ps1
-├── tests/             pytest 25개 + conftest.py
+├── tests/             pytest 26개 + conftest.py
 ├── weights/           COCO 사전학습 .pt (gitignore)
 ├── datasets/          학습 데이터 ★저장소의 59%
 ├── runs/              학습 산출물 ★저장소의 36%
@@ -115,7 +115,7 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `apps/label_tool/` | `server.py`, `static/index.html`, OpenVINO 모델 3.6MB | ❌ 로컬 전용 |
 | `configs/` | `train_v9_*.yaml`(증강 실험 6) · `train_v10_*`(데이터 2) · `train_v11_*`(백본 2) | ❌ |
 | `deploy/` | systemd 유닛 7 + sudoers 2 + `auto_ap.sh` | `make install-service` |
-| `tests/` | pytest 25개 파일 | ❌ |
+| `tests/` | pytest 26개 파일 | ❌ |
 
 > **`apps/simulator/roi_manager.py`는 Pi와 시뮬레이터가 공유한다.** 변경 시 양쪽 확인 필요.
 
