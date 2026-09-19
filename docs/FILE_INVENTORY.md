@@ -195,6 +195,7 @@ Pi에는 아무 영향이 없다 — 배포 경로 자체가 없다.
 | 기술 문서 | `coral_yolo_optimization.md`, `pi-deployment-guide.md`, `WIRING.md`, `si4432-kics-integration.md`, `wifi-onboarding-guide.md`, `multi-roi-collision-ideas.md` |
 | 구조 | `FILE_INVENTORY.md` (이 문서) |
 | 설계 명세 | `시각장애인_음성안내시스템_통합_기능명세서_v2.0.{md,xlsx}` |
+| 작업 계획 | `data_collection_plan.md` (실내 데이터 촬영 — 촬영 전 코드 준비 2건 포함) |
 | 작업 기록 | `작업일지_20260909.md` |
 | 참고 논문 PDF | 2편 (3.9 MB) |
 | 학생 제출 PDF | 5편 (`20242514_*.pdf` 등, 4.0 MB) — 코드와 무관한 개인 제출물 |
