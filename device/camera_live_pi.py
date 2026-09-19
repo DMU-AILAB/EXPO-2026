@@ -118,6 +118,14 @@ except ImportError:
     _OUTBOX_AVAILABLE = False
 
 try:
+    # 하트비트가 쓸 런타임 지표를 프로세스 밖으로 넘긴다 — 여기서도 sqlite 한 줄뿐,
+    # 네트워크는 건드리지 않는다(device_metrics.py 헤더 참고).
+    from device_metrics import REPORT_INTERVAL_SEC, report as report_metrics
+    _METRICS_AVAILABLE = True
+except ImportError:
+    _METRICS_AVAILABLE = False
+
+try:
     from fp_hotspots import log_suppressed
     _HOTSPOTS_AVAILABLE = True
 except ImportError:
@@ -1347,6 +1355,12 @@ class CameraPipeline:
             except Exception as e:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
                 return
+
+            # 하트비트용 지표. 매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막히므로
+            # EMA로 눌러두었다가 몇 초에 한 번만 보고한다.
+            infer_ema: float | None = None
+            loop_ema: float | None = None
+            last_metric_report = 0.0
 
             # 트래커 + 엔티티 + 3중 게이트를 한 묶음으로 든다. 순서와 상수는
             # gate_chain.py에만 있다 — 평가(`eval_video_recall.py`)와 재생검증

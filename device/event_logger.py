@@ -207,18 +207,6 @@ class EventSender(threading.Thread):
     def _post(self, url: str, api_key: str, payload: dict) -> tuple[bool, bool]:
         """(성공 여부, 재시도 무의미 여부)."""
         return _send_json(url, api_key, payload, "POST", self.timeout, self)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                self.last_error = None
-                return 200 <= resp.status < 300, False
-        except urllib.error.HTTPError as exc:
-            self.last_error = f"HTTP {exc.code}"
-            # 429(rate limit)는 잠시 뒤 다시 보내면 되지만, 나머지 4xx는 요청 자체가
-            # 잘못된 것이라 재시도가 무의미하다.
-            return False, 400 <= exc.code < 500 and exc.code != 429
-        except Exception as exc:                  # noqa: BLE001  (URLError·소켓 오류 등)
-            self.last_error = str(exc)
-            return False, False
 
 
 def _identity_changed(owner, ident) -> bool:
@@ -299,14 +287,24 @@ class HeartbeatSender(threading.Thread):
             mem = {"used_mb": st["mem_used_mb"], "total_mb": st["mem_total_mb"]}
 
         metrics = {m["camera_id"]: m for m in read_metrics(self.db_path)}
+        # **설정에 있는 카메라와 실제로 도는 카메라의 합집합**을 보고한다.
+        #
+        # 실측에서 갈렸다: `camera_config.json`에는 cam0/cam1이 있는데 기기는 레거시
+        # 단일 카메라 모드(id="legacy")로 돌고 있었다. 설정 목록만 보면 **스트리밍
+        # 중인데도 둘 다 is_streaming=false**로 보고돼 서버가 "카메라 다 죽었다"고
+        # 판단한다. 반대로 실측 목록만 보면 설정돼 있는데 죽은 카메라가 사라져
+        # 그것대로 안 보인다. 둘 다 필요하다.
+        ids = list(dict.fromkeys(list(self.camera_ids) + list(metrics)))
+        today = self._today_detections()
         cams = []
-        for cid in (self.camera_ids or list(metrics)):
+        for cid in ids:
             m = metrics.get(cid, {})
             cams.append({
                 "id": cid,
                 "is_streaming": bool(m.get("streaming")),
+                "configured": cid in self.camera_ids,
                 "current_alert": None,
-                "today_detections": self._today_detections(),
+                "today_detections": today,
             })
 
         # latency_ms(프레임 처리 시간)·npu_ms(추론 시간)는 탐지 루프에만 있는 값이라

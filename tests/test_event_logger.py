@@ -253,3 +253,26 @@ def test_backoff_resets_when_the_server_url_is_corrected(tmp_path, patch_server)
         threading.Event().wait(0.1)
     hb.stop()
     assert hb.sent_total >= 1, "주소를 고쳤는데도 백오프가 풀리지 않았다"
+
+
+def test_heartbeat_reports_running_cameras_not_only_configured_ones(tmp_path):
+    """설정에 없는 id로 돌고 있어도 보고해야 한다.
+
+    실측에서 갈렸다 — camera_config.json에는 cam0/cam1이 있는데 기기는 레거시 단일
+    카메라 모드(id="legacy")로 돌고 있었다. 설정 목록만 보면 스트리밍 중인데도 둘 다
+    is_streaming=false로 나가 서버가 "카메라 다 죽었다"고 판단한다.
+    """
+    from device_metrics import report
+    from event_logger import HeartbeatSender
+
+    db = tmp_path / "t.db"
+    report(db, "legacy", streaming=True, infer_ms=66.0, loop_ms=69.0)
+    p = HeartbeatSender(db, tmp_path / "id.json",
+                        camera_ids=["cam0", "cam1"]).build_payload()
+
+    by_id = {c["id"]: c for c in p["cameras"]}
+    assert set(by_id) == {"cam0", "cam1", "legacy"}
+    assert by_id["legacy"]["is_streaming"] is True
+    assert by_id["legacy"]["configured"] is False
+    assert by_id["cam0"]["is_streaming"] is False        # 설정됐지만 안 돎
+    assert by_id["cam0"]["configured"] is True
