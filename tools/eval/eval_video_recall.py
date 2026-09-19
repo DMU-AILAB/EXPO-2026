@@ -49,7 +49,19 @@ from camera_live_pi import (  # noqa: E402
     STATIC_CANE_SUPPRESS_FRAMES,
     build_backend,
 )
+from audio_trigger import StandaloneDispatcher  # noqa: E402
 from cane_person_assoc import associate_canes  # noqa: E402
+from pedestrian_entity import (  # noqa: E402
+    EntityTracker,
+    subject_for_canes,
+    latched_cane_ids,
+    virtual_cane_boxes,
+)
+
+# 배포의 안내 디스패처를 그대로 태울 때 쓰는 가상 ROI 이름. 평가 영상에는 ROI
+# 정의가 없으므로 "게이트를 통과한 주체는 전부 이 구역 안에 있다"고 본다 —
+# 쿨다운/최소간격이 실제로 몇 번의 안내를 만드는지 보려는 것이다.
+_EVAL_ROI = "__eval__"
 from simple_tracker import SimpleTracker  # noqa: E402
 
 DEFAULT_THRESHOLDS = (0.25, 0.40, 0.55)
@@ -227,24 +239,51 @@ def _unmap(dets: list[dict], mode: str, size: int, w: int, h: int) -> list[dict]
 # --------------------------------------------------------------------------
 def run_gates(frames: list[list[dict]], shape: tuple[int, int],
               conf: float, fps: float, debounce: float, require_person: bool,
-              gt: np.ndarray | None = None) -> dict:
+              gt: np.ndarray | None = None, use_entity: bool = True,
+              entity_virtual_sec: float | None = None,
+              on_frame=None, subject_aware: bool = True,
+              audio_sec: float = 2.0, tracker_kwargs: dict | None = None) -> dict:
     h, w = shape
     moved_min = ((w ** 2 + h ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
-    tracker = SimpleTracker()
+    # 트래커 파라미터는 지금껏 한 번도 튜닝된 적이 없다. 백본 판정을 가른 축이
+    # 트랙 지속성이었으므로(§4-0) 스윕할 수 있게 열어 둔다.
+    tracker = SimpleTracker(**(tracker_kwargs or {}))
+    # 보행자 엔티티 레이어. `use_entity=False`가 이 작업의 A/B 기준선이다 —
+    # 같은 추론 결과 위에서 게이트만 바꿔 비교하므로 비용이 거의 0이다.
+    entity_tracker = EntityTracker(
+        **({"virtual_max_sec": entity_virtual_sec}
+           if entity_virtual_sec is not None else {})
+    ) if use_entity else None
+    latched_ever: set[int] = set()
+    virtual_frames = 0
+
+    # `on_frame(state)`는 프레임별 내부 상태를 그대로 넘겨주는 훅이다 —
+    # `render_entity_overlay.py`가 게이트 로직을 복붙하지 않고 그리기 위해 쓴다.
+    # 로직을 두 벌로 두면 배포 코드가 바뀔 때 그림이 조용히 어긋난다.
+
+    # 배포와 같은 디스패처로 "실제 안내가 몇 번 나가는가"를 센다. `triggers`(아래
+    # 연속 통과 구간 수)는 쿨다운을 전혀 모르므로 배포 횟수와 다르다.
+    # `subject_aware=False`면 주체를 하나로 묶어 옛 ROI 단위 쿨다운을 재현한다.
+    dispatcher = StandaloneDispatcher(debounce, 10.0)
+    announcements: list[tuple[float, object]] = []
+    release_at: float | None = None
 
     stage = {"raw": 0, "static": 0, "moved": 0, "person": 0}
     passing = []           # 프레임별 최종 게이트 통과 여부
     raw_hit = []           # 프레임별 raw 탐지 여부 (정답 대비 재현율/오탐지 계산용)
     seen: dict[int, dict] = {}
 
-    for dets in frames:
+    for fi, dets in enumerate(frames):
+        # 엔티티 레이어의 시간 상수는 초 단위라 프레임 번호를 시각으로 환산해 넘긴다
+        # (배포는 time.time()). 이 환산이 있어야 평가에서 고른 값이 실기기로 전이된다.
+        now = fi / fps if fps else float(fi)
         dets = [d for d in dets if d["conf"] >= conf]
         hit = any(d["label"] == "white_cane" for d in dets)
         raw_hit.append(hit)
         if hit:
             stage["raw"] += 1
 
-        tracks = tracker.update(dets)
+        tracks = tracker.update(dets, now)
         for t in tracks:
             rec = seen.setdefault(t["track_id"], {"cls": t["class"], "frames": 0, "disp": 0.0})
             rec["frames"] += 1
@@ -257,12 +296,59 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
         cane = [t for t in cane if t.get("max_disp", 0.0) >= moved_min]
         if cane:
             stage["moved"] += 1
+
+        # 엔티티 갱신 — 입력은 여기까지의 두 게이트를 통과한 지팡이다
+        # (배포 코드 `camera_live_pi.py`와 같은 순서·같은 입력).
+        latched: set[int] = set()
+        virtual: list = []
+        if entity_tracker is not None:
+            entities = entity_tracker.update(
+                tracks, {t["track_id"] for t in cane}, now)
+            latched = latched_cane_ids(entities)
+            virtual = virtual_cane_boxes(entities)
+            latched_ever |= {e.entity_id for e in entities if e.is_cane_user}
+
         if require_person and cane:
             wp = associate_canes(tracks)
-            cane = [t for t in cane if wp.get(t["track_id"], False)]
+            cane = [t for t in cane
+                    if wp.get(t["track_id"], False) or t["track_id"] in latched]
         if cane:
             stage["person"] += 1
-        passing.append(bool(cane))
+        # 가상 지팡이 박스도 ROI 판정 대상이다 — 배포 경로에서 실제 박스와 같은
+        # 목록에 들어가므로, 여기서도 통과 프레임으로 센다.
+        if not cane and virtual:
+            virtual_frames += 1
+        passing.append(bool(cane) or bool(virtual))
+
+        # --- 안내 디스패처 (배포 경로 그대로) ---------------------------------
+        # 주체는 camera_live_pi.py와 같은 규칙으로 정한다: 지팡이를 쥔 엔티티,
+        # 없으면 지팡이 트랙 id 폴백, 가상 박스는 그 엔티티.
+        if subject_aware and entity_tracker is not None:
+            owner = subject_for_canes(entities, tracks)
+            subjects = {owner.get(t["track_id"], ("cane", t["track_id"]))
+                        for t in cane}
+            subjects |= {eid for eid, _b in virtual}
+        else:
+            # 주체 구분 이전의 동작 재현 — ROI 하나에 주체도 하나뿐이라, 먼저 온
+            # 사람의 쿨다운이 뒤에 오는 사람의 안내를 그대로 잡아먹는다.
+            subjects = {"__any__"} if passing[-1] else set()
+
+        if release_at is not None and now >= release_at:
+            dispatcher.update_last_triggered(_EVAL_ROI, release_at)
+            release_at = None
+        said = dispatcher.update(_EVAL_ROI, subjects, now)
+        if said is not None:
+            announcements.append((now, said))
+            release_at = now + audio_sec
+
+        if on_frame is not None:
+            on_frame({
+                "index": fi, "now": now, "tracks": tracks,
+                "passed_cane": cane, "virtual": virtual,
+                "latched": latched, "moved_min": moved_min,
+                "entities": entities if entity_tracker is not None else [],
+                "passing": passing[-1],
+            })
 
     # 최장 연속 통과 구간 + 디바운스를 채운 트리거 횟수
     need = max(1, int(round(fps * debounce)))
@@ -315,6 +401,11 @@ def run_gates(frames: list[list[dict]], shape: tuple[int, int],
 
     return {
         "gt": gt_stats,
+        "entity": use_entity,
+        "subject_aware": subject_aware,
+        "announcements": len(announcements),
+        "latched_entities": len(latched_ever),
+        "virtual_frames": virtual_frames,
         "conf": conf, "total": len(frames), "stage": stage,
         "longest": longest, "need": need, "triggers": triggers,
         "cane_tracks": len(canes), "person_tracks": len(persons),
@@ -359,10 +450,33 @@ def _report(results: list[dict], args) -> None:
 
     print()
     r0 = results[0]
+    print()
+    print("실제 안내 횟수 (배포 디스패처 그대로 — 쿨다운·최소간격 반영)")
+    print(f"  주체 구분: {'켬 (사람 단위)' if r0['subject_aware'] else '끔 (ROI 단위, 옛 동작)'}"
+          f"  |  오디오 길이 가정 {args.audio_sec}s")
+    print(f"{'conf':>6} | {'안내':>5} {'(참고) 연속통과 구간':>22}")
+    print("-" * 38)
+    for r in results:
+        print(f"{r['conf']:>6.2f} | {r['announcements']:>5} {r['triggers']:>22}")
+    print()
     print(f"트랙 통계 (conf={r0['conf']:.2f}) — 디바운스 {args.debounce}s = 연속 {r0['need']}프레임 필요")
     print(f"  지팡이: 트랙 {r0['cane_tracks']}개, 최장 생존 {r0['cane_max_life']}프레임, "
           f"최대 변위 {r0['cane_max_disp']:.0f}px")
     print(f"  사람  : 트랙 {r0['person_tracks']}개, 최장 생존 {r0['person_max_life']}프레임")
+    print()
+    if results[0]["entity"]:
+        print("보행자 엔티티 (pedestrian_entity)")
+        print(f"{'conf':>6} | {'래치된 엔티티':>14} {'가상박스 단독통과':>18}")
+        print("-" * 44)
+        for r in results:
+            print(f"{r['conf']:>6.2f} | {r['latched_entities']:>14} "
+                  f"{r['virtual_frames']:>18}")
+        print("  '가상박스 단독통과' = 실제 지팡이 트랙이 없는데 가상 박스로 통과한"
+              " 프레임 수.")
+        print("  0이면 엔티티 레이어의 효과 경로가 안 열린 것이다"
+              " (SimpleTracker의 max_age=10이 끊김을 이미 다 흡수했다는 뜻).")
+    else:
+        print("보행자 엔티티: 꺼짐 (--no-entity) — A/B 기준선")
     print()
     print("주의: 이 지표는 영상 표본 수가 적으면 그 영상에 과적합된다. 채택 판정 시"
           " 반드시 표본 수를 병기할 것.")
@@ -386,6 +500,15 @@ def main() -> None:
                    help="트리거로 인정할 연속 통과 시간(초). 배포 기본값 0.5")
     p.add_argument("--no-require-person", action="store_true",
                    help="사람 동반 게이트를 끄고 측정 (배포 기본값은 켜짐)")
+    p.add_argument("--entity-virtual-sec", type=float, metavar="SEC",
+                   help="가상 지팡이 박스 유지 상한(초). "
+                        "기본 pedestrian_entity.VIRTUAL_MAX_SEC")
+    p.add_argument("--no-subjects", action="store_true",
+                   help="안내 디스패처를 주체 구분 이전(ROI 단위 쿨다운)으로 되돌려 측정")
+    p.add_argument("--audio-sec", type=float, default=2.0,
+                   help="안내 1회의 오디오 길이 가정(초) — 쿨다운 기산점 계산에 쓴다")
+    p.add_argument("--no-entity", action="store_true",
+                   help="보행자 엔티티 레이어(pedestrian_entity)를 끄고 측정 — A/B 기준선")
     p.add_argument("--stride", type=int, default=1, help="N프레임마다 1장만 평가 (빠른 확인용)")
     p.add_argument("--gt", metavar="JSON", default="datasets/videos/video_gt.json",
                    help="정답 구간 파일. 영상 파일명을 키로 [[시작초, 끝초], ...]를 담는다. "
@@ -409,7 +532,12 @@ def main() -> None:
 
     gt = _load_gt(args, len(frames), fps)
     results = [run_gates(frames, shape, c, fps, args.debounce,
-                         not args.no_require_person, gt=gt) for c in thresholds]
+                         not args.no_require_person, gt=gt,
+                         use_entity=not args.no_entity,
+                         entity_virtual_sec=args.entity_virtual_sec,
+                         subject_aware=not args.no_subjects,
+                         audio_sec=args.audio_sec)
+               for c in thresholds]
     _report(results, args)
 
 

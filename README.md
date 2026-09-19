@@ -153,7 +153,7 @@ python -m pytest tests/ -v
 
 ```
 expo/
-├── device/                    # Pi에서 실행되는 런타임 17개 (Makefile의 DEPLOY_PY와 일치)
+├── device/                    # Pi에서 실행되는 런타임 18개 (Makefile의 DEPLOY_PY와 일치)
 │   ├── camera_live_pi.py      #   메인 — 카메라·추론·트래킹·ROI·MJPEG
 │   ├── yolo_postprocess.py    #   전처리(letterbox)·후처리 공유
 │   ├── detect.py              #   WhiteCaneDetector (PyTorch fallback)

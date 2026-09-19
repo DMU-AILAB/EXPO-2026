@@ -36,64 +36,174 @@ _ALSA_DEVICE = _detect_alsa_device()
 # TriggerDispatcher (Streamlit-free)
 # ---------------------------------------------------------------------------
 
-class StandaloneDispatcher:
-    """디바운싱 + 쿨다운 게이트 (st.session_state 미사용).
+# 이탈 히스테리시스 — subject가 ROI 밖에 이만큼 머물러야 "방문이 끝났다"로 본다.
+# 경계에 걸친 박스는 EMA 스무딩 뒤에도 한두 프레임씩 안팎을 오가는데, 이게 없으면
+# 그때마다 방문이 리셋돼 같은 사람에게 안내가 반복된다.
+_DEFAULT_EXIT_GRACE_SEC = 1.0
 
-    simulator/trigger_dispatcher.py 의 동일 로직을 일반 dict 기반으로 구현.
+# ROI 단위 최소 간격 — 주체가 누구든 이 간격 안에는 같은 ROI에서 두 번 안내하지 않는다.
+# 쿨다운(주체별 재안내 금지)과 역할이 다르다: 이쪽은 유동인구가 많을 때 안내가
+# 연달아 터지는 것을 막는 스팸 방지용이다. 오디오 재생 시간 위에 더해지므로
+# 실제 간격은 이 값 + 오디오 길이다.
+_DEFAULT_MIN_GAP_SEC = 3.0
+
+# 주체를 구분하지 않는 호출부(레거시 경로·시뮬레이터)가 쓰는 단일 주체 키.
+_LEGACY_SUBJECT = "__any__"
+
+
+class StandaloneDispatcher:
+    """ROI별 안내 발사 게이트 — 디바운스 · 쿨다운 · **주체(subject)별 방문 판정**.
+
+    주체는 `pedestrian_entity`의 `entity_id`(= 사람 한 명)다. 주체를 구분하기 전에는
+    상태가 **ROI 이름 하나로만** 묶여 있어서 두 가지 문제가 있었다.
+
+    1. **지나가는 사람이 안내를 통째로 놓친다.** A가 안내를 받으면 ROI 전체가 쿨다운에
+       들어가는데, 그 사이 B가 ROI를 통과해 **나가버리면** 디바운스 기준점이 리셋되어
+       B에게는 아무것도 나가지 않는다. 걸어서 지나가는 보행자가 정확히 이 경우다.
+       (계속 서 있으면 쿨다운이 풀릴 때 나가긴 한다 — 즉 누락이 아니라 최대 쿨다운만큼
+       지연되는 경우와, 완전히 누락되는 경우가 섞여 있었다.)
+    2. **머물러 있는 사람에게 쿨다운마다 같은 안내가 반복된다.** ROI 단위 키의 부작용이지
+       의도된 설계가 아니다.
+
+    주체별 상태기계로 둘 다 닫는다.
+
+        OUT  --(연속 debounce초 이상 ROI 안)-->  PENDING
+        PENDING --(ROI 쿨다운이 풀림)-->  ANNOUNCED   ← 여기서 발사
+        PENDING/ANNOUNCED --(연속 exit_grace초 이상 ROI 밖)-->  OUT (방문 종료)
+
+    **PENDING은 쿨다운에 걸려도 버리지 않는다** — 쿨다운이 풀리는 즉시, 그 주체가
+    아직 ROI 안에 있을 때만 발사된다. 나간 뒤에 안내해봐야 소용이 없기 때문이다.
+    이것이 위 1번의 수정이다.
+
+    **발사되면 그 순간 ROI 안에 있는 주체를 전부 ANNOUNCED로 표시한다.** 안내는
+    스피커로 공간에 나가는 것이라 한 번이면 그 자리의 모두가 듣는다 — 주체별로
+    쿨다운만 풀어주면 3명이 동시에 들어올 때 같은 안내가 3번 큐에 쌓인다.
+
+    **두 개의 시간 제한이 서로 다른 일을 한다.**
+
+    | 값 | 범위 | 막는 것 |
+    |---|---|---|
+    | `cooldown` (`rois.json`, 기본 10초) | **주체별** | 같은 사람에게 반복 안내 (나갔다 다시 들어와도) |
+    | `min_gap` (기본 3초) | **ROI별** | 유동인구가 많을 때 안내가 연달아 터지는 스팸 |
+
+    쿨다운을 ROI가 아니라 주체에 건 이유: ROI에 걸면 **먼저 온 사람의 쿨다운이 뒤에
+    오는 사람의 안내를 잡아먹는다.** A가 안내를 받은 뒤 10초 안에 B가 ROI를 통과해
+    나가버리면 B는 아무것도 못 듣는데, 걸어서 지나가는 보행자가 정확히 그 경우다.
+    주체별 래치가 이미 반복을 막아주므로 ROI에 긴 쿨다운을 둘 이유가 없어졌다.
+
+    `min_gap`은 `cooldown`보다 크지 않게 잘린다 — 사용자가 쿨다운을 1초로 낮췄는데
+    스팸 방지값이 3초로 남아 더 둔해지는 역전을 막기 위해서다.
     """
 
-    def __init__(self, debounce: float = 0.5, cooldown: float = 10.0) -> None:
+    def __init__(self, debounce: float = 0.5, cooldown: float = 10.0,
+                 exit_grace: float = _DEFAULT_EXIT_GRACE_SEC,
+                 min_gap: float = _DEFAULT_MIN_GAP_SEC) -> None:
         self.debounce = debounce
         self.cooldown = cooldown
+        self.exit_grace = exit_grace
+        self.min_gap = min(min_gap, cooldown)
+        # roi_name -> {"last_triggered": float,
+        #              "subjects": {subject: {...}},      # 진행 중인 방문
+        #              "recent":   {subject: 안내 시각}}  # 방문이 끝난 뒤에도 남는 기록
         self._state: dict[str, dict] = {}
 
-    def on_detected(self, roi_name: str, now: float) -> bool:
-        """매 프레임 객체가 roi_name 안에 있을 때 호출. 트리거 발생 시 True 반환.
+    # ------------------------------------------------------------------ #
 
-        트리거가 발생하면 last_triggered를 inf로 설정해 오디오가 끝날 때까지
-        재트리거를 차단한다. 오디오 재생 완료 후 update_last_triggered()가
-        실제 종료 시각으로 덮어써야 쿨다운 카운트다운이 시작된다.
+    def update(self, roi_name: str, subjects, now: float):
+        """이번 프레임에 `roi_name` 안에 있는 주체 집합을 넘긴다.
+
+        지금 안내를 발사해야 하면 그 원인이 된 주체를, 아니면 None을 반환한다.
+        **ROI마다 프레임당 한 번만 호출할 것** — 이탈 판정이 "이번 프레임에 없었다"에
+        달려 있어서, 같은 ROI를 두 번 부르면 두 번째 호출이 첫 번째의 주체들을
+        이탈로 오인한다.
         """
-        s = self._state
-        if roi_name not in s:
-            s[roi_name] = {"first_seen": now, "last_triggered": 0.0}
-            return False
+        entry = self._state.setdefault(roi_name, {"last_triggered": 0.0,
+                                                  "subjects": {}, "recent": {}})
+        subs = entry["subjects"]
+        recent = entry["recent"]
+        present = set(subjects)
 
-        entry = s[roi_name]
-        if entry["first_seen"] is None:
-            entry["first_seen"] = now
+        for sid in present:
+            st = subs.get(sid)
+            if st is None:
+                st = subs[sid] = {"since": now, "gone_since": None, "announced": False}
+            # 이탈 유예 중에 돌아왔으면 같은 방문으로 잇는다(경계 깜빡임 흡수).
+            st["gone_since"] = None
+
+        for sid, st in list(subs.items()):
+            if sid in present:
+                continue
+            if st["gone_since"] is None:
+                st["gone_since"] = now
+            elif now - st["gone_since"] >= self.exit_grace:
+                del subs[sid]              # 방문 종료 — 다시 들어오면 새 방문이다
+
+        # 주체별 쿨다운 기록은 방문이 끝나도 남아야 한다(나갔다 바로 다시 들어오는
+        # 사람에게 재안내하지 않기 위해). 대신 쿨다운이 지나면 지운다 — 장시간
+        # 가동 시 무한히 쌓이면 안 된다.
+        for sid, t in list(recent.items()):
+            if now - t >= self.cooldown:
+                del recent[sid]
 
         last = entry["last_triggered"]
-        # inf는 오디오 재생 중 — 종료 콜백이 올 때까지 차단
-        if last == float("inf") or (last > 0 and now - last < self.cooldown):
-            return False
+        # inf는 오디오 재생 중 — 종료 콜백(update_last_triggered)이 올 때까지 차단.
+        # 그 뒤에는 ROI 단위 최소 간격만 본다(주체별 쿨다운은 아래에서 따로 본다).
+        if last == float("inf") or (last > 0 and now - last < self.min_gap):
+            return None
 
-        if now - entry["first_seen"] >= self.debounce:
-            entry["last_triggered"] = float("inf")  # 오디오 종료까지 무한 차단
-            entry["first_seen"] = None
-            return True
+        ready = [sid for sid in present
+                 if not subs[sid]["announced"]
+                 and now - subs[sid]["since"] >= self.debounce
+                 and (sid not in recent or now - recent[sid] >= self.cooldown)]
+        if not ready:
+            return None
 
-        return False
+        # 가장 오래 기다린 주체를 안내의 원인으로 삼는다(쿨다운에 밀린 순서 보존).
+        winner = min(ready, key=lambda sid: subs[sid]["since"])
+        entry["last_triggered"] = float("inf")   # 오디오 종료까지 무한 차단
+        for sid in present:
+            subs[sid]["announced"] = True        # 같은 공간에 있으면 다 들었다
+            recent[sid] = now
+        return winner
+
+    def states(self, roi_name: str) -> dict:
+        """주체별 상태 스냅샷 — 디버그 오버레이/로그용 (판정에는 쓰지 않는다)."""
+        subs = self._state.get(roi_name, {}).get("subjects", {})
+        return {sid: ("ANNOUNCED" if st["announced"] else "PENDING")
+                for sid, st in subs.items() if st["gone_since"] is None}
 
     def update_last_triggered(self, roi_name: str, t: float) -> None:
         """오디오 재생 완료 후 호출 — 쿨다운 기산점을 오디오 종료 시각으로 갱신."""
         if roi_name in self._state:
             self._state[roi_name]["last_triggered"] = t
 
-    def on_not_detected(self, roi_name: str) -> None:
-        """매 프레임 객체가 roi_name 밖에 있을 때 호출 (디바운스 리셋)."""
-        if roi_name in self._state:
-            self._state[roi_name]["first_seen"] = None
-
     def cooldown_remaining(self, roi_name: str, now: float) -> float:
-        """roi_name 의 남은 쿨다운 시간(초). 쿨다운 중이 아니면 0."""
+        """이 ROI에서 **다음 안내가 가능해지기까지** 남은 시간(초).
+
+        주체별 쿨다운이 아니라 ROI 단위 최소 간격(`min_gap`) 기준이다 — UI가 알고
+        싶은 것은 "이 구역에서 언제 다시 소리가 날 수 있나"이기 때문이다.
+        """
         if roi_name not in self._state:
             return 0.0
         last = self._state[roi_name].get("last_triggered", 0.0)
         if last == float("inf"):
-            return self.cooldown  # 재생 중 — 최대값 표시
-        elapsed = now - last
-        return max(0.0, self.cooldown - elapsed)
+            return self.min_gap   # 재생 중 — 최대값 표시
+        return max(0.0, self.min_gap - (now - last))
+
+    # --- 주체를 구분하지 않는 레거시 호출부용 -------------------------- #
+
+    def on_detected(self, roi_name: str, now: float) -> bool:
+        """주체 구분 없이 "이번 프레임 ROI 안에 무언가 있다"를 알린다.
+
+        `update()`를 단일 주체로 호출하는 얇은 래퍼다. 주체 구분이 없으므로
+        "머무는 동안 재안내 없음"이 ROI 전체에 적용된다 — 새 코드는 `update()`를 쓸 것.
+        """
+        return self.update(roi_name, {_LEGACY_SUBJECT}, now) is not None
+
+    def on_not_detected(self, roi_name: str, now: float | None = None) -> None:
+        """주체 구분 없이 "이번 프레임 ROI가 비었다"를 알린다."""
+        if roi_name in self._state:
+            self.update(roi_name, (), now if now is not None else time.time())
 
     def clear(self) -> None:
         self._state.clear()

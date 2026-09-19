@@ -30,13 +30,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `detect.py` | `WhiteCaneDetector` 클래스 |
 | `edgetpu_infer.py` | Coral Edge TPU Python 3.9 서브프로세스 워커 |
 | `camera_config.py` | `CameraProfile` 다중 카메라 프로필 (`camera_config.json`) — load/save/validate. 표준 라이브러리만 사용 |
-| `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (큐+워커스레드 기반 순차 재생 — 여러 카메라가 공유해도 겹쳐 재생되지 않고 대기열에 쌓였다가 순서대로 나옴, mpg123/pygame) |
+| `audio_trigger.py` | `StandaloneDispatcher` (**사람 단위** 디바운스/쿨다운 + ROI 단위 최소간격) + `AudioPlayer` (큐+워커스레드 기반 순차 재생 — 여러 카메라가 공유해도 겹쳐 재생되지 않고 대기열에 쌓였다가 순서대로 나옴, mpg123/pygame) |
 | `apps/simulator/app.py` | Streamlit PC 시뮬레이터 — ROI 폴리곤 편집, 실시간 탐지, 오디오 트리거 |
 | `apps/simulator/detector.py` | 시뮬레이터용 탐지기 |
 | `apps/simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
 | `apps/simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
 | `apps/roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + 오디오 미리듣기(`/api/audio/file`, audio_dir 밖 경로 차단) + `/api/stats/timeseries`(기간별 유동인구 시계열) + `/api/events`(최근 감지 이벤트), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
 | `apps/roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `dashboard/demo`의 디자인 토큰(accent/good/amber/danger, Pretendard)과 레이아웃(상단 탭 + 화면별 페이지)을 그대로 채용. 탭 4개: **모니터링**(카메라 상태 배지, 최근 감지 이벤트 표, 오늘 총 유동인구/지팡이 사용자 감지, ROI별 오디오 안내 테스트 재생) / **ROI 편집**("+ 새 구역 그리기" 명시적 토글로만 캔버스 클릭이 꼭짓점을 추가, 목록에서 기존 ROI 클릭 시 우측 폼에 로드되어 이름/안내텍스트/오디오/우선순위/구역유형 편집 및 삭제, 카메라 선택·설정·신뢰도 슬라이더 포함) / **통계**(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프) / **녹화**(수동 시작/중지 클립 목록·재생·다운로드) |
+| `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스** · 안내 주체 매핑(`subject_for_canes`). 표준 라이브러리만 사용 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -68,7 +69,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 17개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 18개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
@@ -107,7 +108,7 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
 
 ## 핵심 파일 관계
 
-`device/camera_live_pi.py` (Pi 메인) ←→ `device/audio_trigger.py` + `apps/simulator/roi_manager.py` + `device/camera_config.py`
+`device/camera_live_pi.py` (Pi 메인) ←→ `device/audio_trigger.py` + `apps/simulator/roi_manager.py` + `device/camera_config.py` + `device/pedestrian_entity.py`
 `apps/simulator/app.py` (PC 시뮬레이터) ←→ `device/audio_trigger.py` + `apps/simulator/roi_manager.py` + `apps/simulator/trigger_dispatcher.py`
 `apps/roi_editor/server.py` (ROI/카메라 웹 에디터) ←→ `apps/simulator/roi_manager.py`(간접, JSON 스키마 공유) + `device/camera_config.py` + `device/foot_traffic_counter.py`
 
@@ -142,6 +143,10 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
 
   나머지(사람이 든 등산스틱·우산)는 런타임에서 못 막고 **모델이 구분해야** 한다 —
   `prepare_lookalike_dataset.py`/`fetch_lvis_lookalikes.py`의 유사물 네거티브가 그 몫이다.
+
+  **세 번째 게이트만 `pedestrian_entity`의 래치로 완화된다** — 판정이
+  `프레임 단위 연관 OR 래치`라서 지금 통과하던 것은 전부 계속 통과한다(단조 완화).
+  앞의 두 게이트는 그대로이며, 오히려 **래치의 입력**으로 쓰인다(아래 절).
 
 - **움직임 게이트**(`MOVED_MIN_DIAG_RATIO = 0.02`)가 필요한 이유는 정지 억제에 **약 2초의 공백**이
   있어서다. 새 트랙은 `static_frames = 0`으로 시작하므로(`simple_tracker.py`) 억제가 걸리기까지
@@ -185,11 +190,14 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
     살짝 떨어지는 경우를 위한 여유값이다. 픽셀 절대값이 아니라 사람 폭 대비 비율인 이유는
     원근에 따라 같은 기준이 유지되어야 하기 때문이다.
   - 두 박스가 겹치면 거리가 0이라 **옛 기준으로 통과하던 것은 전부 계속 통과한다**(하위호환).
-- **유동인구의 "지팡이 사용자" 판정(`cane_ratio_threshold=0.3`)에는 별개의 결함이 남아 있다.**
-  사람 트랙 프레임 중 지팡이가 동반된 비율로 판정하는데, **트래킹이 좋아질수록 불리해진다** —
-  실측에서 v6는 사람 트랙이 805프레임 전체를 살아남아 분모에 "사람이 멀어 지팡이가 안 잡히는
-  구간"까지 들어가 23.1%로 미달했고, 트랙이 522프레임에서 끊긴 v5b는 30.7%로 통과했다.
-  탐지 품질이 아니라 트랙 길이가 판정을 가르는 구조다(트리거 경로와 무관 — 그쪽은 프레임 단위).
+- **유동인구의 "지팡이 사용자" 판정은 비율에서 래치로 바뀌었다.** 옛 방식
+  (`cane_ratio_threshold=0.3`, 사람 트랙 프레임 중 지팡이 동반 비율)은 **트래킹이
+  좋아질수록 불리해지는** 구조였다 — 실측에서 v6는 사람 트랙이 805프레임 전체를 살아남아
+  분모에 "사람이 멀어 지팡이가 안 잡히는 구간"까지 들어가 23.1%로 미달했고, 트랙이
+  522프레임에서 끊긴 v5b는 30.7%로 통과했다. **탐지 품질이 아니라 트랙 길이가 판정을
+  갈랐다.** 지금은 `camera_live_pi.py`가 `pedestrian_entity`의 래치를
+  `FootTrafficCounter.update(..., cane_user_ids=...)`로 넘긴다. 그 인자를 생략하면 옛 비율
+  경로로 떨어지므로 하위호환은 유지된다(단위 테스트가 두 경로를 모두 고정한다).
 - **오탐지 핫스팟 → 제외구역 제안**(`fp_hotspots.py`): 카메라가 고정이라 같은 지형지물은 항상 같은
   화면 좌표에 나타난다. 정지 억제로 걸러낸(=배경 오탐지가 거의 확실한) 지팡이 트랙의 위치를
   32×32 그리드 셀로 누적해두고, `roi_editor`가 `/api/fp-hotspots`로 읽어 "여기에 제외구역을
@@ -200,12 +208,94 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   이후가 아니라 **raw detection 단계**(`backend.predict()` 직후, `tracker.update()` 이전)에서 지팡이+사람
   전체 클래스에 필터링한다 — 트래킹 이후 필터링은 EMA 스무딩/coasting 때문에 구역 경계에서 트랙이
   깜빡이는 문제가 있다. 기존 `rois.json`에 `zone_type` 필드가 없으면 `"trigger"`로 기본 처리되어 하위호환.
+- **안내 발사는 ROI가 아니라 사람(주체) 단위로 판정한다.** `StandaloneDispatcher`의
+  상태 키가 ROI 이름 하나뿐이던 시절에는 반대 방향의 결함이 둘 있었다 — ① A가 안내를
+  받은 뒤 쿨다운 안에 B가 ROI를 **통과해 나가면** 이탈 시 디바운스 기준점이 지워져
+  B에게 아무것도 안 나갔고(계속 서 있으면 쿨다운이 풀릴 때 나가므로, 완전 누락은
+  "쿨다운이 끝나기 전에 벗어나는 경우"다 — 걸어서 지나가는 보행자가 정확히 그 경우),
+  ② 머무는 사람에게는 쿨다운마다 같은 안내가 반복됐다. 주체는
+  `pedestrian_entity`의 `entity_id`(= 사람 한 명)이며 상태기계는
+  `OUT → PENDING → ANNOUNCED`, 이탈은 `exit_grace`(1초) 히스테리시스다.
+  - **시간 제한이 두 개이고 역할이 다르다.** `cooldown`(`rois.json`, 기본 10초)은
+    **주체별** 재안내 금지, `min_gap`(기본 3초)은 **ROI별** 스팸 방지다. 쿨다운을
+    ROI에 걸면 먼저 온 사람이 뒤에 오는 사람의 안내를 잡아먹는다. `min_gap`은
+    `cooldown`보다 크지 않게 잘린다(쿨다운을 낮춘 설정이 오히려 둔해지는 역전 방지).
+  - **PENDING은 최소간격에 걸려도 버리지 않는다** — 풀리는 즉시, 그 주체가 아직 ROI
+    안에 있을 때만 발사한다. 나간 뒤 안내는 소용이 없다.
+  - **발사되면 그 순간 ROI 안의 주체를 전부 ANNOUNCED로 표시한다.** 안내는 스피커로
+    공간에 나가므로 한 번이면 그 자리의 모두가 듣는다 — 주체별로 쿨다운만 풀면
+    3명 동시 진입에 같은 안내가 3번 큐에 쌓인다.
+  - **`dispatcher.update()`는 ROI마다 프레임당 정확히 한 번** 불러야 한다. 이탈
+    판정이 "이번 프레임에 없었다"에 달려 있어, 같은 ROI를 두 번 부르면 두 번째
+    호출이 첫 번째의 주체들을 이탈로 오인한다.
+- **트랙 재식별(`SimpleTracker.update(dets, now)`)과 coasting(`max_age`)은 다른 것이다.**
+  coasting은 공백 동안 **마지막 박스를 얼려서 계속 내보낸다.** 길게 잡으면 사람이 이미
+  지나간 자리에 유령 박스가 남아 ROI를 오판한다 — 실측에서 `max_age`를 10 → 40으로
+  올리자 정답 구간 밖 오탐율이 5.1% → 18.2%(test3 conf 0.25), 0.0% → 14.8%(test2 conf
+  0.10)로 뛰었다. 재식별은 공백 동안 **아무것도 내보내지 않고** 다시 잡혔을 때 신원만
+  잇는다. `now`를 안 넘기면 재식별이 꺼져 동작이 종전과 같다(시뮬레이터 경로).
+  - 되살릴 때 `origin_center`·`max_disp`를 물려준다 — 이게 목적이다. 새 트랙으로
+    시작하면 움직임 게이트를 처음부터 다시 벌어야 하고 래치·안내 주체도 끊긴다.
+    `static_frames`는 0에서 시작한다(죽어 있는 동안 움직였을 수 있어 "정지"를 물려줄
+    근거가 없다. 움직임 게이트는 `max_disp`가 그대로라 느슨해지지 않는다).
+  - **`PERSON_GRACE_SEC`(2.0초)은 `revive_sec`(2.0초)과 반드시 같이 움직여야 한다.**
+    트래커가 사람을 되살릴 수 있는 동안 엔티티가 신원을 기억하지 못하면, 되살아난
+    사람에게 새 엔티티가 붙어 재식별로 얻으려던 연속성이 그 자리에서 끊긴다.
+- **★ `max_age`는 프레임 단위라 카메라 프레임레이트에 묶인다.** 평가 영상은 24~60 fps인데
+  Pi 실측은 12.76 fps라, 같은 `max_age=10`이 test1에서는 0.17초지만 **기기에서는 0.78초**다.
+  스윕에서 "20~40이 훨씬 낫다"고 나오는 것은 평가 영상이 빨라서 생기는 착시이며,
+  **기기 값은 이미 좋은 구간에 있다.** 이 상수를 만질 때는 반드시 Pi 환산을 먼저 할 것
+  (`docs/model_evaluation_report_v3.md` §10-2).
+- **래치는 엄격한 1:1, 안내 주체 식별은 느슨한 연관** — 목적이 다르다. 1:1 배정은
+  옆 사람이 덩달아 지팡이 사용자로 래치되는 것을 막는 데 꼭 필요하지만, 주체 식별에
+  그대로 쓰면 **탐지기가 같은 지팡이를 여러 박스로 내놓을 때** 밀린 박스가 트랙 id로
+  폴백해 한 사람이 여러 주체로 쪼개진다(test1 실측: 밀린 1,078프레임이 **전부** 사람
+  후보를 갖고 있었고, 한 사람이 15개 주체로 쪼개져 안내가 1회 → 3회). 그래서
+  `subject_for_canes()`가 밀린 지팡이도 가까운 짝부터 같은 엔티티에 붙인다.
 - **오디오는 큐 기반 순차 재생**(`audio_trigger.AudioPlayer`) — 카메라 여러 대가 하나의 `AudioPlayer`
   인스턴스를 공유해, 거의 동시에 트리거해도 겹쳐 재생(음성 뭉개짐)되지 않고 대기열에 쌓였다가 순서대로
   나온다. 이전 버전은 재생 중 새 요청을 무시(drop)했으나, 여러 카메라 동시 트리거 시 안내가 누락되지
   않도록 큐 방식으로 변경했다.
 
 ---
+
+## 보행자 엔티티 (`pedestrian_entity.py`) — 설계 결정
+
+`cane_person_assoc.py`는 스스로 밝히듯 **"이번 한 프레임"만** 본다. 지팡이 트랙과 사람
+트랙이 끝까지 별개라서 네 가지가 파생됐다: ① 지팡이가 한 프레임만 가려져도 사람 동반
+게이트가 막혀 디바운스가 리셋 ② 밀착한 두 사람 사이에서 지팡이 하나가 양쪽 모두와 짝지어짐
+③ 유동인구 비율 판정의 역설(위 절) ④ 지팡이를 놓치면 ROI 판정 자체가 사라짐.
+
+`PedestrianEntity`는 사람+지팡이를 하나로 묶고 상태를 프레임 사이에 유지해 넷을 한꺼번에
+닫는다. 근거는 **사람 트랙이 지팡이보다 훨씬 오래 산다**는 비대칭이다(실측 최장 생존
+360 vs 121프레임).
+
+- **순환을 피하는 게이트 배치가 핵심이다.** 래치의 **입력**은 정지 억제 + 움직임 게이트를
+  통과한 지팡이(`gated_cane_ids`)이고, **출력**은 사람 동반 게이트의 완화다. 사람 동반
+  게이트의 결과를 입력으로 쓰면 순환이 생기므로 쓰지 않는다. 부수 효과로 래치가 "이미 두
+  게이트를 통과한 지팡이"의 연장이 되어, 배경 오탐지가 래치되는 경로가 닫힌다.
+- **사람 트랙이 죽으면 엔티티도 죽는다.** `SimpleTracker`는 `max_age` 뒤 트랙을 제거하고
+  **같은 track_id를 부활시키지 않으므로**, 사람 소멸은 곧 영구 소멸이라 유예 기간을 두는
+  것이 의미가 없다 — 낡은 사람 bbox에 가상 지팡이를 계속 투영하는 위험만 남는다.
+  트래커의 coasting 자체가 이미 유예 기간이다.
+- **가상 지팡이 박스는 ROI 판정 코드를 바꾸지 않고 입력만 바꾼다.** 래치 시점의
+  "지팡이 ↔ 사람" 상대 오프셋(사람 bbox 크기로 정규화, 지수평활)을 현재 사람 bbox에
+  투영한다. 사람 발치를 그냥 쓰지 않는 이유는 흰 지팡이가 몸 앞으로 뻗어 짚어 접지점이
+  발보다 앞서기 때문이다 — 발치로 재면 트리거 타이밍이 뒤로 밀린다.
+- **★ 이 모듈의 시간 상수는 프레임이 아니라 `초`다.** 기존 게이트 상수
+  (`STATIC_CANE_SUPPRESS_FRAMES=24`, `SimpleTracker.max_age=10`)는 프레임 단위라
+  촬영 프레임레이트에 묶인다 — 평가 영상은 24~60 fps인데 **Pi 실측은 12.76 fps**라
+  같은 "30프레임"이 0.5초에서 2.4초까지 벌어져, **평가에서 고른 값이 실기기로 전이되지
+  않는다.** 이 함정은 실제로 값 선택을 바꿨다(`docs/model_evaluation_report_v3.md` §8-5).
+- **`VIRTUAL_MAX_SEC`(가상 박스 유지 상한)에는 반드시 상한이 있어야 한다.** 없으면 래치된
+  엔티티가 사람 트랙이 사는 내내 가상 박스를 뿜는다 — 실측에서 정답 구간 밖 오탐율이
+  0.0% → 39.2%, 헛트리거가 0 → 3으로 뛰었다. 값을 1.0초로 잡은 이유는 **트래커의
+  coasting(Pi에서 10프레임 = 0.78초)보다 길어야 기기에서 하는 일이 생기기** 때문이다.
+  늘리면 재현율과 오탐율이 **함께** 오른다(스윕 표는 리포트 §8-4, `--entity-virtual-sec`).
+- **효과는 전부 가상 박스에서 나온다** — `virtual_max_sec=0`(가상 박스만 끔)이 엔티티를
+  완전히 끈 것과 모든 영상·모든 임계값에서 같았다. 즉 ①(프레임 단위 연관 끊김)은 이론상
+  존재하지만 실측에서는 거의 발생하지 않는다. 지팡이가 탐지되고 두 게이트를 통과한
+  프레임에서는 사람 연관이 거의 항상 성립한다.
 
 ## 영상 녹화 (설계 결정)
 
@@ -406,7 +496,7 @@ make sync   PI=192.168.0.89
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py`, `gpio_controls.py`, `fan_controller.py`, `yolo_postprocess.py`, `simple_tracker.py`, `cane_person_assoc.py`, `foot_traffic_counter.py`, `camera_config.py` | Pi에 배포할 Python 소스 |
+| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py`, `gpio_controls.py`, `fan_controller.py`, `yolo_postprocess.py`, `simple_tracker.py`, `cane_person_assoc.py`, `pedestrian_entity.py`, `foot_traffic_counter.py`, `camera_config.py` | Pi에 배포할 Python 소스 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
