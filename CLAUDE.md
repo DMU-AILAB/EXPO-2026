@@ -30,14 +30,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `detect.py` | `WhiteCaneDetector` 클래스 |
 | `edgetpu_infer.py` | Coral Edge TPU Python 3.9 서브프로세스 워커 |
 | `camera_config.py` | `CameraProfile` 다중 카메라 프로필 (`camera_config.json`) — load/save/validate. 표준 라이브러리만 사용 |
-| `audio_trigger.py` | `StandaloneDispatcher` (디바운스/쿨다운) + `AudioPlayer` (큐+워커스레드 기반 순차 재생 — 여러 카메라가 공유해도 겹쳐 재생되지 않고 대기열에 쌓였다가 순서대로 나옴, mpg123/pygame) |
+| `audio_trigger.py` | `StandaloneDispatcher` (**사람 단위** 디바운스/쿨다운 + ROI 단위 최소간격) + `AudioPlayer` (큐+워커스레드 기반 순차 재생 — 여러 카메라가 공유해도 겹쳐 재생되지 않고 대기열에 쌓였다가 순서대로 나옴, mpg123/pygame) |
 | `apps/simulator/app.py` | Streamlit PC 시뮬레이터 — ROI 폴리곤 편집, 실시간 탐지, 오디오 트리거 |
 | `apps/simulator/detector.py` | 시뮬레이터용 탐지기 |
 | `apps/simulator/roi_manager.py` | `ROIManager` (Shapely Point-in-Polygon) + `ROI` dataclass (audio_file, `zone_type`: "trigger"/"exclude" 포함) |
 | `apps/simulator/trigger_dispatcher.py` | Streamlit 전용 디바운스/쿨다운 (시뮬레이터만 사용) |
 | `apps/roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + 오디오 미리듣기(`/api/audio/file`, audio_dir 밖 경로 차단) + `/api/stats/timeseries`(기간별 유동인구 시계열) + `/api/events`(최근 감지 이벤트), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
 | `apps/roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `dashboard/demo`의 디자인 토큰(accent/good/amber/danger, Pretendard)과 레이아웃(상단 탭 + 화면별 페이지)을 그대로 채용. 탭 4개: **모니터링**(카메라 상태 배지, 최근 감지 이벤트 표, 오늘 총 유동인구/지팡이 사용자 감지, ROI별 오디오 안내 테스트 재생) / **ROI 편집**("+ 새 구역 그리기" 명시적 토글로만 캔버스 클릭이 꼭짓점을 추가, 목록에서 기존 ROI 클릭 시 우측 폼에 로드되어 이름/안내텍스트/오디오/우선순위/구역유형 편집 및 삭제, 카메라 선택·설정·신뢰도 슬라이더 포함) / **통계**(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프) / **녹화**(수동 시작/중지 클립 목록·재생·다운로드) |
-| `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스**. 표준 라이브러리만 사용 |
+| `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스** · 안내 주체 매핑(`subject_for_canes`). 표준 라이브러리만 사용 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -208,6 +208,32 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   이후가 아니라 **raw detection 단계**(`backend.predict()` 직후, `tracker.update()` 이전)에서 지팡이+사람
   전체 클래스에 필터링한다 — 트래킹 이후 필터링은 EMA 스무딩/coasting 때문에 구역 경계에서 트랙이
   깜빡이는 문제가 있다. 기존 `rois.json`에 `zone_type` 필드가 없으면 `"trigger"`로 기본 처리되어 하위호환.
+- **안내 발사는 ROI가 아니라 사람(주체) 단위로 판정한다.** `StandaloneDispatcher`의
+  상태 키가 ROI 이름 하나뿐이던 시절에는 반대 방향의 결함이 둘 있었다 — ① A가 안내를
+  받은 뒤 쿨다운 안에 B가 ROI를 **통과해 나가면** 이탈 시 디바운스 기준점이 지워져
+  B에게 아무것도 안 나갔고(계속 서 있으면 쿨다운이 풀릴 때 나가므로, 완전 누락은
+  "쿨다운이 끝나기 전에 벗어나는 경우"다 — 걸어서 지나가는 보행자가 정확히 그 경우),
+  ② 머무는 사람에게는 쿨다운마다 같은 안내가 반복됐다. 주체는
+  `pedestrian_entity`의 `entity_id`(= 사람 한 명)이며 상태기계는
+  `OUT → PENDING → ANNOUNCED`, 이탈은 `exit_grace`(1초) 히스테리시스다.
+  - **시간 제한이 두 개이고 역할이 다르다.** `cooldown`(`rois.json`, 기본 10초)은
+    **주체별** 재안내 금지, `min_gap`(기본 3초)은 **ROI별** 스팸 방지다. 쿨다운을
+    ROI에 걸면 먼저 온 사람이 뒤에 오는 사람의 안내를 잡아먹는다. `min_gap`은
+    `cooldown`보다 크지 않게 잘린다(쿨다운을 낮춘 설정이 오히려 둔해지는 역전 방지).
+  - **PENDING은 최소간격에 걸려도 버리지 않는다** — 풀리는 즉시, 그 주체가 아직 ROI
+    안에 있을 때만 발사한다. 나간 뒤 안내는 소용이 없다.
+  - **발사되면 그 순간 ROI 안의 주체를 전부 ANNOUNCED로 표시한다.** 안내는 스피커로
+    공간에 나가므로 한 번이면 그 자리의 모두가 듣는다 — 주체별로 쿨다운만 풀면
+    3명 동시 진입에 같은 안내가 3번 큐에 쌓인다.
+  - **`dispatcher.update()`는 ROI마다 프레임당 정확히 한 번** 불러야 한다. 이탈
+    판정이 "이번 프레임에 없었다"에 달려 있어, 같은 ROI를 두 번 부르면 두 번째
+    호출이 첫 번째의 주체들을 이탈로 오인한다.
+- **래치는 엄격한 1:1, 안내 주체 식별은 느슨한 연관** — 목적이 다르다. 1:1 배정은
+  옆 사람이 덩달아 지팡이 사용자로 래치되는 것을 막는 데 꼭 필요하지만, 주체 식별에
+  그대로 쓰면 **탐지기가 같은 지팡이를 여러 박스로 내놓을 때** 밀린 박스가 트랙 id로
+  폴백해 한 사람이 여러 주체로 쪼개진다(test1 실측: 밀린 1,078프레임이 **전부** 사람
+  후보를 갖고 있었고, 한 사람이 15개 주체로 쪼개져 안내가 1회 → 3회). 그래서
+  `subject_for_canes()`가 밀린 지팡이도 가까운 짝부터 같은 엔티티에 붙인다.
 - **오디오는 큐 기반 순차 재생**(`audio_trigger.AudioPlayer`) — 카메라 여러 대가 하나의 `AudioPlayer`
   인스턴스를 공유해, 거의 동시에 트리거해도 겹쳐 재생(음성 뭉개짐)되지 않고 대기열에 쌓였다가 순서대로
   나온다. 이전 버전은 재생 중 새 요청을 무시(drop)했으나, 여러 카메라 동시 트리거 시 안내가 누락되지

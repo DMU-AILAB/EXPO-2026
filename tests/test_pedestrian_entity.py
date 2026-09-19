@@ -6,6 +6,7 @@ from pedestrian_entity import (
     EntityTracker,
     cane_user_person_ids,
     latched_cane_ids,
+    subject_for_canes,
     virtual_cane_boxes,
 )
 
@@ -232,6 +233,44 @@ def test_person_without_any_cane_is_still_an_entity():
 def test_cane_only_frame_creates_no_entity():
     tracker, clock = _tracker()
     assert tracker.update([_cane(10, 195)], {10}, clock.tick()) == []
+
+
+# --------------------------------------------------------------------- #
+# 안내 주체 매핑 — 래치는 엄격한 1:1, 주체 식별은 느슨한 연관
+# --------------------------------------------------------------------- #
+
+def test_extra_cane_boxes_of_one_person_map_to_the_same_subject():
+    """탐지기가 같은 지팡이를 여러 박스로 내놓아도 주체는 한 사람이다.
+
+    1:1 배정 결과를 그대로 주체로 쓰면 밀린 박스가 트랙 id로 폴백해 한 사람이
+    여러 주체로 쪼개지고, 같은 사람에게 안내가 반복된다 — test1 실측에서
+    1,078프레임분이 밀렸고 그 전부가 사람 후보를 가지고 있었다.
+    """
+    tracker, clock = _tracker()
+    tracks = [_person(1, 100), _cane(10, 195), _cane(11, 185)]
+    ents = tracker.update(tracks, {10, 11}, clock.tick())
+
+    bound = [e.cane_id for e in ents]
+    assert len(bound) == 1 and bound[0] in (10, 11)   # 배정은 여전히 1:1
+
+    owner = subject_for_canes(ents, tracks)
+    assert owner[10] == owner[11] == ents[0].entity_id
+
+
+def test_cane_with_no_person_nearby_has_no_subject():
+    """사람 후보가 없는 지팡이는 매핑에 없다 — 호출부가 트랙 id로 폴백한다."""
+    tracker, clock = _tracker()
+    tracks = [_person(1, 100), _cane(10, 195), _cane(99, 900, y1=600, y2=700)]
+    ents = tracker.update(tracks, {10, 99}, clock.tick())
+    assert 99 not in subject_for_canes(ents, tracks)
+
+
+def test_two_people_keep_separate_subjects():
+    tracker, clock = _tracker()
+    tracks = [_person(1, 100), _person(2, 400), _cane(10, 195), _cane(20, 495)]
+    ents = tracker.update(tracks, {10, 20}, clock.tick())
+    owner = subject_for_canes(ents, tracks)
+    assert owner[10] != owner[20]
 
 
 # --------------------------------------------------------------------- #

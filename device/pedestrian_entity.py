@@ -61,6 +61,7 @@ __all__ = [
     "latched_cane_ids",
     "cane_user_person_ids",
     "virtual_cane_boxes",
+    "subject_for_canes",
 ]
 
 # ★ 이 모듈의 시간 상수는 프레임이 아니라 **초**다.
@@ -314,6 +315,37 @@ def latched_cane_ids(entities: list[PedestrianEntity]) -> set[int]:
 def cane_user_person_ids(entities: list[PedestrianEntity]) -> set[int]:
     """래치된 지팡이 사용자의 **사람** track_id 집합 (유동인구 집계용)."""
     return {e.person_id for e in entities if e.is_cane_user}
+
+
+def subject_for_canes(entities: list[PedestrianEntity],
+                      tracks: list[dict]) -> dict[int, int]:
+    """지팡이 track_id -> **안내 주체**(entity_id).
+
+    ROI 안내를 사람 단위로 발사하려면 지팡이 박스가 누구 것인지 알아야 한다
+    (`audio_trigger.StandaloneDispatcher.update()`의 subject).
+
+    **1:1 배정 결과를 그대로 쓰면 안 된다.** 배정은 래치를 위한 것이라 사람 한 명당
+    지팡이 하나만 묶는데, 탐지기는 같은 지팡이를 여러 박스로 내놓는 일이 흔하다 —
+    test1 실측에서 통과한 지팡이 박스 중 **1,078프레임분이 배정에서 밀렸고, 그 전부가
+    사람 후보를 가지고 있었다.** 그것들을 트랙 id로 폴백시키면 한 사람이 15개 주체로
+    쪼개져 같은 사람에게 안내가 반복된다(실측 안내 1회 → 3회).
+
+    그래서 **래치는 엄격한 1:1, 주체 식별은 느슨한 연관**으로 나눈다. 1:1은 옆 사람이
+    덩달아 지팡이 사용자로 래치되는 것을 막는 데 꼭 필요하지만, "이 안내는 누구 것인가"는
+    가까운 사람에게 붙이면 충분하다.
+
+    사람 후보가 아예 없는 지팡이는 여기에 들어오지 않는다 — 호출부가 트랙 id로
+    폴백한다(사람 동반 게이트를 끈 경우에만 생기는 경로다).
+    """
+    owner = {e.cane_id: e.entity_id for e in entities if e.cane_id is not None}
+    person_entity = {e.person_id: e.entity_id for e in entities}
+
+    _canes, _people, cands = candidate_pairs(tracks)
+    # 가까운 짝부터 채워, 배정에서 밀린 지팡이도 가장 그럴듯한 사람에게 붙인다.
+    for pid, cid, gap, dist in sorted(cands, key=lambda c: (c[2], c[3])):
+        if cid not in owner and pid in person_entity:
+            owner[cid] = person_entity[pid]
+    return owner
 
 
 def virtual_cane_boxes(entities: list[PedestrianEntity]) -> list[tuple[int, list]]:

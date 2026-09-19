@@ -69,6 +69,7 @@ from simple_tracker import SimpleTracker
 # 터지는 편이 낫다.
 from pedestrian_entity import (
     EntityTracker,
+    subject_for_canes,
     cane_user_person_ids,
     latched_cane_ids,
     virtual_cane_boxes,
@@ -1560,13 +1561,26 @@ class CameraPipeline:
                 # 겹쳐 재생 대신 큐에 쌓였다가 순서대로 재생된다)
                 if roi_manager is not None:
                     fh, fw = frame.shape[:2]
-                    active: set[str] = set()
-                    # 판정 대상 = 게이트를 통과한 실제 지팡이 박스 + 지팡이 트랙이
-                    # 끊긴 래치 엔티티의 **가상 지팡이 박스**. 아래 판정 로직(하단
-                    # 10% strip -> check_region)은 건드리지 않고 입력만 늘린다.
-                    roi_boxes = [t["bbox"] for t in cane_tracks]
-                    roi_boxes += [bbox for _eid, bbox in virtual_cane_boxes(entities)]
-                    for x1, y1, x2, y2 in roi_boxes:
+                    # 판정 대상 = (주체, 박스) 쌍. 박스는 게이트를 통과한 실제 지팡이 +
+                    # 지팡이 트랙이 끊긴 래치 엔티티의 **가상 지팡이 박스**다.
+                    # **주체(subject)는 사람 한 명(entity_id)**이다 — 안내 발사를 ROI가
+                    # 아니라 사람 단위로 판정해야 지나가는 두 번째 사람이 안내를 놓치지
+                    # 않는다(`audio_trigger.StandaloneDispatcher` docstring 참고).
+                    cane_owner = subject_for_canes(entities, tracks)
+                    roi_targets = [
+                        # 엔티티가 없는 지팡이(사람 동반 게이트를 끈 경우)는 트랙 id로
+                        # 폴백한다 — 주체가 없다고 판정을 건너뛰면 그 경로가 죽는다.
+                        (cane_owner.get(t["track_id"], ("cane", t["track_id"])), t["bbox"])
+                        for t in cane_tracks
+                    ]
+                    roi_targets += [(eid, bbox)
+                                    for eid, bbox in virtual_cane_boxes(entities)]
+
+                    # ROI별로 이번 프레임에 안에 있는 주체를 모은다. dispatcher.update()는
+                    # ROI마다 **프레임당 정확히 한 번** 불러야 한다(이탈 판정이 "이번
+                    # 프레임에 없었다"에 달려 있다).
+                    present: dict[str, set] = {}
+                    for subject, (x1, y1, x2, y2) in roi_targets:
                         # 바운딩 박스 하단 10% 구간(지팡이 끝이 바닥에 닿는 지점)으로 ROI
                         # 교차 판정 — 박스 전체 중심점은 손으로 쥔 위치까지 포함해 실제
                         # 접지 지점과 어긋날 수 있다 (simulator/app.py와 동일 로직).
@@ -1576,33 +1590,37 @@ class CameraPipeline:
                             x2 / fw,  y2 / fh,
                         )
                         if roi:
-                            active.add(roi.name)
-                            if dispatcher.on_detected(roi.name, now):
-                                print(f"[TRIGGER][{tag}] ROI={roi.name}  audio={roi.audio_file or '없음'}")
-                                _roi_name = roi.name
-                                _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
-                                announcement = Announcement(
-                                    source="camera",
-                                    trigger_id=roi.name,
-                                    audio_file=roi.audio_file,
-                                    event_db=profile.traffic_db,
-                                    event_class=CLASS_NAMES[CANE_CLASS_ID],
-                                )
-                                if self.shared.announcements is not None:
-                                    self.shared.announcements.submit(announcement, on_done=_done_cb)
-                                else:
-                                    # Backward-compatible path for callers/tests that construct
-                                    # SharedResources directly without the shared router.
-                                    if self.shared.audio_player is not None:
-                                        self.shared.audio_player.play(roi.audio_file, on_done=_done_cb)
-                                    elif _done_cb is not None:
-                                        _done_cb()
-                                    if _EVENTS_AVAILABLE and profile.traffic_db:
-                                        log_event(profile.traffic_db, datetime.now().isoformat(),
-                                                  CLASS_NAMES[CANE_CLASS_ID], roi.name)
+                            present.setdefault(roi.name, set()).add(subject)
+
                     for r in roi_manager.rois:
-                        if r.name not in active:
-                            dispatcher.on_not_detected(r.name)
+                        if r.zone_type == "exclude":
+                            continue
+                        subject = dispatcher.update(r.name, present.get(r.name, ()), now)
+                        if subject is None:
+                            continue
+                        print(f"[TRIGGER][{tag}] ROI={r.name}  subject={subject}  "
+                              f"audio={r.audio_file or '없음'}")
+                        _roi_name = r.name
+                        _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
+                        announcement = Announcement(
+                            source="camera",
+                            trigger_id=r.name,
+                            audio_file=r.audio_file,
+                            event_db=profile.traffic_db,
+                            event_class=CLASS_NAMES[CANE_CLASS_ID],
+                        )
+                        if self.shared.announcements is not None:
+                            self.shared.announcements.submit(announcement, on_done=_done_cb)
+                        else:
+                            # Backward-compatible path for callers/tests that construct
+                            # SharedResources directly without the shared router.
+                            if self.shared.audio_player is not None:
+                                self.shared.audio_player.play(r.audio_file, on_done=_done_cb)
+                            elif _done_cb is not None:
+                                _done_cb()
+                            if _EVENTS_AVAILABLE and profile.traffic_db:
+                                log_event(profile.traffic_db, datetime.now().isoformat(),
+                                          CLASS_NAMES[CANE_CLASS_ID], r.name)
                     _draw_rois(frame, roi_manager, dispatcher, now)
 
                 cv2.putText(frame, f"[{tag}] FPS: {fps:.1f}", (10, 30),
