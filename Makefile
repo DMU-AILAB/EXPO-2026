@@ -45,6 +45,8 @@ DEPLOY_PY = \
 	device/replay_engine.py \
 	device/device_identity.py \
 	device/event_logger.py \
+	device/device_status.py \
+	device/device_metrics.py \
 	device/foot_traffic_counter.py \
 	device/camera_config.py \
 	device/detection_events.py \

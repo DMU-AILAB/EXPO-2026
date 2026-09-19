@@ -1409,6 +1409,7 @@ class CameraPipeline:
                 frame = _apply_rotation(frame, profile.rotation)
                 frame = _apply_channel_swap(frame, profile.swap_rb)
 
+                loop_t0 = time.time()
                 # ROI 크롭 추론 — 카메라가 고정이라 trigger 구역은 항상 같은 화면
                 # 좌표에 있다. 그 영역만 잘라 넣으면 같은 입력 해상도로 객체 픽셀
                 # 밀도가 올라간다(실측: 지팡이 탐지 108 → 148프레임/805). 크롭 박스는
@@ -1436,6 +1437,7 @@ class CameraPipeline:
                             d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
                     else:
                         dets = backend.predict(frame)
+                    infer_ms = (time.time() - loop_t0) * 1000.0
                 except Exception as e:
                     print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
                     break
@@ -1583,6 +1585,22 @@ class CameraPipeline:
 
                 cv2.putText(frame, f"[{tag}] FPS: {fps:.1f}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
+
+                # 하트비트용 런타임 지표 보고 — 프레임마다가 아니라 몇 초에 한 번.
+                # 값이 프레임마다 크게 튀므로 EMA로 눌러서 넘긴다.
+                if _METRICS_AVAILABLE and profile.traffic_db:
+                    loop_ms = (time.time() - loop_t0) * 1000.0
+                    infer_ema = (infer_ms if infer_ema is None
+                                 else infer_ema * 0.8 + infer_ms * 0.2)
+                    loop_ema = (loop_ms if loop_ema is None
+                                else loop_ema * 0.8 + loop_ms * 0.2)
+                    if now - last_metric_report >= REPORT_INTERVAL_SEC:
+                        last_metric_report = now
+                        report_metrics(profile.traffic_db, tag,
+                                       streaming=self.headless,
+                                       infer_ms=round(infer_ema, 1),
+                                       loop_ms=round(loop_ema, 1),
+                                       fps=round(fps, 1), now=now)
 
                 if self.headless:
                     assert mjpeg is not None

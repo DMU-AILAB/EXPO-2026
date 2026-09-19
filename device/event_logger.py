@@ -1,4 +1,9 @@
-"""event_logger.py — 감지 이벤트를 로컬에 쌓아두고 서버로 비동기 전송한다.
+"""event_logger.py — Pi에서 서버로 나가는 **아웃바운드 경로** 두 가지.
+
+- `EventSender` : 감지 이벤트를 로컬 outbox에 쌓아두고 비동기 전송
+- `HeartbeatSender` : "살아있음 + 현재 상태"를 주기적으로 전송
+
+둘을 한 모듈에 둔 이유는 신원 적재·HTTP 전송·백오프를 그대로 공유하기 때문이다.
 
 백엔드 명세가 `POST /api/events/ingest`를 정의하면서 함께 적어둔 공백을 메운다.
 
@@ -26,13 +31,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Union
 
-__all__ = ["queue_event", "pending_count", "EventSender"]
+__all__ = ["queue_event", "pending_count", "EventSender", "HeartbeatSender"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS event_outbox (
@@ -141,6 +147,9 @@ class EventSender(threading.Thread):
             if ident is None or not ident.is_usable():
                 backoff = self.interval
                 continue
+            if _identity_changed(self, ident):
+                backoff = self.interval           # 주소가 바뀌었으면 즉시 다시 시도
+                self.last_error = None
             try:
                 sent = self._flush(ident)
             except Exception as exc:              # noqa: BLE001
@@ -197,10 +206,7 @@ class EventSender(threading.Thread):
 
     def _post(self, url: str, api_key: str, payload: dict) -> tuple[bool, bool]:
         """(성공 여부, 재시도 무의미 여부)."""
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=body, method="POST", headers={
-            "Content-Type": "application/json", "X-API-Key": api_key,
-        })
+        return _send_json(url, api_key, payload, "POST", self.timeout, self)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 self.last_error = None
@@ -213,3 +219,152 @@ class EventSender(threading.Thread):
         except Exception as exc:                  # noqa: BLE001  (URLError·소켓 오류 등)
             self.last_error = str(exc)
             return False, False
+
+
+def _identity_changed(owner, ident) -> bool:
+    """신원이 바뀌었으면 True (백오프를 리셋하기 위한 것).
+
+    잘못된 주소로 실패해 백오프가 최대치까지 늘어난 뒤 관리자가 주소를 고쳐도,
+    리셋하지 않으면 그만큼(최대 2분) 더 기다린 뒤에야 다시 시도한다. 등록 직후
+    "왜 아무것도 안 올라오지?"가 되는 지점이라 실제로 걸린다.
+    """
+    sig = (ident.server_url, ident.api_key, ident.device_id)
+    changed = getattr(owner, "_ident_sig", None) not in (None, sig)
+    owner._ident_sig = sig
+    return changed
+
+
+def _send_json(url: str, api_key: str, payload: dict, method: str,
+               timeout: float, owner) -> tuple[bool, bool]:
+    """JSON 한 건 전송. (성공 여부, 재시도 무의미 여부)를 돌려주고 `owner.last_error`를 채운다."""
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method=method, headers={
+        "Content-Type": "application/json", "X-API-Key": api_key,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            owner.last_error = None
+            return 200 <= resp.status < 300, False
+    except urllib.error.HTTPError as exc:
+        owner.last_error = f"HTTP {exc.code}"
+        # 429(rate limit)는 잠시 뒤 다시 보내면 되지만, 나머지 4xx는 요청 자체가
+        # 잘못된 것이라 재시도가 무의미하다.
+        return False, 400 <= exc.code < 500 and exc.code != 429
+    except Exception as exc:                      # noqa: BLE001  (URLError·소켓 오류 등)
+        owner.last_error = str(exc)
+        return False, False
+
+
+class HeartbeatSender(threading.Thread):
+    """"나 살아있고 상태는 이렇다"를 주기적으로 서버에 올린다 (백엔드 명세 §13.1).
+
+    **이벤트 전송과 목적이 다르다.** 이벤트는 무언가 일어났을 때만 나가므로, 그것만
+    으로는 "조용한 것"과 "죽은 것"을 구분할 수 없다. 하트비트는 아무 일이 없어도
+    나가기 때문에 서버가 기기의 생사와 IP 변화를 안다 — Pi가 여러 대로 흩어지면
+    현장에 가보기 전에는 알 수 없던 것들이다.
+
+    실패해도 **버퍼에 쌓지 않는다.** 5분 전의 CPU 온도는 쓸모가 없고, 다음 주기에
+    최신 값이 다시 올라간다(이벤트와 반대되는 성질이라 outbox를 쓰지 않는다).
+    """
+
+    def __init__(self, db_path: Union[str, Path], identity_path: Union[str, Path],
+                 interval: float = 15.0, timeout: float = 5.0,
+                 camera_ids: Union[list, None] = None) -> None:
+        super().__init__(daemon=True, name="HeartbeatSender")
+        self.db_path = Path(db_path)
+        self.identity_path = Path(identity_path)
+        self.interval = interval
+        self.timeout = timeout
+        self.camera_ids = camera_ids or []
+        # 스레드 시작 전에도 build_payload()가 불린다(`/api/heartbeat/preview`).
+        from device_status import CpuSampler
+        self._cpu = CpuSampler()
+        self._stop = threading.Event()
+        self.last_error: str | None = None
+        self.last_sent_at: float | None = None
+        self.sent_total = 0
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def build_payload(self) -> dict:
+        """명세 §13.1의 하트비트 본문. 읽지 못한 항목은 None으로 둔다."""
+        from device_metrics import read_metrics
+        from device_status import read_status
+
+        st = read_status()
+        cpu = self._cpu.sample()
+        mem = None
+        if st["mem_total_mb"] is not None:
+            mem = {"used_mb": st["mem_used_mb"], "total_mb": st["mem_total_mb"]}
+
+        metrics = {m["camera_id"]: m for m in read_metrics(self.db_path)}
+        cams = []
+        for cid in (self.camera_ids or list(metrics)):
+            m = metrics.get(cid, {})
+            cams.append({
+                "id": cid,
+                "is_streaming": bool(m.get("streaming")),
+                "current_alert": None,
+                "today_detections": self._today_detections(),
+            })
+
+        # latency_ms(프레임 처리 시간)·npu_ms(추론 시간)는 탐지 루프에만 있는 값이라
+        # device_metrics를 거쳐 온다. 카메라가 여러 대면 가장 느린 쪽을 보고한다 —
+        # 평균을 내면 한 대가 막혀 있어도 정상으로 보인다.
+        live = [m for m in metrics.values() if not m.get("stale")]
+        npu = max((m["infer_ms"] for m in live if m.get("infer_ms")), default=None)
+        lat = max((m["loop_ms"] for m in live if m.get("loop_ms")), default=None)
+
+        return {
+            "status": "online",
+            "load_avg": st["load_avg"],
+            "cpu_percent": cpu,
+            "cpu_temp_c": st["cpu_temp_c"],
+            "memory": mem,
+            "uptime_seconds": st["uptime_seconds"],
+            "latency_ms": round(lat) if lat else None,
+            "npu_ms": round(npu) if npu else None,
+            "cameras": cams,
+        }
+
+    def _today_detections(self) -> int:
+        try:
+            from detection_events import read_recent_events
+            today = time.strftime("%Y-%m-%d")
+            return sum(1 for e in read_recent_events(self.db_path, limit=500)
+                       if str(e.get("ts", "")).startswith(today))
+        except Exception:                         # noqa: BLE001
+            return 0
+
+    def run(self) -> None:
+        from device_identity import load_identity
+
+        self._cpu.sample()                        # 기준점 — 첫 표본은 항상 None이다
+        backoff = self.interval
+        while not self._stop.is_set():
+            self._stop.wait(backoff)
+            if self._stop.is_set():
+                break
+            ident = load_identity(self.identity_path)
+            if ident is None or not ident.is_usable():
+                backoff = self.interval
+                continue
+            if _identity_changed(self, ident):
+                backoff = self.interval           # 주소가 바뀌었으면 즉시 다시 시도
+                self.last_error = None
+            try:
+                payload = self.build_payload()
+            except Exception as exc:              # noqa: BLE001
+                self.last_error = f"payload: {exc}"
+                backoff = self.interval
+                continue
+            ok, _fatal = _send_json(
+                f"{ident.server_url}/api/devices/me/heartbeat",
+                ident.api_key, payload, "PATCH", self.timeout, self)
+            if ok:
+                self.sent_total += 1
+                self.last_sent_at = time.time()
+                backoff = self.interval
+            else:
+                backoff = min(backoff * 2, 120.0)

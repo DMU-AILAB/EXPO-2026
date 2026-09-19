@@ -49,7 +49,9 @@ from camera_config import (  # noqa: E402
     load_camera_config, save_camera_config, validate_camera_config,
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
-from event_logger import EventSender, pending_count  # noqa: E402
+from event_logger import EventSender, HeartbeatSender, pending_count  # noqa: E402
+from device_metrics import read_metrics  # noqa: E402
+from device_status import read_status  # noqa: E402
 from device_identity import (  # noqa: E402
     APP_VERSION, DeviceIdentity, clear_identity, default_path, load_identity,
     save_identity,
@@ -129,42 +131,17 @@ def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
 
 
 def _read_device_status() -> dict:
-    """Pi 상태(가동시간/CPU온도/부하/메모리)를 표준 라이브러리 /proc, /sys 파일만으로 읽는다.
-    psutil 등 신규 의존성을 추가하지 않기 위해서다 (Pi에는 무거운 패키지를 최소화하는 방침).
-    Pi가 아닌 환경(개발 PC 등)에서 실행되면 해당 항목만 조용히 null로 빠진다."""
-    status: dict = {"uptime_seconds": None, "cpu_temp_c": None, "load_avg": None,
-                     "mem_used_mb": None, "mem_total_mb": None}
+    """Pi 상태(가동시간/CPU온도/부하/메모리).
 
-    try:
-        with open("/proc/uptime") as f:
-            status["uptime_seconds"] = float(f.read().split()[0])
-    except OSError:
-        pass
+    `/proc`·`/sys` 읽기는 `device/device_status.py`로 옮겼다 — 하트비트
+    (`event_logger.HeartbeatSender`)가 같은 값을 쓰면서 두 곳에 같은 코드가 생길
+    상황이었다.
 
-    try:
-        with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            status["cpu_temp_c"] = round(int(f.read().strip()) / 1000.0, 1)
-    except (OSError, ValueError):
-        pass
-
-    try:
-        status["load_avg"] = list(os.getloadavg())
-    except (OSError, AttributeError):
-        pass
-
-    try:
-        meminfo = {}
-        with open("/proc/meminfo") as f:
-            for line in f:
-                key, _, rest = line.partition(":")
-                meminfo[key] = int(rest.strip().split()[0])  # kB
-        if "MemTotal" in meminfo and "MemAvailable" in meminfo:
-            status["mem_total_mb"] = round(meminfo["MemTotal"] / 1024, 1)
-            status["mem_used_mb"] = round((meminfo["MemTotal"] - meminfo["MemAvailable"]) / 1024, 1)
-    except OSError:
-        pass
-
-    return status
+    **응답 스키마를 늘리지 말 것.** 백엔드의 기기 탐색(명세 §12)이 "이 200 응답의
+    바디 스키마"로 VisionGuide 기기 여부를 판별한다. 카메라별 런타임 지표는
+    `/api/metrics`로 따로 낸다.
+    """
+    return read_status()
 
 
 def _validate_rois(rois: list) -> list[str]:
@@ -535,16 +512,42 @@ def get_version():
     }
 
 
+@app.get("/api/metrics")
+def get_metrics():
+    """카메라별 런타임 지표(추론 시간·프레임 시간·스트리밍 여부).
+
+    탐지 프로세스가 sqlite로 넘겨준 값이다 — 보고가 끊기면 `stale`로 표시된다.
+    """
+    return {"cameras": read_metrics(traffic_db_path)}
+
+
 @app.get("/api/outbox")
 def get_outbox():
-    """서버 전송 대기 상태 — 연동이 멎었는지 확인하는 용도."""
-    sender = _sender["thread"]
+    """서버 연동 상태 — 이벤트 전송과 하트비트가 살아있는지 한눈에 본다."""
+    ev, hb = _sender["thread"], _sender["heartbeat"]
     return {
-        "pending": pending_count(traffic_db_path),
-        "sent_total": sender.sent_total if sender else 0,
-        "last_error": sender.last_error if sender else None,
-        "running": bool(sender and sender.is_alive()),
+        "events": {
+            "pending": pending_count(traffic_db_path),
+            "sent_total": ev.sent_total if ev else 0,
+            "last_error": ev.last_error if ev else None,
+            "running": bool(ev and ev.is_alive()),
+        },
+        "heartbeat": {
+            "sent_total": hb.sent_total if hb else 0,
+            "last_sent_at": hb.last_sent_at if hb else None,
+            "last_error": hb.last_error if hb else None,
+            "running": bool(hb and hb.is_alive()),
+        },
     }
+
+
+@app.get("/api/heartbeat/preview")
+def heartbeat_preview():
+    """지금 보낼 하트비트 본문 — 서버 없이도 필드가 채워지는지 확인하는 용도."""
+    hb = _sender["heartbeat"]
+    if hb is None:
+        raise HTTPException(503, "하트비트 스레드가 없습니다")
+    return hb.build_payload()
 
 
 @app.get("/api/identity")
@@ -602,7 +605,7 @@ def _video_dirs() -> list[Path]:
 
 
 _replay = {"session": None}
-_sender: dict = {"thread": None}
+_sender: dict = {"thread": None, "heartbeat": None}
 
 
 class ReplayStart(BaseModel):
@@ -811,6 +814,12 @@ if __name__ == "__main__":
     # 올라가야 하고, 그때 프로세스를 재시작하게 만들면 안 된다.
     _sender["thread"] = EventSender(traffic_db_path, identity_path)
     _sender["thread"].start()
+    # 하트비트는 이벤트와 목적이 다르다 — 아무 일이 없어도 나가야 서버가 "조용한
+    # 것"과 "죽은 것"을 구분한다(기기가 여러 대로 흩어지면 특히).
+    _sender["heartbeat"] = HeartbeatSender(
+        traffic_db_path, identity_path,
+        camera_ids=[p.id for p in load_camera_config(camera_config_path)])
+    _sender["heartbeat"].start()
 
     _ident = load_identity(identity_path)
     print(f"[ROI Editor] 기기 신원: "

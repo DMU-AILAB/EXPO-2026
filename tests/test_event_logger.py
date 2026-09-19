@@ -149,3 +149,107 @@ def test_4xx_is_dropped_instead_of_blocking_the_queue(tmp_path, server):
     s.start()
     assert _drain(s, db), "4xx 이벤트가 큐를 막았다"
     s.stop()
+
+
+# --------------------------------------------------------------------- #
+# 하트비트 — 이벤트와 달리 "아무 일이 없어도" 나간다
+# --------------------------------------------------------------------- #
+
+class _PatchHandler(_Handler):
+    def do_PATCH(self):
+        self.do_POST()
+
+
+@pytest.fixture
+def patch_server():
+    _Handler.received = []
+    _Handler.status = 200
+    httpd = HTTPServer(("127.0.0.1", 0), _PatchHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+def test_heartbeat_payload_has_the_spec_fields(tmp_path):
+    from device_metrics import report
+    from event_logger import HeartbeatSender
+
+    db = tmp_path / "t.db"
+    report(db, "cam0", streaming=True, infer_ms=48.0, loop_ms=78.0, fps=12.8)
+    hb = HeartbeatSender(db, tmp_path / "id.json", camera_ids=["cam0"])
+    hb._cpu.sample()                      # 기준점
+    p = hb.build_payload()
+
+    assert p["status"] == "online"
+    assert set(p) >= {"load_avg", "cpu_temp_c", "memory", "uptime_seconds",
+                      "latency_ms", "npu_ms", "cameras", "cpu_percent"}
+    assert p["npu_ms"] == 48 and p["latency_ms"] == 78
+    assert p["cameras"][0]["id"] == "cam0"
+    assert p["cameras"][0]["is_streaming"] is True
+
+
+def test_heartbeat_reports_slowest_camera_not_the_average(tmp_path):
+    """평균을 내면 한 대가 막혀 있어도 정상으로 보인다."""
+    from device_metrics import report
+    from event_logger import HeartbeatSender
+
+    db = tmp_path / "t.db"
+    report(db, "cam0", streaming=True, infer_ms=40.0, loop_ms=60.0)
+    report(db, "cam1", streaming=True, infer_ms=200.0, loop_ms=300.0)
+    p = HeartbeatSender(db, tmp_path / "id.json").build_payload()
+    assert p["npu_ms"] == 200 and p["latency_ms"] == 300
+
+
+def test_heartbeat_is_sent_with_patch_and_api_key(tmp_path, patch_server):
+    from event_logger import HeartbeatSender
+
+    httpd, url = patch_server
+    db = tmp_path / "t.db"
+    hb = HeartbeatSender(db, _identity(tmp_path, url), interval=0.05)
+    hb.start()
+    for _ in range(40):
+        if hb.sent_total:
+            break
+        threading.Event().wait(0.1)
+    hb.stop()
+
+    assert hb.sent_total >= 1, f"하트비트가 나가지 않았다: {hb.last_error}"
+    key, path, body = _Handler.received[0]
+    assert key == "K1"
+    assert path == "/api/devices/me/heartbeat"
+    assert body["status"] == "online"
+
+
+def test_heartbeat_is_not_sent_without_identity(tmp_path, patch_server):
+    from event_logger import HeartbeatSender
+
+    hb = HeartbeatSender(tmp_path / "t.db", tmp_path / "없음.json", interval=0.05)
+    hb.start()
+    threading.Event().wait(0.4)
+    hb.stop()
+    assert hb.sent_total == 0
+    assert _Handler.received == []
+
+
+def test_backoff_resets_when_the_server_url_is_corrected(tmp_path, patch_server):
+    """잘못된 주소로 백오프가 늘어난 뒤 주소를 고치면 **즉시** 다시 시도해야 한다.
+
+    리셋하지 않으면 등록 직후 최대 2분간 아무것도 올라오지 않아
+    "왜 연동이 안 되지?"가 된다.
+    """
+    from event_logger import HeartbeatSender
+
+    httpd, url = patch_server
+    ident = _identity(tmp_path, "http://127.0.0.1:1")     # 아무도 없는 포트
+    hb = HeartbeatSender(tmp_path / "t.db", ident, interval=0.05, timeout=0.2)
+    hb.start()
+    threading.Event().wait(1.2)                           # 백오프가 늘어날 시간
+    assert hb.sent_total == 0
+
+    save_identity(ident, DeviceIdentity(device_id="d", api_key="K1", server_url=url))
+    for _ in range(20):                                   # 2초 안에 나가야 한다
+        if hb.sent_total:
+            break
+        threading.Event().wait(0.1)
+    hb.stop()
+    assert hb.sent_total >= 1, "주소를 고쳤는데도 백오프가 풀리지 않았다"
