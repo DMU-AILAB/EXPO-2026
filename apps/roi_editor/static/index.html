@@ -1065,6 +1065,8 @@ main {
           <input type="checkbox" id="replayLoop"> 반복
         </label>
         <button class="btn btn-save" id="replayStartBtn">▶ 재생</button>
+        <button class="btn" id="replayPauseBtn" disabled>⏸ 일시정지</button>
+        <button class="btn" id="replayStepBtn" disabled>⏭ 다음 프레임</button>
         <button class="btn" id="replayStopBtn">■ 정지</button>
       </div>
     </div>
@@ -2604,8 +2606,33 @@ document.getElementById('replayStartBtn').addEventListener('click', async () => 
     `<img src="/api/replay/stream.mjpg?t=${Date.now()}" alt="검증 재생">`;
   document.getElementById('replayEventsBody').innerHTML =
     '<tr><td colspan="3" class="roi-meta" style="padding:12px">아직 없음</td></tr>';
+  setReplayPaused(false);
+  document.getElementById('replayPauseBtn').disabled = false;
   if (replayPoll) clearInterval(replayPoll);
   replayPoll = setInterval(pollReplay, 500);
+});
+
+// 일시정지 상태를 버튼 라벨과 "다음 프레임" 활성화에 반영한다. 한 프레임 넘기기는
+// 멈춘 상태에서만 의미가 있으므로 재생 중엔 비활성으로 둔다.
+function setReplayPaused(paused) {
+  document.getElementById('replayPauseBtn').textContent =
+    paused ? '▶ 계속' : '⏸ 일시정지';
+  document.getElementById('replayStepBtn').disabled = !paused;
+}
+
+document.getElementById('replayPauseBtn').addEventListener('click', async () => {
+  const res = await fetch('/api/replay/pause', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) { setStatus('재생 중인 세션이 없습니다', 'warn'); return; }
+  const { paused } = await res.json();
+  setReplayPaused(paused);
+  setStatus(paused ? '일시정지 — ⏭ 로 한 프레임씩 볼 수 있습니다' : '재생 중', 'ok');
+});
+
+document.getElementById('replayStepBtn').addEventListener('click', async () => {
+  await fetch('/api/replay/step', { method: 'POST' });
 });
 
 document.getElementById('replayStopBtn').addEventListener('click', async () => {
@@ -2613,6 +2640,9 @@ document.getElementById('replayStopBtn').addEventListener('click', async () => {
   if (replayPoll) { clearInterval(replayPoll); replayPoll = null; }
   document.getElementById('replayViewWrap').innerHTML =
     '<div class="replay-empty">정지했습니다.</div>';
+  document.getElementById('replayPauseBtn').disabled = true;
+  document.getElementById('replayStepBtn').disabled = true;
+  setReplayPaused(false);
   setStatus('재생 정지', 'ok');
 });
 
@@ -2632,10 +2662,13 @@ async function pollReplay() {
   document.getElementById('rcLatched').textContent = c.latched ?? 0;
   document.getElementById('rcAnn').innerHTML = `<strong>${c.announcements ?? 0}</strong>`;
 
+  if (typeof st.paused === 'boolean') setReplayPaused(st.paused);
+
   const pct = st.total ? Math.min(100, (st.frame / st.total) * 100) : 0;
   document.getElementById('replayBar').style.width = pct + '%';
   document.getElementById('replayProgressText').textContent =
-    `${st.frame}/${st.total || '?'} 프레임 · ${st.fps}fps` + (st.done ? ' · 완료' : '');
+    `${st.frame}/${st.total || '?'} 프레임 · ${st.fps}fps`
+    + (st.done ? ' · 완료' : st.paused ? ' · 일시정지' : '');
 
   const ev = st.events || [];
   document.getElementById('replayEventsBody').innerHTML = ev.length
@@ -2643,7 +2676,11 @@ async function pollReplay() {
         `<tr><td>${e.t}s</td><td>${e.roi}</td><td>${e.subject}</td></tr>`).join('')
     : '<tr><td colspan="3" class="roi-meta" style="padding:12px">아직 없음</td></tr>';
 
-  if (st.done && replayPoll) { clearInterval(replayPoll); replayPoll = null; }
+  if (st.done && replayPoll) {
+    clearInterval(replayPoll); replayPoll = null;
+    document.getElementById('replayPauseBtn').disabled = true;
+    document.getElementById('replayStepBtn').disabled = true;
+  }
 }
 
 /* ================================================================

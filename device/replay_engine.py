@@ -63,10 +63,15 @@ class ReplaySession:
         self._lock = threading.Lock()
         self._jpeg: bytes | None = None
         self._stop = threading.Event()
+        # set = 일시정지. `_step`은 정지 상태에서 딱 한 프레임만 진행시킨다 —
+        # 가상 지팡이 박스가 맞는 자리인지 같은 것은 멈춰 놓고 봐야 판단이 된다.
+        self._paused = threading.Event()
+        self._step = threading.Event()
         self._thread: threading.Thread | None = None
         self._error: str | None = None
         self._done = False
 
+        self._wall0 = 0.0        # 속도 기준 벽시계 — 일시정지만큼 뒤로 민다
         self.total_frames = 0
         self.frame_index = 0
         self.fps = 0.0
@@ -85,8 +90,24 @@ class ReplaySession:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def set_paused(self, paused: bool) -> None:
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
+
+    def toggle_pause(self) -> bool:
+        self.set_paused(not self._paused.is_set())
+        return self._paused.is_set()
+
+    def step_once(self) -> None:
+        """일시정지 상태에서 한 프레임만 진행한다. 재생 중이면 아무 일도 없다."""
+        if self._paused.is_set():
+            self._step.set()
+
     def stop(self) -> None:
         self._stop.set()
+        self._paused.clear()      # 정지 대기 중인 루프를 깨운다
         t = self._thread
         if t is not None and t.is_alive():
             t.join(timeout=3.0)
@@ -100,6 +121,7 @@ class ReplaySession:
         return {
             "video": Path(self.video).name,
             "running": self._thread is not None and not self._done,
+            "paused": self._paused.is_set(),
             "done": self._done,
             "error": self._error,
             "frame": self.frame_index,
@@ -153,14 +175,19 @@ class ReplaySession:
                                     _draw_rois, _filter_excluded)
 
         idx = 0
-        wall0 = time.time()
+        self._wall0 = time.time()
         while not self._stop.is_set():
+            if self._paused.is_set():
+                self._wait_while_paused()
+                if self._stop.is_set():
+                    break
+
             ok, frame = cap.read()
             if not ok:
                 if self.loop:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     idx = 0
-                    wall0 = time.time()
+                    self._wall0 = time.time()
                     continue
                 break
 
@@ -197,10 +224,24 @@ class ReplaySession:
             idx += 1
 
             # 재생 속도 맞추기 — 추론이 영상보다 느리면 그냥 최대 속도로 흐른다.
-            target = wall0 + (idx / self.fps) / self.speed if self.fps else 0
+            target = self._wall0 + (idx / self.fps) / self.speed if self.fps else 0
             delay = target - time.time()
             if delay > 0:
                 self._stop.wait(delay)
+
+    def _wait_while_paused(self) -> None:
+        """정지가 풀리거나 한 프레임 요청이 올 때까지 기다린다.
+
+        멈춰 있던 시간만큼 속도 기준점(`_wall0`)을 밀어준다 — 안 밀면 재개 순간
+        밀린 시간을 따라잡으려고 영상이 몰아쳐 흐른다.
+        """
+        paused_at = time.time()
+        while self._paused.is_set() and not self._stop.is_set():
+            if self._step.is_set():
+                self._step.clear()
+                break                       # 한 프레임만 진행하고 다시 멈춘다
+            self._stop.wait(0.05)
+        self._wall0 += time.time() - paused_at
 
     def _judge_rois(self, frame, g, now: float) -> None:
         """배포의 ROI 판정 루프와 같은 순서 — 하단 10% strip, ROI별 프레임당 1회."""

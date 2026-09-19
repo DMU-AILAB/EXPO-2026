@@ -592,6 +592,32 @@ def replay_start(req: ReplayStart):
             "rois": len(roi_manager.rois) if roi_manager else 0}
 
 
+class ReplayPause(BaseModel):
+    # None이면 토글. UI 버튼 하나로 정지/재개를 오가는 게 자연스럽다.
+    paused: bool | None = None
+
+
+@app.post("/api/replay/pause")
+def replay_pause(req: ReplayPause):
+    s = _replay["session"]
+    if s is None:
+        raise HTTPException(409, "재생 중인 세션이 없습니다")
+    if req.paused is None:
+        return {"paused": s.toggle_pause()}
+    s.set_paused(req.paused)
+    return {"paused": req.paused}
+
+
+@app.post("/api/replay/step")
+def replay_step():
+    """일시정지 상태에서 한 프레임만 진행 — 멈춰 놓고 들여다보기 위한 것."""
+    s = _replay["session"]
+    if s is None:
+        raise HTTPException(409, "재생 중인 세션이 없습니다")
+    s.step_once()
+    return {"ok": True}
+
+
 @app.post("/api/replay/stop")
 def replay_stop():
     s = _replay["session"]
