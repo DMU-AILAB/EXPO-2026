@@ -83,16 +83,20 @@ def test_filter_excluded_drops_detections_inside_exclude_zone():
 
 def test_build_camera_backend_opencv_forced(monkeypatch):
     calls = []
-    monkeypatch.setattr(m, "_OpenCVSource", lambda source: calls.append(("opencv", source)))
-    monkeypatch.setattr(m, "_Picamera2Source", lambda camera_num=0: calls.append(("picamera2", camera_num)))
+    monkeypatch.setattr(m, "_OpenCVSource",
+                        lambda source, capture_preset="auto", tag="": calls.append(("opencv", source)))
+    monkeypatch.setattr(m, "_Picamera2Source",
+                        lambda camera_num=0, capture_preset="auto": calls.append(("picamera2", camera_num)))
     m.build_camera("3", backend="opencv")
     assert calls == [("opencv", "3")]
 
 
 def test_build_camera_backend_picamera2_forced(monkeypatch):
     calls = []
-    monkeypatch.setattr(m, "_OpenCVSource", lambda source: calls.append(("opencv", source)))
-    monkeypatch.setattr(m, "_Picamera2Source", lambda camera_num=0: calls.append(("picamera2", camera_num)))
+    monkeypatch.setattr(m, "_OpenCVSource",
+                        lambda source, capture_preset="auto", tag="": calls.append(("opencv", source)))
+    monkeypatch.setattr(m, "_Picamera2Source",
+                        lambda camera_num=0, capture_preset="auto": calls.append(("picamera2", camera_num)))
     m.build_camera("1", backend="picamera2")
     assert calls == [("picamera2", 1)]
 
