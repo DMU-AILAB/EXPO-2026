@@ -668,18 +668,32 @@ main {
 }
 </style>
 <style>
+/* 다른 탭(통계·녹화·모니터링)과 같은 "스크롤되는 문서" 규칙을 쓴다. 이게 없으면
+   .page.active의 flex 컬럼이 그대로 적용돼 콘텐츠가 가장자리에 붙고 하단이 잘린다.
+   아래 여백을 좌우보다 크게 준 이유: 영상이 뷰포트 바닥과 딱 맞으면 어디까지가
+   화면이고 어디부터가 상태바인지 구분이 안 돼 읽기 어렵다. */
+#page-replay.active { display:block; overflow-y:auto;
+  padding: 24px var(--content-pad-x) 40px; }
 .replay-controls { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
 .replay-controls label { display:flex; flex-direction:column; gap:4px;
   font-size:12px; color:var(--ink-soft); }
 .replay-controls select, .replay-controls input[type=range] { min-width:130px; }
 .replay-check { flex-direction:row !important; align-items:center; gap:6px !important; }
 .replay-body { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; }
-@media (max-width: 900px) { .replay-body { grid-template-columns:1fr; } }
+@media (max-width: 900px) {
+  .replay-body { grid-template-columns:1fr; }
+  #page-replay.active { padding: 16px 16px 32px; }
+  .replay-view, .replay-view img { max-height:46vh; }
+}
+/* 영상은 세로로도 상한을 둔다 — 16:9라 가로 폭만 맞추면 큰 화면에서 세로가 넘쳐
+   컨트롤과 카운터가 함께 보이지 않는다. object-fit:contain으로 비율은 유지한다. */
 .replay-view { background:#000; border-radius:10px; overflow:hidden;
-  min-height:240px; display:flex; align-items:center; justify-content:center; }
-.replay-view img { width:100%; display:block; }
+  min-height:240px; max-height:62vh;
+  display:flex; align-items:center; justify-content:center; }
+.replay-view img { width:100%; max-height:62vh; object-fit:contain; display:block; }
 .replay-empty { color:#888; font-size:13px; padding:60px 20px; text-align:center; }
-.replay-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; }
+.replay-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:10px;
+  padding-bottom:4px; }
 .replay-legend i { display:inline-block; width:10px; height:10px; border-radius:2px;
   margin-right:5px; vertical-align:middle; }
 .replay-stats { padding:14px; }
