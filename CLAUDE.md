@@ -532,6 +532,14 @@ make install-service
 make ping
 ```
 
+**서비스 재시작은 반드시 `systemctl`로** — `pkill`로는 되살아나지 않는다. 앱이
+SIGTERM을 받아 **정상 종료(exit 0)** 하므로 `Restart=on-failure`가 걸리지 않는다.
+`make install-service`가 유닛 4개에 대한 `systemctl start/stop/restart/status`만
+비밀번호 없이 허용하는 sudoers(`deploy/visionguide-systemctl.sudoers`)를 함께 설치하므로,
+그 뒤로는 `make restart PI="ip1 ip2 ip3"`로 여러 대를 한 번에 재시작할 수 있다.
+**`enable`/`disable`은 일부러 넣지 않았다** — 실수로 자동 시작을 꺼버리면 현장에 가야
+복구된다.
+
 **임베디드 headless 운영 흐름**: `make install-service` 이후로는 Pi IP 접속이 최초 ROI/오디오 설정(또는 재설정) 시에만 필요합니다.
 탐지·음성 안내(`visionguide-device.service`)는 네트워크 연결 여부와 무관하게 기기 단독으로 부팅 시 자동 시작되며,
 `roi_editor`(포트 5000, `visionguide-roi-editor.service`)에서 저장한 `rois.json` 변경은 최대 2초 내 재시작 없이 자동 반영됩니다

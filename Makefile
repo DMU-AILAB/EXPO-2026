@@ -65,7 +65,7 @@ DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v10_nolkc/weights \
 	runs/white_cane_v11_v26n/weights
 
-.PHONY: deploy sync sync-roi-editor deps deps-roi-editor check-time setup-ntp \
+.PHONY: deploy sync sync-roi-editor deps deps-roi-editor check-time setup-ntp restart \
         install-edgetpu-py39 setup-pi-python310 install-service \
         run-headless run run-roi-editor ping help
 
@@ -82,6 +82,7 @@ help:
 	@echo "  make run             [PI=<ip>]  Pi에서 디스플레이 모드 실행"
 	@echo "  make install-service [PI=<ip>]  systemd 등록 — 부팅 시 완전 자동/headless 구동"
 	@echo "  make ping            [PI=<ip>]  Pi 연결 및 환경 확인"
+	@echo "  make restart         [PI=<ip>]  서비스 재시작 (탐지 + ROI 에디터)"
 	@echo "  make check-time      [PI=<ip>]  시계 동기(NTP) 상태 확인"
 	@echo "  make setup-ntp       [PI=<ip>]  시계 동기 활성화"
 	@echo ""
@@ -107,7 +108,7 @@ help:
 # **한 대가 실패해도 나머지는 계속한다** — 3대 중 1대만 꺼져 있을 때 나머지 2대 배포까지
 # 막을 이유가 없다. 대신 마지막에 실패한 기기를 모아 보여주고 종료코드를 낸다.
 MULTI_TARGETS = deploy sync sync-roi-editor deps deps-roi-editor \
-                install-service ping check-time setup-ntp
+                install-service ping check-time setup-ntp restart
 
 ifneq ($(word 2,$(PI)),)
 
@@ -212,9 +213,10 @@ run:
 ## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-uhubctl.sudoers deploy/auto_ap.sh $(USER)@$(PI):/tmp/
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(USER)@$(PI):/tmp/
 	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
 	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(USER)/visionguide/deploy/"
+	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g' /tmp/visionguide-systemctl.sudoers && sudo install -m 440 /tmp/visionguide-systemctl.sudoers /etc/sudoers.d/visionguide-systemctl && sudo visudo -cf /etc/sudoers.d/visionguide-systemctl"
 	ssh $(USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."
 	@echo "       확인: ssh $(USER)@$(PI) sudo systemctl status visionguide-device"
@@ -223,6 +225,15 @@ install-service:
 ## Pi 연결 및 배포 환경 확인
 ping:
 	ssh $(USER)@$(PI) "$(PI_PYTHON) --version && ls ~/visionguide/ 2>/dev/null || echo '(아직 배포 전)'"
+
+## 서비스 재시작 (install-service가 넣는 visionguide-systemctl sudoers로 비밀번호 없이)
+##
+## **pkill로는 되살아나지 않는다** — 앱이 SIGTERM을 정상 종료(exit 0)로 처리하므로
+## `Restart=on-failure`가 걸리지 않는다. 실기기 검증에서 실제로 걸린 지점이다.
+restart:
+	ssh $(USER)@$(PI) "sudo systemctl restart visionguide-device && sudo systemctl restart visionguide-roi-editor"
+	@sleep 3
+	@ssh $(USER)@$(PI) "systemctl is-active visionguide-device visionguide-roi-editor | tr '\n' ' '; echo"
 
 ## Pi 시계 동기 상태 확인
 ##
