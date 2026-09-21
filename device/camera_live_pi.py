@@ -1210,6 +1210,20 @@ MOVED_MIN_DIAG_RATIO = 0.02
 # 루프) 것을 막기 위한 백오프.
 RESTART_BACKOFF_SEC = 5.0
 
+# ── 적응형 추론 / FPS 상한 ──────────────────────────────────────────
+# 프레임 처리 속도를 10 FPS로 제한해 Pi 발열을 억제한다.
+TARGET_FPS             = 10
+_FRAME_INTERVAL        = 1.0 / TARGET_FPS        # 0.10 s
+
+# 연속 두 프레임 그레이스케일 평균 픽셀 차이가 이 값 미만이면 "정적 장면"으로 판단해
+# 이번 프레임 추론을 건너뛰고 직전 탐지 결과를 재사용한다.
+# 낮출수록 민감(조금만 움직여도 추론), 높일수록 둔감(많이 움직여야 추론).
+MOTION_DIFF_THRESHOLD  = 8.0
+
+# 움직임이 없어도 이 프레임 수마다 강제로 추론 1회 실행 — 장면 변화를 반드시
+# 인식할 수 있게 보장한다 (10 FPS 기준 30프레임 = 3초).
+MOTION_FORCE_INTERVAL  = 30
+
 
 @dataclass
 class SharedResources:
@@ -1365,7 +1379,12 @@ class CameraPipeline:
             last_roi_check = time.time()
 
             prev_t = time.time()
+            _prev_gray: np.ndarray | None = None   # 움직임 감지용 직전 프레임
+            _motion_skip_cnt = 0                    # 마지막 추론 이후 건너뛴 프레임 수
+            _cached_dets: list[dict] = []           # 추론 건너뜀 시 재사용할 탐지 결과
+
             while not (self._local_stop.is_set() or self.shared.stop_event.is_set()):
+                _loop_t = time.time()               # FPS 상한 계산 기준점
                 ok, frame = camera.read()
                 if not ok:
                     print(f"[INFO][{tag}] 영상 종료 또는 카메라 연결 끊김")
@@ -1390,20 +1409,36 @@ class CameraPipeline:
                         print(f"[INFO][{tag}] ROI 크롭 추론 비활성 — trigger 구역이 없거나 "
                               f"크롭이 프레임에 비해 충분히 작지 않음")
 
-                try:
-                    if roi_crop:
-                        cx0, cy0, cx1, cy1 = roi_crop
-                        dets = backend.predict(frame[cy0:cy1, cx0:cx1])
-                        # 좌표를 원본 프레임 기준으로 되돌린다 — 이후의 ROI 판별과
-                        # 움직임 게이트가 전체 프레임 좌표계를 전제한다.
-                        for d in dets:
-                            bx1, by1, bx2, by2 = d["bbox"]
-                            d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
-                    else:
-                        dets = backend.predict(frame)
-                except Exception as e:
-                    print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
-                    break
+                # 움직임 감지 — 정적 장면에서 추론을 건너뛰어 CPU 부하를 줄인다.
+                _gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                _motion_skip_cnt += 1
+                if _prev_gray is not None:
+                    _diff = float(cv2.absdiff(_gray, _prev_gray).mean())
+                    _has_motion = (_diff >= MOTION_DIFF_THRESHOLD
+                                   or _motion_skip_cnt >= MOTION_FORCE_INTERVAL)
+                else:
+                    _has_motion = True  # 첫 프레임은 항상 추론
+                _prev_gray = _gray
+
+                if _has_motion:
+                    try:
+                        if roi_crop:
+                            cx0, cy0, cx1, cy1 = roi_crop
+                            dets = backend.predict(frame[cy0:cy1, cx0:cx1])
+                            # 좌표를 원본 프레임 기준으로 되돌린다 — 이후의 ROI 판별과
+                            # 움직임 게이트가 전체 프레임 좌표계를 전제한다.
+                            for d in dets:
+                                bx1, by1, bx2, by2 = d["bbox"]
+                                d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
+                        else:
+                            dets = backend.predict(frame)
+                    except Exception as e:
+                        print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
+                        break
+                    _cached_dets = dets
+                    _motion_skip_cnt = 0
+                else:
+                    dets = list(_cached_dets)  # 정적 장면 — 직전 결과 재사용
 
                 # 지형지물 오탐지 방지용 제외구역 — 트래킹 이전에 raw detection 단계에서
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
@@ -1559,6 +1594,11 @@ class CameraPipeline:
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         self.shared.stop_event.set()
                         break
+
+                # 10 FPS 상한 — 남은 시간만큼 대기 (stop_event로 즉시 깨어날 수 있음)
+                _remaining = _FRAME_INTERVAL - (time.time() - _loop_t)
+                if _remaining > 0:
+                    self._local_stop.wait(_remaining)
 
         finally:
             # setup 도중 실패했을 수 있어(backend/camera/mjpeg 중 일부만 만들어진 채

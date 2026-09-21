@@ -5,7 +5,7 @@ Wants=NetworkManager.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash /home/__USER__/visionguide/deploy/auto_ap.sh
+ExecStart=/bin/bash /home/ailab/visionguide/deploy/auto_ap.sh
 RemainAfterExit=no
 TimeoutStartSec=90
 
