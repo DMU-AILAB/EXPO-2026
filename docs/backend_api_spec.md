@@ -27,7 +27,13 @@
 - **백엔드 API**: `8000`
 - **CORS 허용 Origin**: `http://localhost:5173` (Vite 개발 서버), 배포 도메인
 
-### 1.3 전역 응답 형식
+### 1.3 아키텍처 제약 사항 (Constraints)
+
+> [!WARNING]
+> **Single Worker 전용 구조 (Scale-out 금지)**
+> 본 백엔드 서버는 `_heartbeat_buffer` 인메모리 버퍼와 `APScheduler` 인스턴스를 통해 무결성을 유지하고 있습니다. `uvicorn --workers N` 옵션이나 다중 서버 인스턴스로 실행할 경우, 1) 버퍼 파편화로 인한 SQLite 쓰기 불일치 발생, 2) 동일한 재부팅 명령이 N번 중복 스케줄링되는 치명적 부작용이 발생합니다. 반드시 단일 워커(Single Worker) 환경에서 구동해야 합니다.
+
+### 1.4 전역 응답 형식
 
 ```json
 // 성공 (단건)
