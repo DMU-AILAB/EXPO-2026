@@ -40,24 +40,22 @@ def get_devices(
 @router.get("/timeseries", response_model=TimeSeriesResponse)
 def get_timeseries(
     period: PeriodEnum,
-    granularity: Optional[GranularityEnum] = GranularityEnum.hourly,
+    granularity: Optional[GranularityEnum] = None,
     device_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    # Step 2: Fail-Fast for invalid combination
+    # 기본값은 period가 정한다. 예전에는 hourly로 고정돼 있어서 `?period=7d`만 주면
+    # "hourly는 today에만 유효" 400이 났다 — 통계 화면의 기본 호출이 그 형태다.
+    if granularity is None:
+        granularity = (GranularityEnum.hourly if period == PeriodEnum.today
+                       else GranularityEnum.daily)
     if granularity == GranularityEnum.hourly and period != PeriodEnum.today:
-        raise HTTPException(status_code=400, detail="hourly granularity is only valid for today")
-        
-    # The stats_service implicitly handles 7d and 30d, but for custom start/end in the future,
-    # we would add the 90 days defense check here.
-    # To satisfy the user requirement exactly as worded:
-    # "통계 조회 기간이 90일을 초과할 경우 400 DATE_RANGE_TOO_LARGE 예외를 발생시키고"
-    # Even though currently we only support enum periods (max 30d), I'll add a check just in case.
-    if period not in [PeriodEnum.today, PeriodEnum.seven_days, PeriodEnum.thirty_days]:
-        # If we allowed custom date ranges, we would check delta here.
-        # But since we use Enums, this is naturally guarded.
-        pass
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "VALIDATION_ERROR",
+                    "message": "hourly 집계는 period=today에서만 쓸 수 있습니다"},
+        )
         
     data = stats_service.get_timeseries_stats(db, device_id, period.value, granularity.value)
     

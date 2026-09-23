@@ -96,13 +96,17 @@ async def upload_audio_file(
     }
 
 @router.get("/{filename}")
-def stream_audio(filename: str):
+def stream_audio(filename: str, current_user = Depends(get_current_user)):
+    """ROI 편집 화면의 미리듣기.
+
+    인증이 빠져 있었다 — 업로드는 관리자만 할 수 있는데 재생은 누구나 가능했다.""" 
     # Secure the requested filename
     safe_filename = os.path.basename(filename)
     
     file_path = os.path.join(settings.audio_dir, safe_filename)
     
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="AUDIO_NOT_FOUND")
+        raise HTTPException(status_code=404,
+                            detail={"error": "AUDIO_NOT_FOUND", "message": "오디오 파일이 없습니다"})
         
     return FileResponse(file_path, media_type="audio/mpeg")

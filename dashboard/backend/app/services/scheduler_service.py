@@ -37,10 +37,20 @@ async def execute_reboot(device_id: str):
     finally:
         db.close()
 
+def to_apscheduler_dow(days: list[int]) -> str:
+    """명세의 요일 번호(0=일 … 6=토)를 APScheduler의 것(0=월 … 6=일)으로 옮긴다.
+
+    **두 체계가 하루 어긋난다.** 변환 없이 넘기면 "월·수·금 03:00"으로 등록한 예약이
+    화·목·토에 실행된다(실측: `[1,3,5]` → Tue/Thu/Sat). 재부팅은 조용히 하루 밀려도
+    눈에 잘 띄지 않아서 현장에서 오래 남는 종류의 버그다.
+    """
+    return ",".join(str((d - 1) % 7) for d in sorted(set(days)))
+
+
 def add_schedule_job(schedule_id: int, device_id: str, days: list[int], hour: int):
     """새로운 예약을 스케줄러에 등록합니다. Step 4 방어: schedule_id 명시적 바인딩"""
-    day_of_week = ",".join(map(str, days)) # e.g. "1,3,5" for Mon, Wed, Fri
-    
+    day_of_week = to_apscheduler_dow(days)   # 명세 0=일 → APScheduler 0=월
+
     # job_id를 schedule_id 문자열로 고정하여 추후 제어 가능하게 함
     job_id = str(schedule_id)
     

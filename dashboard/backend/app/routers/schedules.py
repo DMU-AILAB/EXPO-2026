@@ -26,7 +26,7 @@ class ScheduleUpdate(BaseModel):
 def get_schedules(device_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
-        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "ok": False})
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
         
     schedules = db.query(ScheduledReboot).filter(ScheduledReboot.device_id == device_id).all()
     
@@ -53,12 +53,15 @@ def get_schedules(device_id: str, db: Session = Depends(get_db), current_user = 
 def create_schedule(device_id: str, payload: ScheduleCreate, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
-        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "ok": False})
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
         
+    # days는 0=일 … 6=토 (명세 §11). APScheduler는 0=월이라 서버가 변환한다.
     if not payload.days or not all(0 <= d <= 6 for d in payload.days):
-        raise HTTPException(status_code=400, detail={"error": "VALIDATION_ERROR", "ok": False})
+        raise HTTPException(status_code=400, detail={
+            "error": "VALIDATION_ERROR", "message": "days는 0~6 사이 정수가 최소 1개 필요합니다"})
     if not (0 <= payload.hour <= 23):
-        raise HTTPException(status_code=400, detail={"error": "VALIDATION_ERROR", "ok": False})
+        raise HTTPException(status_code=400, detail={
+            "error": "VALIDATION_ERROR", "message": "hour는 0~23이어야 합니다"})
         
     new_schedule = ScheduledReboot(
         device_id=device_id,
@@ -93,16 +96,18 @@ def create_schedule(device_id: str, payload: ScheduleCreate, db: Session = Depen
 def update_schedule(device_id: str, schedule_id: int, payload: ScheduleUpdate, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     sched = db.query(ScheduledReboot).filter(ScheduledReboot.id == schedule_id, ScheduledReboot.device_id == device_id).first()
     if not sched:
-        raise HTTPException(status_code=404, detail={"error": "SCHEDULE_NOT_FOUND", "ok": False})
+        raise HTTPException(status_code=404, detail={"error": "SCHEDULE_NOT_FOUND", "message": "예약을 찾을 수 없습니다"})
         
     if payload.days is not None:
         if not payload.days or not all(0 <= d <= 6 for d in payload.days):
-            raise HTTPException(status_code=400, detail={"error": "VALIDATION_ERROR", "ok": False})
+            raise HTTPException(status_code=400, detail={
+                "error": "VALIDATION_ERROR", "message": "days는 0~6 사이 정수가 최소 1개 필요합니다"})
         sched.days = json.dumps(list(set(payload.days)))
         
     if payload.hour is not None:
         if not (0 <= payload.hour <= 23):
-            raise HTTPException(status_code=400, detail={"error": "VALIDATION_ERROR", "ok": False})
+            raise HTTPException(status_code=400, detail={
+                "error": "VALIDATION_ERROR", "message": "hour는 0~23이어야 합니다"})
         sched.hour = payload.hour
         
     if payload.is_enabled is not None:
@@ -135,7 +140,7 @@ def update_schedule(device_id: str, schedule_id: int, payload: ScheduleUpdate, d
 def delete_schedule(device_id: str, schedule_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     sched = db.query(ScheduledReboot).filter(ScheduledReboot.id == schedule_id, ScheduledReboot.device_id == device_id).first()
     if not sched:
-        raise HTTPException(status_code=404, detail={"error": "SCHEDULE_NOT_FOUND", "ok": False})
+        raise HTTPException(status_code=404, detail={"error": "SCHEDULE_NOT_FOUND", "message": "예약을 찾을 수 없습니다"})
         
     # 메모리 스케줄러에서 삭제 (Step 4 방어)
     remove_schedule_job(sched.id)

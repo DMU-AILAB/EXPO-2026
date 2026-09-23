@@ -1,30 +1,20 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from ..models.stats import HourlyStats
 from ..models.event import DetectionEvent
 from ..models.device import Device, DeviceStatusCache
+from ..utils.timeutil import KST, kst_day_bounds_utc, naive_utc_to_kst, utcnow
 
+# 시간대 변환은 utils/timeutil.py 한 곳에서만 한다 — 같은 변환이 이 파일 안에만
+# 세 벌 복붙돼 있었고, `datetime.utcnow()`(naive)와 KST 변환이 섞여 있었다.
 def get_today_kst_bounds():
-    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-    start_of_today = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_of_today = start_of_today + timedelta(days=1) - timedelta(microseconds=1)
-    # Convert back to naive UTC for DB comparison, assuming DB stores naive UTC
-    # Or, assuming DB stores everything based on server time, we will assume standard UTC storage
-    return start_of_today.astimezone(timezone.utc).replace(tzinfo=None), end_of_today.astimezone(timezone.utc).replace(tzinfo=None)
+    return kst_day_bounds_utc()
 
 def get_summary_stats(db: Session, date_str: str = None):
     # Determine bounds based on date_str (defaults to today)
-    start_utc, end_utc = get_today_kst_bounds()
-    if date_str:
-        try:
-            dt_kst = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=ZoneInfo("Asia/Seoul"))
-            start_utc = dt_kst.astimezone(timezone.utc).replace(tzinfo=None)
-            end_utc = (dt_kst + timedelta(days=1) - timedelta(microseconds=1)).astimezone(timezone.utc).replace(tzinfo=None)
-        except ValueError:
-            pass
+    start_utc, end_utc = kst_day_bounds_utc(date_str)
 
     # Hourly stats aggregation for the period
     stats_agg = db.query(
@@ -50,7 +40,7 @@ def get_summary_stats(db: Session, date_str: str = None):
 
     # Device Status Cache (Filtered by recently updated to exclude stale data)
     # Let's say updated within the last 5 minutes (300 seconds)
-    five_mins_ago = datetime.utcnow() - timedelta(minutes=5)
+    five_mins_ago = utcnow() - timedelta(minutes=5)
     
     device_metrics = db.query(
         func.count(DeviceStatusCache.device_id).label("online_count"),
@@ -105,14 +95,7 @@ def get_summary_stats(db: Session, date_str: str = None):
     }
 
 def get_device_stats(db: Session, date_str: str = None):
-    start_utc, end_utc = get_today_kst_bounds()
-    if date_str:
-        try:
-            dt_kst = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=ZoneInfo("Asia/Seoul"))
-            start_utc = dt_kst.astimezone(timezone.utc).replace(tzinfo=None)
-            end_utc = (dt_kst + timedelta(days=1) - timedelta(microseconds=1)).astimezone(timezone.utc).replace(tzinfo=None)
-        except ValueError:
-            pass
+    start_utc, end_utc = kst_day_bounds_utc(date_str)
 
     results = db.query(
         HourlyStats.device_id,
@@ -139,7 +122,7 @@ def get_device_stats(db: Session, date_str: str = None):
     return device_stats
 
 def get_timeseries_stats(db: Session, device_id: str, period: str, granularity: str):
-    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    now_kst = datetime.now(KST)
     padded_dict = {}
 
     if granularity == "hourly":
@@ -167,8 +150,7 @@ def get_timeseries_stats(db: Session, device_id: str, period: str, granularity: 
         
         for row in db_results:
             # hour is stored in naive UTC. Need to convert to KST hour
-            dt_utc = row.hour.replace(tzinfo=timezone.utc)
-            kst_hour = dt_utc.astimezone(ZoneInfo("Asia/Seoul")).hour
+            kst_hour = naive_utc_to_kst(row.hour).hour
             
             if kst_hour in padded_dict:
                 padded_dict[kst_hour]["total_count"] += (row.ft or 0)
@@ -203,8 +185,7 @@ def get_timeseries_stats(db: Session, device_id: str, period: str, granularity: 
         db_results = query.group_by(HourlyStats.hour).all()
         
         for row in db_results:
-            dt_utc = row.hour.replace(tzinfo=timezone.utc)
-            kst_date_str = dt_utc.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+            kst_date_str = naive_utc_to_kst(row.hour).strftime("%Y-%m-%d")
             
             if kst_date_str in padded_dict:
                 padded_dict[kst_date_str]["total_count"] += (row.ft or 0)
