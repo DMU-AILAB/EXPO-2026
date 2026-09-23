@@ -9,11 +9,14 @@
     python roi_editor/server.py --rois /home/ailab/visionguide/rois.json --port 5000
 """
 import argparse
+import hmac
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -115,6 +118,21 @@ def _safe_filename(name: str) -> str:
     return name or "audio.mp3"
 
 
+def _all_traffic_dbs() -> list[Path]:
+    """등록된 모든 카메라의 traffic_db + 기본 경로.
+
+    **카메라마다 db 파일이 다를 수 있다**(`CameraProfile.traffic_db`). 기본 경로 하나만
+    보면 다른 카메라의 이벤트 outbox·런타임 지표가 통째로 보이지 않는다 — 그 상태에서는
+    이벤트가 쌓이기만 하고 서버로 영영 올라가지 않는다.
+    """
+    paths: dict[str, Path] = {str(traffic_db_path): traffic_db_path}
+    for profile in load_camera_config(camera_config_path):
+        value = Path(profile.traffic_db)
+        resolved = value if value.is_absolute() else (rois_path.parent / value).resolve()
+        paths.setdefault(str(resolved), resolved)
+    return list(paths.values())
+
+
 def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
     """?camera=<id> 쿼리가 있으면 해당 카메라 프로필의 roi_config/traffic_db 경로를,
     없으면 기존 단일-카메라 기본 경로를 반환한다 (완전 하위호환).
@@ -207,20 +225,30 @@ async def get_stats(camera: str | None = None):
 
 
 _STATS_PERIOD_DAYS = {"7d": 7, "30d": 30}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @app.get("/api/stats/timeseries")
-async def get_stats_timeseries(camera: str | None = None, period: str = "today"):
+async def get_stats_timeseries(camera: str | None = None, period: str = "today",
+                               date: str | None = None):
     """유동인구 시계열 — period=today면 시간대별(0~23시), 7d/30d면 일별 합계.
 
     ROI별 집계는 현재 DB 스키마(카메라 단위 시간별 합계만 기록)로는 낼 수 없어 대상 외.
+
+    `date`(YYYY-MM-DD)는 **시간대별 조회에만** 쓴다 — 서버가 꺼져 있던 구간을 나중에
+    메우기 위한 것이다. 이 값이 없으면 수집기가 볼 수 있는 시간별 데이터는 '오늘'뿐이라,
+    중단된 시간대는 영영 0으로 남는다. `read_hourly_breakdown()`이 이미 date를 받으므로
+    여기서는 넘겨주기만 하면 된다.
     """
     if period != "today" and period not in _STATS_PERIOD_DAYS:
         raise HTTPException(status_code=400, detail=f"unknown period: {period}")
+    if date is not None and not _DATE_RE.match(date):
+        raise HTTPException(status_code=400, detail="date는 YYYY-MM-DD 형식이어야 합니다")
 
     path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
     if period == "today":
-        return {"granularity": "hour", "points": read_hourly_breakdown(path)}
+        return {"granularity": "hour", "points": read_hourly_breakdown(path, date),
+                "date": date}
     days = _STATS_PERIOD_DAYS[period]
     return {"granularity": "day", "points": read_range_daily_totals(path, days)}
 
@@ -512,13 +540,90 @@ def get_version():
     }
 
 
+# ---------------------------------------------------------------------------
+# 기기 제어 — 대시보드의 "서비스 재시작" · "재부팅" 버튼
+#
+# 이 두 라우트가 없어서 백엔드의 제어 기능이 통째로 동작하지 않았다(없는 경로를
+# 부르고 예외를 삼켜 항상 202를 돌려주고 있었다).
+#
+# **인증을 붙인다.** 포트 5000의 나머지 라우트는 무인증이지만, 그건 같은 망에서
+# 설정을 바꾸는 것까지고 재부팅은 서비스 자체를 끊는다. 서버가 등록 때 심어둔
+# api_key를 헤더로 받아 대조한다 — 신원이 없는 기기는 아직 아무에게도 속하지 않았
+# 으므로 제어를 거부한다(현장 설치 중 오작동 방지).
+#
+# 재시작은 반드시 systemctl로 한다. CLAUDE.md에 적힌 대로 앱이 SIGTERM에 정상
+# 종료(exit 0)하므로 pkill로는 Restart=on-failure가 걸리지 않아 되살아나지 않는다.
+# ---------------------------------------------------------------------------
+
+def _require_device_key(request: Request) -> None:
+    """서버가 심어둔 api_key와 대조한다."""
+    ident = load_identity(identity_path)
+    if ident is None or not ident.api_key:
+        raise HTTPException(403, "기기가 아직 서버에 등록되지 않아 원격 제어를 받지 않습니다")
+    presented = request.headers.get("x-device-key", "")
+    # 길이가 달라도 같은 시간이 걸리도록 비교한다.
+    if not hmac.compare_digest(presented, ident.api_key):
+        raise HTTPException(401, "device key가 일치하지 않습니다")
+
+
+def _run_privileged(cmd: list[str], what: str) -> None:
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=10)
+    except FileNotFoundError as exc:
+        raise HTTPException(500, f"{what} 실패: 명령을 찾을 수 없습니다 ({cmd[0]})") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(504, f"{what} 실패: 명령이 응답하지 않습니다") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        # sudoers가 안 깔린 기기에서 비밀번호를 기다리다 실패하는 경우가 흔하다.
+        raise HTTPException(500, f"{what} 실패: {stderr or exc}") from exc
+
+
+@app.post("/api/service/restart")
+def post_service_restart(request: Request):
+    """탐지 서비스만 재시작한다 — 라즈베리파이 재부팅이 아니다."""
+    _require_device_key(request)
+    _run_privileged(["sudo", "-n", "/usr/bin/systemctl", "restart", "visionguide-device"],
+                    "서비스 재시작")
+    print("[INFO] 원격 요청으로 visionguide-device 재시작")
+    return {"ok": True, "service": "visionguide-device"}
+
+
+@app.post("/api/system/reboot")
+def post_system_reboot(request: Request, confirm: bool = False):
+    """기기를 재부팅한다.
+
+    `confirm=true`를 요구하는 이유: 이 Pi는 PoE 어댑터가 GPIO3를 점유해 **버튼으로
+    다시 켤 수 없다**. 재부팅이 실패해 꺼진 채로 남으면 현장에 가야 한다.
+    """
+    _require_device_key(request)
+    if not confirm:
+        raise HTTPException(400, "재부팅은 confirm=true가 필요합니다")
+    # 응답을 먼저 돌려주고 끊기도록 짧게 지연시킨다 — 즉시 죽으면 호출자는 연결
+    # 리셋만 보고 성공인지 실패인지 구분할 수 없다.
+    threading.Timer(
+        1.0,
+        lambda: subprocess.run(["sudo", "-n", "/usr/sbin/reboot"], capture_output=True),
+    ).start()
+    print("[INFO] 원격 요청으로 재부팅 예약(1초 후)")
+    return {"ok": True, "rebooting_in_sec": 1}
+
+
 @app.get("/api/metrics")
 def get_metrics():
     """카메라별 런타임 지표(추론 시간·프레임 시간·스트리밍 여부).
 
     탐지 프로세스가 sqlite로 넘겨준 값이다 — 보고가 끊기면 `stale`로 표시된다.
     """
-    return {"cameras": read_metrics(traffic_db_path)}
+    cameras = []
+    seen: set[str] = set()
+    for path in _all_traffic_dbs():
+        for row in read_metrics(path):
+            if row.get("camera_id") in seen:
+                continue
+            seen.add(row.get("camera_id"))
+            cameras.append(row)
+    return {"cameras": cameras}
 
 
 @app.get("/api/outbox")
@@ -527,7 +632,7 @@ def get_outbox():
     ev, hb = _sender["thread"], _sender["heartbeat"]
     return {
         "events": {
-            "pending": pending_count(traffic_db_path),
+            "pending": sum(pending_count(p) for p in _all_traffic_dbs()),
             "sent_total": ev.sent_total if ev else 0,
             "last_error": ev.last_error if ev else None,
             "running": bool(ev and ev.is_alive()),
@@ -812,12 +917,12 @@ if __name__ == "__main__":
     print(f"[ROI Editor] camera_config: {camera_config_path}")
     # 이벤트 전송 스레드. 신원이 없어도 띄운다 — 등록되는 순간 밀린 것이 함께
     # 올라가야 하고, 그때 프로세스를 재시작하게 만들면 안 된다.
-    _sender["thread"] = EventSender(traffic_db_path, identity_path)
+    _sender["thread"] = EventSender(_all_traffic_dbs, identity_path)
     _sender["thread"].start()
     # 하트비트는 이벤트와 목적이 다르다 — 아무 일이 없어도 나가야 서버가 "조용한
     # 것"과 "죽은 것"을 구분한다(기기가 여러 대로 흩어지면 특히).
     _sender["heartbeat"] = HeartbeatSender(
-        traffic_db_path, identity_path,
+        _all_traffic_dbs, identity_path,
         camera_ids=[p.id for p in load_camera_config(camera_config_path)])
     _sender["heartbeat"].start()
 

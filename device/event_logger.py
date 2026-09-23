@@ -36,7 +36,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Union
+from typing import Callable, Union
 
 __all__ = ["queue_event", "pending_count", "EventSender", "HeartbeatSender"]
 
@@ -119,16 +119,46 @@ class EventSender(threading.Thread):
     함께 올라간다.
     """
 
-    def __init__(self, db_path: Union[str, Path], identity_path: Union[str, Path],
+    def __init__(self, db_path: Union[str, Path, "Callable[[], list]"],
+                 identity_path: Union[str, Path],
                  interval: float = 5.0, timeout: float = 5.0) -> None:
         super().__init__(daemon=True, name="EventSender")
-        self.db_path = Path(db_path)
+        # **카메라마다 traffic_db가 다를 수 있다.** 한 파일만 비우면 다른 카메라의
+        # 이벤트는 outbox에 쌓이기만 하고 영영 전송되지 않는다(실제로 그 상태였다).
+        # 경로 목록을 매번 다시 구할 수 있도록 **콜러블도 받는다** — 카메라 프로필은
+        # 런타임에 핫리로드되므로 시작 시점의 목록을 붙들면 새 카메라를 놓친다.
+        self._db_source = db_path
         self.identity_path = Path(identity_path)
         self.interval = interval
         self.timeout = timeout
         self._stop = threading.Event()
         self.last_error: str | None = None
         self.sent_total = 0
+
+    @property
+    def db_path(self) -> Path:
+        """하위호환 — 단일 경로를 기대하는 기존 호출부(테스트 포함)를 위한 것."""
+        paths = self.db_paths()
+        return paths[0] if paths else Path(".")
+
+    def db_paths(self) -> list[Path]:
+        """지금 비워야 할 outbox 파일 목록. 중복은 제거한다."""
+        source = self._db_source
+        if callable(source):
+            try:
+                raw = source()
+            except Exception as exc:              # noqa: BLE001
+                self.last_error = f"db 경로 조회 실패: {exc}"
+                return []
+        else:
+            raw = source
+        if isinstance(raw, (str, Path)):
+            raw = [raw]
+        seen: dict[str, Path] = {}
+        for item in raw or []:
+            path = Path(item)
+            seen.setdefault(str(path), path)
+        return list(seen.values())
 
     def stop(self) -> None:
         self._stop.set()
@@ -166,7 +196,21 @@ class EventSender(threading.Thread):
     # ------------------------------------------------------------------ #
 
     def _flush(self, ident) -> int:
-        conn = _connect(self.db_path)
+        """모든 outbox 파일을 돌며 비운다."""
+        total = 0
+        errors: list[str] = []
+        for path in self.db_paths():
+            try:
+                total += self._flush_one(path, ident)
+            except Exception as exc:              # noqa: BLE001
+                # 한 카메라의 db가 깨졌다고 나머지까지 멈추면 안 된다.
+                errors.append(f"{path.name}: {exc}")
+        if errors:
+            self.last_error = "; ".join(errors)
+        return total
+
+    def _flush_one(self, db_path: Path, ident) -> int:
+        conn = _connect(db_path)
         try:
             rows = conn.execute(
                 "SELECT id, ts, camera_id, roi_name, class_name, confidence,"
@@ -255,11 +299,14 @@ class HeartbeatSender(threading.Thread):
     최신 값이 다시 올라간다(이벤트와 반대되는 성질이라 outbox를 쓰지 않는다).
     """
 
-    def __init__(self, db_path: Union[str, Path], identity_path: Union[str, Path],
+    def __init__(self, db_path: Union[str, Path, "Callable[[], list]"],
+                 identity_path: Union[str, Path],
                  interval: float = 15.0, timeout: float = 5.0,
                  camera_ids: Union[list, None] = None) -> None:
         super().__init__(daemon=True, name="HeartbeatSender")
-        self.db_path = Path(db_path)
+        # EventSender와 같은 이유로 여러 경로를 받는다 — 카메라마다 traffic_db가
+        # 다르면 지표와 오늘 집계가 한 카메라 것만 보인다.
+        self._db_source = db_path
         self.identity_path = Path(identity_path)
         self.interval = interval
         self.timeout = timeout
@@ -271,6 +318,29 @@ class HeartbeatSender(threading.Thread):
         self.last_error: str | None = None
         self.last_sent_at: float | None = None
         self.sent_total = 0
+
+    @property
+    def db_path(self) -> Path:
+        """하위호환 — 단일 경로를 기대하는 호출부를 위한 것."""
+        paths = self.db_paths()
+        return paths[0] if paths else Path(".")
+
+    def db_paths(self) -> list[Path]:
+        source = self._db_source
+        if callable(source):
+            try:
+                raw = source()
+            except Exception:                     # noqa: BLE001
+                return []
+        else:
+            raw = source
+        if isinstance(raw, (str, Path)):
+            raw = [raw]
+        seen: dict[str, Path] = {}
+        for item in raw or []:
+            path = Path(item)
+            seen.setdefault(str(path), path)
+        return list(seen.values())
 
     def stop(self) -> None:
         self._stop.set()
@@ -286,7 +356,10 @@ class HeartbeatSender(threading.Thread):
         if st["mem_total_mb"] is not None:
             mem = {"used_mb": st["mem_used_mb"], "total_mb": st["mem_total_mb"]}
 
-        metrics = {m["camera_id"]: m for m in read_metrics(self.db_path)}
+        metrics = {}
+        for _db in self.db_paths():
+            for _m in read_metrics(_db):
+                metrics.setdefault(_m["camera_id"], _m)
         # **설정에 있는 카메라와 실제로 도는 카메라의 합집합**을 보고한다.
         #
         # 실측에서 갈렸다: `camera_config.json`에는 cam0/cam1이 있는데 기기는 레거시
@@ -330,8 +403,11 @@ class HeartbeatSender(threading.Thread):
         try:
             from detection_events import read_recent_events
             today = time.strftime("%Y-%m-%d")
-            return sum(1 for e in read_recent_events(self.db_path, limit=500)
-                       if str(e.get("ts", "")).startswith(today))
+            total = 0
+            for _db in self.db_paths():
+                total += sum(1 for e in read_recent_events(_db, limit=500)
+                             if str(e.get("ts", "")).startswith(today))
+            return total
         except Exception:                         # noqa: BLE001
             return 0
 

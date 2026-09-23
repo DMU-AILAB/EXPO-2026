@@ -9,7 +9,13 @@
 #
 # 여기 없는 동작(enable/disable/edit 등)은 여전히 비밀번호가 필요하다 — 설치·해제는
 # 자주 하지 않고, 실수로 자동 시작을 꺼버리면 현장에 가야 복구된다.
+#
+# `reboot`는 대시보드의 원격 재부팅(`POST /api/system/reboot`)이 쓴다. 인자가 없는
+# 고정 명령이라 범위를 넓히지 않는다 — shutdown -h(전원이 끊긴 채로 남음)는 넣지
+# 않았다. 이 Pi는 PoE 어댑터가 GPIO3를 막고 있어 **버튼으로 다시 켤 수 없고**,
+# 완전 종료되면 현장에 가서 전원을 껐다 켜야 한다.
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-device, /usr/bin/systemctl stop visionguide-device, /usr/bin/systemctl restart visionguide-device, /usr/bin/systemctl status visionguide-device
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-roi-editor, /usr/bin/systemctl stop visionguide-roi-editor, /usr/bin/systemctl restart visionguide-roi-editor, /usr/bin/systemctl status visionguide-roi-editor
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-controls, /usr/bin/systemctl stop visionguide-controls, /usr/bin/systemctl restart visionguide-controls, /usr/bin/systemctl status visionguide-controls
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-fan, /usr/bin/systemctl stop visionguide-fan, /usr/bin/systemctl restart visionguide-fan, /usr/bin/systemctl status visionguide-fan
+__USER__ ALL=(root) NOPASSWD: /usr/sbin/reboot
