@@ -1,21 +1,21 @@
 import { useState } from 'react'
 import { Maximize2, Camera, Unlink, AlertTriangle } from 'lucide-react'
 
-const STREAM_IMAGES = [
-  '/streams/entrance.jpg',
-  '/streams/hall.jpg',
-  '/streams/street.jpg',
-  '/streams/campus.jpg',
-  '/streams/night.jpg',
-  '/streams/elevator.jpg',
-]
-import { mockDevices } from '../data/mockData'
-import type { Device, Camera as CameraType } from '../types'
+import * as api from '../api'
+import { streamUrl } from '../components/StreamThumbnail'
+import { useApi } from '../hooks/useApi'
+import type { Device, CameraBrief } from '../types'
 
 interface StreamItem {
   device: Device
-  camera: CameraType
+  camera: CameraBrief
 }
+
+/**
+ * ⚠ 백엔드 MJPEG 프록시는 **동시 5개**로 제한된다(명세 §14). 4×4 레이아웃으로
+ * 16칸을 한꺼번에 열면 6번째부터 503이 난다 — 화면에서 미리 알려준다.
+ */
+const PROXY_LIMIT = 5
 
 const LAYOUTS = [
   { label: '1×1', cols: 1 },
@@ -26,8 +26,9 @@ const LAYOUTS = [
 
 function StreamCell({ item }: { item: StreamItem }) {
   const { device, camera } = item
-  const isOffline = device.status === 'offline'
-  const hasAlert = !!camera.currentAlert
+  const [failed, setFailed] = useState(false)
+  const isOffline = device.status === 'offline' || !camera.is_streaming
+  const hasAlert = false
 
   if (isOffline) {
     return (
@@ -35,13 +36,23 @@ function StreamCell({ item }: { item: StreamItem }) {
         <div className="w-12 h-12 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mb-2">
           <Unlink className="w-5 h-5" />
         </div>
-        <span className="text-xs font-bold text-red-300">카메라 연결 끊김</span>
+        <span className="text-xs font-bold text-red-300">
+          {device.status === 'offline' ? '카메라 연결 끊김' : '스트리밍 중지'}
+        </span>
         <span className="text-[10px] text-slate-500 mt-0.5">{device.name}</span>
       </div>
     )
   }
 
-  const imgSrc = STREAM_IMAGES[(camera.imageIndex ?? camera.id) % STREAM_IMAGES.length]
+  if (failed) {
+    return (
+      <div className="relative bg-black/90 rounded-xl overflow-hidden border border-slate-800 flex flex-col items-center justify-center aspect-video">
+        <Camera className="w-5 h-5 text-slate-500 mb-1.5" />
+        <span className="text-[11px] font-semibold text-slate-400">스트림을 불러오지 못했습니다</span>
+        <span className="text-[10px] text-slate-600 mt-0.5">동시 연결 {PROXY_LIMIT}개 제한일 수 있습니다</span>
+      </div>
+    )
+  }
 
   return (
     <div className={`relative rounded-xl overflow-hidden group aspect-video transition-all duration-500 ${
@@ -51,16 +62,17 @@ function StreamCell({ item }: { item: StreamItem }) {
     }`}>
       {/* 실사 배경 이미지 */}
       <img
-        src={imgSrc}
+        src={streamUrl(device.id, camera.id)}
         alt=""
-        className="absolute inset-0 w-full h-full object-cover"
+        onError={() => setFailed(true)}
+        className="absolute inset-0 w-full h-full object-cover bg-slate-900"
         draggable={false}
       />
 
       {/* 상단 그라데이션 바 */}
       <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
         style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.70), transparent)' }}>
-        <span className="text-[10.5px] font-bold text-white">{device.name}</span>
+        <span className="text-[10.5px] font-bold text-white">{device.name} · {camera.id}</span>
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
           <span className="text-[10px] font-bold text-white/90 tracking-wider">LIVE</span>
@@ -79,7 +91,7 @@ function StreamCell({ item }: { item: StreamItem }) {
         <div className="absolute bottom-0 left-0 right-0 px-3 py-2 flex items-center gap-1.5 text-[10px] text-amber-300"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.80), transparent)' }}>
           <AlertTriangle className="w-3 h-3 text-amber-400 flex-shrink-0" />
-          {camera.currentAlert}
+          경보
         </div>
       )}
 
@@ -92,13 +104,14 @@ function StreamCell({ item }: { item: StreamItem }) {
 export default function LiveStreams() {
   const [layout, setLayout] = useState<1 | 2 | 3 | 4>(2)
 
-  const streams: StreamItem[] = mockDevices.flatMap((device) =>
-    device.cameras.length > 0
-      ? device.cameras.map((camera) => ({ device, camera }))
-      : [{ device, camera: { id: 0, port: 0, resolution: '', fps: 0, roiCount: 0, todayDetections: 0, isStreaming: false } }]
-  )
+  const { data, loading } = useApi(() => api.listDevices(), [], 15_000)
+  const devices = data?.data ?? []
 
-  const activeCount = streams.filter((s) => s.device.status !== 'offline').length
+  const streams: StreamItem[] = devices.flatMap((device) =>
+    device.cameras.map((camera) => ({ device, camera })))
+
+  const activeCount = streams.filter(
+    (s) => s.device.status !== 'offline' && s.camera.is_streaming).length
 
   return (
     <div className="max-w-[1720px] mx-auto px-8 py-7">
@@ -128,12 +141,21 @@ export default function LiveStreams() {
               </button>
             ))}
           </div>
-          <button className="glass-btn px-3 py-1.5 rounded-xl text-xs gap-1.5">
+          <button
+            onClick={() => document.documentElement.requestFullscreen?.()}
+            className="glass-btn px-3 py-1.5 rounded-xl text-xs gap-1.5">
             <Maximize2 className="w-3.5 h-3.5" />
             전체화면
           </button>
         </div>
       </div>
+
+      {activeCount > PROXY_LIMIT && (
+        <div className="mb-4 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200/70 text-xs font-semibold text-amber-800">
+          스트림 {activeCount}개가 활성인데 프록시 동시 연결은 {PROXY_LIMIT}개까지입니다 —
+          일부 칸은 열리지 않습니다.
+        </div>
+      )}
 
       {/* Stream grid */}
       <div
@@ -144,6 +166,10 @@ export default function LiveStreams() {
           <StreamCell key={`${item.device.id}-${item.camera.id}-${idx}`} item={item} />
         ))}
       </div>
+
+      {!loading && streams.length === 0 && (
+        <div className="py-20 text-center text-sm text-slate-500">표시할 카메라가 없습니다</div>
+      )}
     </div>
   )
 }
