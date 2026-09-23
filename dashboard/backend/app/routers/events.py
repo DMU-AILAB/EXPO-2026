@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
+
+from ..utils.timeutil import to_naive_utc, utcnow
 from typing import List, Optional
 import time
 
@@ -53,7 +55,13 @@ async def ingest_event(
     db: Session = Depends(get_db)
 ):
     if not check_rate_limit(device.id):
-        raise HTTPException(status_code=429, detail="Too Many Requests: Rate limit exceeded (600 requests / minute)")
+        # 429는 Pi가 **재시도하는** 유일한 4xx다(`device/event_logger.py:240`).
+        # 다른 4xx로 내면 그 이벤트는 outbox에서 삭제되어 영영 사라진다.
+        raise HTTPException(
+            status_code=429,
+            detail="Too Many Requests: Rate limit exceeded (600 requests / minute)",
+            headers={"Retry-After": str(RATE_LIMIT_WINDOW_SEC)},
+        )
 
     # 1. Create DetectionEvent
     new_event = DetectionEvent(
@@ -123,11 +131,30 @@ def get_events(
     if camera_id:
         query = query.filter(DetectionEvent.camera_id == camera_id)
         
-    # Check max query period of 90 days
-    if start and end:
-        if (end - start).days > 90:
-            raise HTTPException(status_code=400, detail="Query period cannot exceed 90 days")
-            
+    # 보관 기간 제한 (명세 §6).
+    #
+    # 이전에는 start·end가 **둘 다** 있을 때만 검사해서 `?start=2020-01-01` 한 줄로
+    # 전량 조회가 가능했다. 지금은 실제 조회 창을 먼저 확정하고 그 길이를 잰다.
+    #
+    # start를 생략하면 **거절하지 않고 90일로 자른다** — 목록 화면의 기본 호출
+    # (`GET /api/events`)에 인자가 없어서, 거절하면 첫 화면부터 400이 난다.
+    now = utcnow()
+    end = to_naive_utc(end)
+    if start is None:
+        # 기본 창은 최근 90일. **상한은 걸지 않는다** — 기기가 타임스탬프를 찍으므로
+        # (`device/event_logger.py`) 시계가 조금 빠른 Pi의 최신 이벤트가 `<= now`에
+        # 걸려 목록에서 통째로 사라질 수 있다. 시계 동기화는 `make setup-ntp`가 맡고,
+        # 조회는 그 오차에 관대해야 한다.
+        start = (end or now) - timedelta(days=90)
+    else:
+        start = to_naive_utc(start)
+        if ((end or now) - start).days > 90:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "DATE_RANGE_TOO_LARGE",
+                        "message": "조회 기간은 90일을 넘을 수 없습니다"},
+            )
+
     if start:
         query = query.filter(DetectionEvent.timestamp >= start)
     if end:
