@@ -63,12 +63,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 미구현 (계획)
 
-- 관리자 대시보드 백엔드 (`visionguide-backend/` — FastAPI)
-- 관리자 대시보드 프론트엔드 (`visionguide-frontend/` — React)
 - GPIO 릴레이 트리거 (`gpiozero`)
-- 설정 폴링 (`config_syncer.py`)
-- 이벤트 로거 / 서버 전송 (`event_logger.py`)
 - 헬스 워치독 (`watchdog.py`)
+- 폴리곤 편집기(대시보드) — 현재 ROI 모양은 기기의 `roi_editor`(포트 5000)에서만 그린다
+
+> **설정 폴링(`config_syncer.py`)은 만들지 않는다.** 명세 §13.0의 소유권 결정(Pi가 원본)과
+> 충돌한다 — 서버가 설정을 내려보내면 작성자가 둘이 되고, Pi의 변경 감지가 mtime뿐이라
+> 현장 편집이 조용히 덮인다. 대신 백엔드가 `roi_editor` API를 **중계**한다.
 
 ---
 
@@ -699,41 +700,42 @@ Pi에서 실행될 코드를 작성하거나 수정할 때 반드시 지켜야 �
 ## 대시보드 백엔드 개발 명령어
 
 ```bash
-cd visionguide-backend
+cd dashboard/backend
 
-# 의존성 설치
-pip install -e ".[dev]"          # pyproject.toml 기준
-# 또는
-pip install fastapi uvicorn sqlalchemy pydantic-settings passlib[bcrypt] \
-            python-jose httpx loguru shapely
+pip install -r requirements.txt
 
-# 개발 서버 실행
-uvicorn app.main:app --reload --port 8000
-
-# DB 초기화 (관리자 계정 시드)
+# DB 초기화 (관리자 계정 시드) — 최초 1회
 python -m app.db.init_db
 
-# 테스트 실행
-pytest tests/ -v
-pytest tests/test_auth.py -v      # 특정 파일만
+# 개발 서버. ★ --workers 금지 (명세 §1.3: 인메모리 하트비트 버퍼 + APScheduler)
+uvicorn app.main:app --reload --port 8000
 
-# Docker Compose
-docker-compose up --build
+# 테스트
+python -m pytest tests/ -v
+python -m pytest tests/test_pi_contract.py -v   # Pi 계약 정합만
 ```
+
+**`.env`에서 반드시 설정할 것**: `PUBLIC_BASE_URL`(기기가 이벤트를 보낼 **서버 자신의 주소**).
+비어 있으면 Pi의 `DeviceIdentity.is_usable()`이 False가 되어 **아무것도 전송되지 않는다**.
+
+`tests/test_pi_contract.py`는 `device/`의 Pi 모듈을 실제로 import해 페이로드를 맞대어 본다 —
+스키마를 눈으로 비교하는 방식으로는 못 잡는 종류의 사고가 두 번 있었다(파일 주석 참고).
 
 ---
 
 ## 대시보드 프론트엔드 개발 명령어
 
 ```bash
-cd visionguide-frontend
+cd dashboard/frontend
 
 npm install
-npm run dev          # Vite 개발 서버
-npm run build        # 프로덕션 빌드
-npm run lint         # ESLint
+npm run dev          # Vite 개발 서버 (5173)
+npm run build        # tsc + 프로덕션 빌드
 npm run typecheck    # tsc --noEmit
 ```
+
+백엔드 주소는 `VITE_API_BASE`로 준다(`.env.example` 참고, 기본 `http://localhost:8000`).
+백엔드의 `CORS_ORIGINS`에 `http://localhost:5173`이 있어야 한다.
 
 ---
 
@@ -770,8 +772,10 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 | `apps/simulator/trigger_dispatcher.py` | Streamlit 전용 디바운싱/쿨다운 (시뮬레이터용) | ✅ 구현됨 |
 | `preprocess.py` | Letterbox 리사이즈 + CLAHE 야간 보정 | 미구현 (예정) |
 | `priority_policy.py` | 다중 ROI 동시 점유 시 heapq 우선순위 | 미구현 (예정) |
-| `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 | 미구현 (예정) |
-| `event_logger.py` | 로컬 SQLite 버퍼 → 비동기 서버 전송 | 미구현 (예정) |
+| `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 | **만들지 않음** — 명세 §13.0의 소유권 결정과 충돌 |
+| `event_logger.py` | outbox(sqlite) → 비동기 서버 전송 + 하트비트 | ✅ 구현됨 |
+| `device_identity.py` | 서버가 발급한 device_id·api_key·server_url 보관 | ✅ 구현됨 |
+| `device_metrics.py` | 탐지 루프의 추론/프레임 시간을 roi_editor로 전달 | ✅ 구현됨 |
 | `watchdog.py` | psutil CPU/온도/디스크, 픽셀 분산으로 렌즈 오염 탐지 | 미구현 (예정) |
 
 ---
