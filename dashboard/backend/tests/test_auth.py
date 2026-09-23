@@ -27,7 +27,9 @@ def test_login_failure_and_lockout(client: TestClient, admin_user: User):
         "password": "wrong_password"
     })
     assert response.status_code == 423
-    assert response.json()["detail"]["error"] == "ACCOUNT_LOCKED"
+    # 명세 §1.4의 전역 형식 — {"error", "message", "ok": false}
+    assert response.json()["error"] == "ACCOUNT_LOCKED"
+    assert response.json()["ok"] is False
 
 def test_get_me(client: TestClient, admin_user: User):
     # Login first
@@ -58,4 +60,5 @@ def test_logout(client: TestClient, admin_user: User):
     # Try get me again -> should fail
     response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
-    assert response.json()["detail"] == "Token has been revoked"
+    assert response.json()["error"] == "UNAUTHORIZED"
+    assert response.json()["ok"] is False
