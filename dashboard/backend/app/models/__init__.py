@@ -6,4 +6,4 @@ from .event import DetectionEvent
 from .token import TokenBlacklist
 from .schedule import ScheduledReboot
 from .stats import HourlyStats
-from .audio import Audio
+from .audio import Audio, AudioDeployment
