@@ -35,7 +35,9 @@ export default function DeviceCard({ device }: DeviceCardProps) {
                   : 'bg-slate-400'
               }`}
             />
-            <h3 className="text-base font-bold text-slate-900 tracking-tight">{device.location}</h3>
+            <h3 className="text-base font-bold text-slate-900 tracking-tight">
+              {device.location || device.name}
+            </h3>
           </div>
           <StatusBadge status={device.status} pulse />
         </div>
@@ -46,7 +48,8 @@ export default function DeviceCard({ device }: DeviceCardProps) {
         </p>
 
         {/* Stream Thumbnail */}
-        <StreamThumbnail status={device.status} camera={activeCamera} deviceName={device.name} />
+        <StreamThumbnail status={device.status} deviceId={device.id} camera={activeCamera}
+                         deviceName={device.name} />
 
         {/* Camera Toggle */}
         {multiCam && (
@@ -61,7 +64,7 @@ export default function DeviceCard({ device }: DeviceCardProps) {
                     : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200/80 hover:text-slate-700'
                 }`}
               >
-                CAM {cam.id}
+                {cam.id}
               </button>
             ))}
           </div>

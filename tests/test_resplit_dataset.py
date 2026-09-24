@@ -124,3 +124,61 @@ def test_generated_split_puts_negatives_in_val_and_test():
         negs = sum(1 for i in manifest.values()
                    if i["split"] == split and i["stratum"] in ("bg", "lk"))
         assert negs >= 50, f"{split}의 네거티브 {negs}장 — 오탐지 지표가 둔감해진다"
+
+
+# --------------------------------------------------------------------- #
+# 영상 프레임 — 한 클립 = 한 그룹
+#
+# 이 규칙이 없으면 프레임마다 다른 그룹이 되어 거의 같은 장면이 train/val/test에
+# 흩어진다. AIHub 연속 촬영에서 실측 누수율 99.7%를 만든 바로 그 경로다.
+# --------------------------------------------------------------------- #
+
+def test_frames_of_same_clip_share_a_group():
+    s = r.build_aihub_sessions([])
+    a = "tr_lab_20260920_007_f000180.jpg"
+    b = "tr_lab_20260920_007_f000600.jpg"
+    assert r.group_key(a, s) == r.group_key(b, s)
+
+
+def test_different_clips_are_different_groups():
+    s = r.build_aihub_sessions([])
+    a = "tr_lab_20260920_007_f000180.jpg"
+    b = "tr_lab_20260920_008_f000180.jpg"
+    assert r.group_key(a, s) != r.group_key(b, s)
+
+
+def test_train_and_eval_clips_never_share_a_group():
+    """학습용(tr_)과 평가용(ev_)은 촬영 세션 자체가 달라야 한다는 규칙의 최소 방어선."""
+    s = r.build_aihub_sessions([])
+    assert r.group_key("tr_lab_20260920_001_f000001.jpg", s) != \
+           r.group_key("ev_lab_20260921_001_f000001.jpg", s)
+
+
+def test_clip_frames_get_their_own_stratum():
+    """자체 촬영본은 기존 소스(실외/AIHub)와 도메인이 다르다.
+
+    같은 층에 섞으면 실내 프레임이 val/test에 거의 안 들어가 실내 지표가 둔감해진다.
+    """
+    assert r.stratum_of("tr_lab_20260920_007_f000180.jpg").startswith("clip_")
+    assert r.stratum_of("tr_lab_20260920_007_f000180.jpg") != \
+           r.stratum_of("IMG_7876_JPG.rf.abc.jpg")
+
+
+def test_existing_filenames_are_untouched_by_the_clip_rule():
+    """회귀 방어 — 기존 21,631장(v1·v2 train)에 `_f<숫자>` 형태가 0건임을 확인하고
+    도입했다. 새 규칙이 기존 파일을 잡기 시작하면 그룹이 통째로 뒤바뀐다."""
+    s = r.build_aihub_sessions(["20210514_182405_0_jpg.rf.def.jpg"])
+    for name, expect_prefix in [
+        ("IMG_7876_JPG.rf.abc123.jpg", "rf_"),
+        ("20210514_182405_0_jpg.rf.def.jpg", "aihub_"),
+        ("bg_0042.jpg", "rf_"),
+        ("lk_0100.jpg", "rf_"),
+        ("pedcctv_0007.jpg", "rf_"),
+    ]:
+        assert r.group_key(name, s).startswith(expect_prefix), name
+
+
+def test_short_frame_suffix_is_not_treated_as_a_clip():
+    """`_f` + 3자리 이하는 클립으로 보지 않는다 — 우연한 파일명과 충돌하지 않게."""
+    s = r.build_aihub_sessions([])
+    assert r.group_key("some_photo_f12.jpg", s).startswith("rf_")

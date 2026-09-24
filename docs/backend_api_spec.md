@@ -27,7 +27,26 @@
 - **백엔드 API**: `8000`
 - **CORS 허용 Origin**: `http://localhost:5173` (Vite 개발 서버), 배포 도메인
 
-### 1.3 전역 응답 형식
+### 1.3 아키텍처 제약 사항 (Constraints)
+
+> [!WARNING]
+> **Single Worker 전용 구조 (Scale-out 금지)**
+> 본 백엔드 서버는 `_heartbeat_buffer` 인메모리 버퍼와 `APScheduler` 인스턴스를 통해 무결성을 유지하고 있습니다. `uvicorn --workers N` 옵션이나 다중 서버 인스턴스로 실행할 경우, 1) 버퍼 파편화로 인한 SQLite 쓰기 불일치 발생, 2) 동일한 재부팅 명령이 N번 중복 스케줄링되는 치명적 부작용이 발생합니다. 반드시 단일 워커(Single Worker) 환경에서 구동해야 합니다.
+
+### 1.3.1 구현하며 확정된 사항 (2026-09-23)
+
+명세와 구현이 어긋났던 항목을 여기서 정리한다. **구현이 정본**이며 아래가 그 기록이다.
+
+| 항목 | 결정 | 이유 |
+|---|---|---|
+| `If-Match` 헤더 | **변경 API에서 필수** | 낙관적 잠금. 이 기기는 AP 모드·캡티브 포털로 **오프라인 현장 설정**을 전제하므로, 대시보드가 낡은 스냅샷으로 현장 편집을 덮는 상황이 실제로 생긴다. Pi의 변경 감지는 mtime뿐이라 병합도 버전 비교도 없이 나중에 쓴 쪽이 이긴다 |
+| `Roi.color` | **서버 DB 전용 필드로 유지** | 캔버스에서 ROI를 구분해 그리려면 색이 필요하다. **Pi로는 보내지 않는다** — Pi의 ROI 로더는 자기 팔레트를 쓴다 |
+| `Camera.fps` | **서버 보관만** (§4대로) | Pi의 `CameraProfile`에 대응 필드가 없다. 응답에 `fps_applied: false`를 함께 내려 UI가 "미적용"으로 표시한다. Pi 4의 병목은 프레임레이트가 아니라 추론이라 `capture_preset`·`model_variant`가 더 직접적인 손잡이다 |
+| 오디오 길이 제한 | **10초 유지** | 안내 음성은 짧아야 한다. 근거가 약하면 `MAX_DURATION_SECONDS` 한 곳만 고치면 된다 |
+| `config_etag` 초기값 | **빈 문자열 금지** (UUID로 생성) | `''`이면 클라이언트가 If-Match에 보낼 값이 없어 **첫 ROI 저장부터 400**이 난다 |
+| 기기 제어 인증 | Pi의 `POST /api/service/restart`·`/api/system/reboot`만 **`X-Device-Key` 필수** | 포트 5000의 나머지 라우트는 무인증이지만(§13 참고), 재부팅은 서비스를 끊는다. 서버는 이 키를 되돌릴 수 있어야 하므로 `devices.control_key`에 **평문**으로 보관한다 — 방향이 반대라서 생기는 비대칭이다(`api_key_hash`는 검증만 하면 되므로 해시) |
+
+### 1.4 전역 응답 형식
 
 ```json
 // 성공 (단건)
@@ -307,10 +326,16 @@ Device {
 - 필드명·단위는 Pi가 실제로 수집하는 값(`apps/roi_editor/server.py`의 `_read_device_status()`)에
   맞췄다 — `cpu_temp_c`(℃), `memory.used_mb`/`total_mb`(**MB 단위**, GB 아님),
   `load_avg`(1·5·15분 3-tuple).
-- **CPU 사용률(%)은 Pi가 산출하지 않는다.** psutil 등 무거운 의존성을 Pi에 넣지 않는 방침이라
-  `/proc`에서 읽는 부하 지표는 `load_avg`뿐이다. 백분율이 필요하면 `/proc/stat` 차분 계산을
-  Pi 측에 새로 구현해야 한다.
-- `latency_ms` · `npu_ms` 역시 현재 Pi에 산출 코드가 없다 — **구현 예정 필드**.
+- **CPU 사용률(%)은 이제 Pi가 산출한다** (`device/device_status.py`의 `CpuSampler`가
+  `/proc/stat` 두 시점 차분을 낸다). psutil은 여전히 쓰지 않는다. 하트비트의 `cpu_percent`로
+  올라오고 서버는 `device_status_cache.cpu_percent`에 보관한다.
+  **첫 표본에서는 `null`이다** — 차분에 두 시점이 필요하기 때문이다.
+- `latency_ms`(프레임 처리 시간) · `npu_ms`(추론 시간)도 Pi가 보낸다
+  (`device/device_metrics.py` → 하트비트). 카메라가 여러 대면 **가장 느린 쪽**을 보고한다 —
+  평균을 내면 한 대가 막혀 있어도 정상으로 보인다.
+- **이 세 값은 모두 `null`일 수 있다.** 센서 읽기 실패, 살아있는 카메라 없음, 값이 0인 경우가
+  전부 `null`로 온다. 백엔드 스키마는 반드시 Optional이어야 한다 — 필수로 두면 422가 나고,
+  Pi는 하트비트를 버퍼링하지 않으므로 그 주기의 상태가 사라진다.
 - Pi가 아닌 환경(개발 PC 등)에서 실행하면 해당 항목만 조용히 `null`로 빠진다.
 
 ---
@@ -683,10 +708,22 @@ Pi 디바이스가 감지 이벤트를 서버로 전송.
 
 **비고**:
 - 수신 즉시 WebSocket 구독자에게 실시간 푸시
-- **현재 Pi에는 아웃바운드 HTTP 클라이언트가 없다** (`device/`에 `requests`/`httpx`가 없고
-  `requirements-pi.txt`에도 포함돼 있지 않다). 이 엔드포인트를 쓰려면 Pi 측에 전송 모듈과
-  의존성을 새로 추가해야 한다 — 서버만 구현해서는 동작하지 않는다.
-- `confidence` · `event_type`은 Pi가 아직 산출하지 않는 값이다(위 모델 비고 참고).
+- Pi 측 전송은 `device/event_logger.py`의 `EventSender`가 맡는다(표준 라이브러리 `urllib`만
+  쓴다 — Pi에 의존성을 늘리지 않으려고).
+
+> [!WARNING]
+> **4xx는 이벤트를 영구히 버린다.** `EventSender`는 4xx(**429 제외**)를 "다시 보내도 같은
+> 답이 온다"로 읽고 outbox에서 그 행을 **즉시 삭제**한다(`event_logger.py:193-197`).
+> 그래서 이 엔드포인트의 스키마를 빡빡하게 만들면 안 된다.
+>
+> - `confidence`는 **키가 생략될 수 있다** — 가상 지팡이 박스로 발사된 안내에는 신뢰도가 없다.
+> - `camera_id`·`roi_name`·`class_name`은 **빈 문자열**로 올 수 있다(outbox 컬럼 DEFAULT가 `''`).
+> - `class_name`은 `"white_cane"`이 아닐 수 있다 — RF 트리거 경로는 `"announcement"`로 적는다.
+> - **일시적 실패는 반드시 5xx 또는 429로 낸다.** DB 오류를 400으로 접으면 그 이벤트가 사라진다.
+> - 429에는 `Retry-After`를 붙인다.
+
+- `timestamp`는 Pi가 ISO8601 UTC `'Z'`로 보낸다(**aware**). 서버는 저장 직전에 naive UTC로
+  정규화한다 — 한 컬럼에 aware/naive가 섞이면 통계 경계 비교가 조용히 어긋난다.
 
 ---
 
@@ -845,7 +882,20 @@ Pi 디바이스가 감지 이벤트를 서버로 전송.
 
 - 앞의 두 계열은 **Pi가 이미 집계해 sqlite에 쌓고 있다.** 시간별은 0~23시 24개,
   일별은 요청 기간 전체가 0-패딩된 채로 나온다.
-- **`detections`는 이벤트 ingest가 구현되기 전까지 항상 0이다**(§6 비고 참고).
+- **서버가 끌어온다**(`app/services/foot_traffic_puller.py`, 5분 주기). 이벤트는 Pi가 밀어
+  올리고 유동인구는 서버가 끌어오는데, 유동인구는 누적 집계라 언제 읽어도 같은 답이 나오고
+  Pi에 스케줄러를 하나 더 두지 않아도 되기 때문이다.
+- **Pi의 응답 키가 서버와 다르다** — 변환은 백엔드 몫이다:
+
+  | Pi (`GET /api/stats/timeseries`, 포트 5000) | 서버 (§8) |
+  |---|---|
+  | `granularity: "hour" \| "day"` | `hourly` \| `daily` |
+  | `points[]` | `data[]` |
+  | `points[].total_count` | `hourly_stats.foot_traffic_count` |
+
+- **`detections`는 수집기가 덮어쓰면 안 된다** — 그쪽은 이벤트 ingest가 세는 값이다.
+- Pi의 시간별 API는 `date=YYYY-MM-DD` 쿼리를 받는다(2026-09-23 추가). 서버가 꺼져 있던
+  구간을 나중에 메우기 위한 것으로, 수집기가 기본 2일치를 거슬러 확인한다.
 - **ROI별 집계는 제공하지 않는다.** Pi의 스키마가 카메라 단위 시간별 합계만 기록하므로
   구조적으로 낼 수 없다.
 - 유동인구 db는 **카메라마다 파일이 분리**돼 있다 — 디바이스 단위·전체 합산은 백엔드가
@@ -919,8 +969,16 @@ Pi의 `visionguide-device` systemd 서비스 재시작 요청.
 ```
 
 **비고**:
-- 백엔드가 Pi에 직접 SSH 명령을 보내거나, Pi가 다음 폴링 시 `restart_pending` 플래그를 보고 실행
-- SSH 방식 권장 (즉각 처리), 폴링 방식은 최대 60초 지연 가능
+- 백엔드는 Pi의 **`POST /api/service/restart`**(포트 5000)를 부른다. Pi는 `systemctl restart
+  visionguide-device`를 실행한다 — **반드시 systemctl로** 한다. 앱이 SIGTERM에 정상 종료
+  (exit 0)하므로 `pkill`로는 `Restart=on-failure`가 걸리지 않아 되살아나지 않는다.
+- **`X-Device-Key` 헤더가 필요하다**(서버가 등록 때 심어둔 api_key). 신원이 없는 기기는
+  403으로 거부한다 — 현장 설치 중 오작동 방지.
+- **실패를 삼키지 않는다.** 기기가 꺼져 있으면 503, 응답이 없으면 504, 엔드포인트가 없는
+  구버전이면 502를 낸다. 이전 구현은 모든 예외를 무시하고 항상 202를 돌려줘서, 꺼진 기기에도
+  "재시작 요청이 전송되었습니다"가 떴다.
+- sudoers(`deploy/visionguide-systemctl.sudoers`)가 유닛별 start/stop/restart/status와
+  `/usr/sbin/reboot`만 비밀번호 없이 허용한다.
 
 ### `POST /api/devices/{device_id}/reboot`
 Pi 전체 재부팅 요청.
@@ -931,6 +989,10 @@ Pi 전체 재부팅 요청.
 ```json
 { "confirm": true }
 ```
+
+**비고**: 백엔드는 Pi의 **`POST /api/system/reboot?confirm=true`**를 부른다.
+⚠ 이 Pi는 PoE 어댑터가 GPIO3를 점유해 **버튼으로 다시 켤 수 없다** — 재부팅이 실패해 꺼진
+채로 남으면 현장에 가야 한다. 그래서 Pi 측에서도 `confirm`을 다시 요구한다.
 
 **Response 202**
 ```json
@@ -1060,8 +1122,11 @@ ScheduledReboot {
 
 **비고**:
 - 진행 중일 때 `status: "running"`, `progress`는 현재 스캔된 IP 수
-- **`version` 필드를 채울 소스가 현재 Pi에 없다.** `roi_editor`에 버전 엔드포인트가 없으므로
-  새로 만들거나 이 필드를 비워둬야 한다.
+- **`version`의 소스는 `GET /api/version`이다** (`apps/roi_editor/server.py`).
+  응답은 `{version, product: "VisionGuide", registered, device_id}`이며 **인증 없이, 등록 전에도**
+  답한다(등록 자체가 이 응답을 보고 이뤄지므로).
+- **기기 판별은 이 응답의 `product == "VisionGuide"`로 한다.** 리다이렉트를 따라가면 안 된다
+  (`follow_redirects=False`) — 캡티브 포털 catch-all이 302를 주기 때문이다.
 - **VisionGuide 여부 판별은 "404가 아니면 있음" 식으로 하면 안 된다.** `roi_editor`에는
   Wi-Fi 온보딩용 캡티브 포털 catch-all 라우트가 있어, 존재하지 않는 경로도 조건에 따라
   302를 반환한다. 판별은 `GET /api/device/status`(포트 5000)의 **200 응답 + 바디 스키마**로
@@ -1109,6 +1174,14 @@ mtime을 폴링해 재시작 없이 반영한다(ROI 2초, 카메라 프로필�
 된다. 또 이 기기는 AP 모드·캡티브 포털·Wi-Fi 전환 버튼으로 **오프라인 현장 설정을 전제**로
 만들어져 있어, 서버가 원본이 되면 그 흐름이 무력화된다.
 
+> [!WARNING]
+> **포트 5000에는 인증이 전혀 없다.** `apps/roi_editor/server.py`에 미들웨어·의존성·CORS가
+> 하나도 없어, 같은 네트워크에 있으면 누구나 ROI·카메라 설정을 바꾸고
+> `POST /api/identity`로 신원까지 덮어쓸 수 있다. 현장 설정용 로컬 도구라는 전제에서
+> 만들어진 것이며, 예외는 2026-09-23에 추가한 제어 엔드포인트 두 개뿐이다
+> (`X-Device-Key` 필수 — §10). 망을 신뢰할 수 없는 환경에 배치한다면 이 전제부터 다시
+> 봐야 한다.
+
 **따라서 백엔드는 설정의 저장소가 아니라 중계자다.**
 
 | 동작 | 백엔드가 하는 일 |
@@ -1124,6 +1197,12 @@ mtime을 폴링해 재시작 없이 반영한다(ROI 2초, 카메라 프로필�
   모르는 필드를 보존해야 한다.
 - **기기가 오프라인이면 설정 변경은 실패시킨다**(503). 큐에 쌓아 나중에 적용하지 않는다 —
   그 순간 사실상 서버가 원본이 되어 위의 문제가 그대로 발생한다.
+- **조회는 Pi를 먼저 읽어 캐시를 갱신한 뒤 반환한다.** 기기가 꺼져 있으면 캐시를 주되
+  응답에 `stale: true`를 실어 UI가 구분하게 한다.
+- ⚠ **Pi의 `rois.json`이 사라지면 서버 캐시도 따라서 비워진다.** 원본이 Pi라는 결정의
+  직접적인 결과다 — SD 카드를 다시 굽거나 기기를 교체하면 다음 조회에서 그 카메라의
+  활성 ROI가 캐시에서 삭제되고, **서버에서 되돌릴 방법이 없다.** 비활성 ROI는 서버 전용
+  상태라 남는다. 기기 교체 절차에 ROI 재설정을 반드시 포함할 것.
 - 기기 대수가 늘어 중앙 관리 비중이 커지면 서버 소유 방식으로 옮길 수 있다. 지금 구조는 그
   전환을 막지 않는다 (현재 운용 대수: 1~2대).
 

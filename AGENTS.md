@@ -5,7 +5,7 @@
 VisionGuide is a Python computer-vision system for Raspberry Pi with a PC simulator.
 Source is split by **where the code runs**:
 
-- `device/` — the 18 modules that run on the Pi. The edge entry point is
+- `device/` — the 24 modules that run on the Pi. The edge entry point is
   `device/camera_live_pi.py`; `device/yolo_postprocess.py` holds the shared
   pre/post-processing, and the rest cover tracking, audio, GPIO, and RF triggers.
   **This directory must stay in sync with `DEPLOY_PY` in the `Makefile`.**
@@ -74,7 +74,15 @@ preserve the surrounding style and keep changes narrowly scoped.
 
 Add or update pytest coverage for behavior changes, especially ROI geometry,
 camera backends, configuration validation, event persistence, and hardware
-fallbacks. Prefer temporary paths and monkeypatching so tests need no camera,
+fallbacks.
+
+**When you touch the `CameraPipeline` frame loop, run
+`tests/test_pipeline_integration.py`.** It is the only test that drives the loop
+end-to-end with real detections, ROI and a traffic DB, and its
+`thread_exceptions` fixture fails the test on *any* exception raised inside the
+pipeline thread. Without that hook a crash in the thread only prints a traceback —
+pytest still reports a pass. Two production crashes (`NameError`,
+`UnboundLocalError`) shipped to the device that way. Prefer temporary paths and monkeypatching so tests need no camera,
 GPIO, Coral TPU, audio device, or network. Run the full suite before submitting.
 
 ## Commit & Pull Request Guidelines

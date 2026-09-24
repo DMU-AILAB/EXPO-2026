@@ -55,7 +55,7 @@ for _cand in (_BASE, _BASE / "apps"):
     if (_cand / "simulator").is_dir() and str(_cand) not in sys.path:
         sys.path.insert(0, str(_cand))
 
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import cv2
 import numpy as np
@@ -64,15 +64,19 @@ from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
                            load_camera_config, validate_camera_config)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 from simple_tracker import SimpleTracker
+# 게이트 순서·상수·연관 로직의 단일 출처. 배포/평가/재생검증이 같은 것을 써야 한다.
+# 상수는 여기서 재수출한다 — `eval_video_recall.py`가 camera_live_pi에서 import해 왔다.
+from gate_chain import (  # noqa: F401  (재수출)
+    MOVED_MIN_DIAG_RATIO,
+    STATIC_CANE_SUPPRESS_FRAMES,
+    GateChain,
+)
 # 표준 라이브러리만 쓰는 하드 의존성이라 try/except로 감싸지 않는다 — 여기서
 # 조용히 실패하면 ROIManager처럼 기능이 말없이 꺼진다. DEPLOY_PY 누락은 시끄럽게
 # 터지는 편이 낫다.
 from pedestrian_entity import (
-    EntityTracker,
-    subject_for_canes,
-    cane_user_person_ids,
-    latched_cane_ids,
-    virtual_cane_boxes,
+    cane_user_person_ids,      # 유동인구 래치 전달
+    virtual_cane_boxes,        # 디버그 오버레이의 가상 박스 표시
 )
 
 try:
@@ -104,6 +108,22 @@ try:
     _EVENTS_AVAILABLE = True
 except ImportError:
     _EVENTS_AVAILABLE = False
+
+try:
+    # 서버 전송 대기열. 여기서는 **sqlite에 한 줄 쓸 뿐** 네트워크를 건드리지 않는다 —
+    # 실제 전송은 roi_editor의 EventSender가 맡는다(event_logger.py 헤더 참고).
+    from event_logger import queue_event
+    _OUTBOX_AVAILABLE = True
+except ImportError:
+    _OUTBOX_AVAILABLE = False
+
+try:
+    # 하트비트가 쓸 런타임 지표를 프로세스 밖으로 넘긴다 — 여기서도 sqlite 한 줄뿐,
+    # 네트워크는 건드리지 않는다(device_metrics.py 헤더 참고).
+    from device_metrics import REPORT_INTERVAL_SEC, report as report_metrics
+    _METRICS_AVAILABLE = True
+except ImportError:
+    _METRICS_AVAILABLE = False
 
 try:
     from fp_hotspots import log_suppressed
@@ -589,13 +609,36 @@ class ClipRecorder:
         self._clip_id: str | None = None
         self._frame_shape: tuple[int, int] | None = None
         self._fps: float = 10.0
+        # 오버레이가 그려지기 전 프레임을 저장할지. start(raw=True)로 켠다.
+        self._raw: bool = False
         self._session_started_at: float = 0.0  # 사용자가 "시작"을 누른 시각 — 경과시간 표시 기준
         self._segment_started_at: float = 0.0  # 현재 세그먼트(파일) 시작 시각 — 10분 분할 판단 기준
 
-    def start(self, frame_shape: tuple[int, int], fps: float) -> dict:
+    @property
+    def wants_raw(self) -> bool:
+        """지금 raw 녹화 중인가 — 호출부가 **복사 비용을 낼지 정하는** 데 쓴다.
+
+        raw 녹화가 꺼져 있으면 원본 프레임을 따로 뜰 이유가 없다(1080p 한 장 복사가
+        Pi에서 1~2ms다).
+        """
+        return self._writer is not None and self._raw
+
+    def start(self, frame_shape: tuple[int, int], fps: float,
+              raw: bool = False) -> dict:
+        """`raw=True`면 오버레이가 그려지기 **전** 프레임을 저장한다.
+
+        기본 녹화본은 탐지 박스·ROI가 이미 그려진 최종 프레임이라(`MJPEGServer.push`가
+        받는 그것) **학습 데이터로 쓸 수 없다** — 모델이 그려진 박스를 단서로 배우는
+        오염이 생긴다. 학습용 촬영은 이 모드로 해야 한다
+        (`docs/data_collection_plan.md` §1-2).
+
+        기본값을 False로 둔 이유: 기존 녹화는 데모·검토용이라 오버레이가 있는 쪽이
+        쓸모 있고, raw는 프레임마다 복사 비용을 내기 때문이다.
+        """
         with self._lock:
             if self._writer is not None:
                 return {"ok": False, "error": "이미 녹화 중입니다"}
+            self._raw = bool(raw)
             self._frame_shape = frame_shape
             self._fps = fps
             self._session_started_at = time.time()
@@ -630,8 +673,10 @@ class ClipRecorder:
         self._writer.release()
         clip_id = self._clip_id
         duration = round(time.time() - self._segment_started_at, 1)
+        # raw 여부를 사이드카에 남긴다 — 나중에 이 클립이 학습에 쓸 수 있는 것인지
+        # 파일만 보고는 알 수 없다.
         sidecar = {"started_at": datetime.fromtimestamp(self._segment_started_at).isoformat(),
-                   "duration_sec": duration}
+                   "duration_sec": duration, "raw": self._raw}
         (self.out_dir / f"{clip_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
         return clip_id, duration
 
@@ -783,8 +828,14 @@ class MJPEGServer:
         self._httpd: ThreadingHTTPServer | None = None
         self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
 
-    def push(self, frame: np.ndarray, fps: float | None = None) -> None:
-        """메인 루프에서 매 프레임마다 호출."""
+    def push(self, frame: np.ndarray, fps: float | None = None,
+             raw: np.ndarray | None = None) -> None:
+        """메인 루프에서 매 프레임마다 호출.
+
+        `raw`는 오버레이가 그려지기 **전** 프레임이다. 스트리밍·표시에는 항상
+        `frame`(오버레이 포함)을 쓰고, **녹화만** raw 모드일 때 이쪽을 저장한다 —
+        학습 데이터로 쓰려면 그려진 박스가 없어야 한다.
+        """
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         with self._lock:
             self._jpeg = buf.tobytes()
@@ -793,7 +844,8 @@ class MJPEGServer:
                 self._fps_samples.append(fps)
                 if len(self._fps_samples) > 30:
                     self._fps_samples.pop(0)
-        self.recorder.write(frame)
+        self.recorder.write(raw if (raw is not None and self.recorder.wants_raw)
+                            else frame)
 
     def _avg_fps(self) -> float:
         with self._lock:
@@ -842,12 +894,15 @@ class MJPEGServer:
                 if action == "status":
                     self._write_json(200, srv.recorder.status())
                 elif action == "start":
+                    # ?raw=1 이면 오버레이 없는 원본을 저장한다(학습용 촬영).
+                    raw = parse_qs(urlsplit(self.path).query).get(
+                        "raw", ["0"])[0] not in ("0", "", "false")
                     with srv._lock:
                         shape = srv._frame_shape
                     if shape is None:
                         self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
                     else:
-                        result = srv.recorder.start(shape, srv._avg_fps())
+                        result = srv.recorder.start(shape, srv._avg_fps(), raw=raw)
                         self._write_json(200 if result.get("ok") else 409, result)
                 elif action == "stop":
                     result = srv.recorder.stop()
@@ -1221,18 +1276,8 @@ def _led_watchdog(led: "_GPIOLed", heartbeat: dict, stop_flag: threading.Event,
 
 ROI_CHECK_INTERVAL = 2.0
 
-# 지팡이 트랙이 이만큼 연속으로 거의 안 움직이면(SimpleTracker.static_frames)
-# 배경 오탐지(케이블/문틀 경계선 등)로 간주해 ROI 트리거 대상에서 제외한다.
-# 실측 FPS(~8~9)에서 대략 3초 정도에 해당 — 사람이 잠시 멈춰 서서 지팡이를
-# 짚고 있는 정상적인 상황보다는 넉넉하게 잡았다.
-STATIC_CANE_SUPPRESS_FRAMES = 24
-
-# 지팡이 트랙이 트리거 자격을 얻으려면 생성 지점 대비 이 비율(프레임 대각선 기준)만큼
-# 움직인 적이 있어야 한다. 픽셀 절대값이 아니라 비율인 이유는 회전(90/270)으로 가로세로가
-# 바뀌어도 같은 기준이 유지되어야 하기 때문이다. 640x480이면 약 16px로, 트래커의 지터
-# 임계값(static_move_px=3.0)의 5배 여유가 있다 — 실측상 고정 물체는 300프레임 뒤에도
-# 원점 대비 4px를 넘지 않고, 이동하는 물체는 30프레임 만에 100px를 넘는다.
-MOVED_MIN_DIAG_RATIO = 0.02
+# STATIC_CANE_SUPPRESS_FRAMES · MOVED_MIN_DIAG_RATIO 는 gate_chain.py 로 옮겼다
+# (배포·평가·재생검증이 같은 값을 써야 하므로). 위에서 재수출한다.
 
 # 파이프라인이 (설정 변경이 아니라) 예기치 않게 죽었을 때 재시작을 시도하는 최소
 # 간격 — 예: 카메라 여러 대가 Coral USB 동글 하나를 동시에 열려다 충돌해서 한쪽이
@@ -1346,10 +1391,16 @@ class CameraPipeline:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
                 return
 
-            tracker = SimpleTracker()
-            # 사람+지팡이를 하나의 보행자로 묶어 프레임 사이에 상태를 유지한다.
-            # 트래커와 생애주기가 같으므로 같은 자리에서 만든다.
-            entity_tracker = EntityTracker()
+            # 하트비트용 지표. 매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막히므로
+            # EMA로 눌러두었다가 몇 초에 한 번만 보고한다.
+            infer_ema: float | None = None
+            loop_ema: float | None = None
+            last_metric_report = 0.0
+
+            # 트래커 + 엔티티 + 3중 게이트를 한 묶음으로 든다. 순서와 상수는
+            # gate_chain.py에만 있다 — 평가(`eval_video_recall.py`)와 재생검증
+            # (`replay_engine.py`)이 같은 것을 돌려야 하기 때문이다.
+            gates = GateChain(require_person=profile.require_person_for_trigger)
             # 정지 억제로 걸러낸 지팡이 트랙 id — 핫스팟은 트랙당 1회만 기록한다
             # (매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다).
             logged_static: set[int] = set()
@@ -1407,6 +1458,7 @@ class CameraPipeline:
                 frame = _apply_rotation(frame, profile.rotation)
                 frame = _apply_channel_swap(frame, profile.swap_rb)
 
+                loop_t0 = time.time()
                 # ROI 크롭 추론 — 카메라가 고정이라 trigger 구역은 항상 같은 화면
                 # 좌표에 있다. 그 영역만 잘라 넣으면 같은 입력 해상도로 객체 픽셀
                 # 밀도가 올라간다(실측: 지팡이 탐지 108 → 148프레임/805). 크롭 박스는
@@ -1434,6 +1486,7 @@ class CameraPipeline:
                             d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
                     else:
                         dets = backend.predict(frame)
+                    infer_ms = (time.time() - loop_t0) * 1000.0
                 except Exception as e:
                     print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
                     break
@@ -1442,10 +1495,20 @@ class CameraPipeline:
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
                 dets = _filter_excluded(dets, roi_manager, frame)
 
-                # now를 트래킹 **앞에서** 잡는다 — 재식별(무덤 보관 기간)이 초 단위라
-                # 이 값을 넘겨야 한다. fps 계산은 같은 값을 그대로 쓴다.
+                # now를 게이트 **앞에서** 잡는다 — 재식별(무덤 보관 기간)과 래치가
+                # 초 단위라 이 값을 넘겨야 한다. fps 계산은 같은 값을 그대로 쓴다.
                 now    = time.time()
-                tracks = tracker.update(dets, now)
+                g      = gates.step(dets, frame.shape[:2], now)
+                tracks = g.tracks
+
+                # 학습용 촬영(raw 녹화) 중에만 오버레이 이전 원본을 떠 둔다.
+                # 아래 그리기 함수들이 frame을 **제자리에서** 고치므로, 여기서
+                # 복사하지 않으면 원본이 남지 않는다. raw가 꺼져 있으면 복사하지
+                # 않는다 — 1080p 한 장 복사가 Pi에서 1~2ms다.
+                raw_frame = (frame.copy()
+                             if (mjpeg is not None and mjpeg.recorder.wants_raw)
+                             else None)
+
                 _draw_detections(frame, tracks)
 
                 fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
@@ -1453,22 +1516,12 @@ class CameraPipeline:
 
                 self.shared.led_heartbeat["t"] = now
 
-                # 클래스별 분리 — ROI/오디오 트리거는 지팡이 트랙만, 유동인구
-                # 집계는 사람 트랙만 대상으로 한다 (2-class 모델 기준).
-                # 배경의 케이블/문틀 경계선 같은 고정 오탐지 대상은 지팡이와 달리 절대
-                # 움직이지 않는다 — static_frames가 임계값을 넘은 트랙은 ROI 트리거
-                # 대상에서 제외한다(화면 표시는 그대로 두어 디버깅은 가능하게 함).
-                all_cane_tracks = [t for t in tracks if t["class"] == CANE_CLASS_ID]
-                cane_tracks = [
-                    t for t in all_cane_tracks
-                    if t.get("static_frames", 0) < STATIC_CANE_SUPPRESS_FRAMES
-                ]
-                # 억제된(= 배경 지형지물이 거의 확실한) 위치를 누적해두면 roi_editor가
-                # "여기에 제외구역을 만드시겠습니까?"라고 제안할 수 있다 — 카메라가 고정이라
-                # 같은 지형지물은 항상 같은 화면 좌표에 나타난다.
+                # 정지 억제로 걸러낸(= 배경 지형지물이 거의 확실한) 위치를 누적해두면
+                # roi_editor가 "여기에 제외구역을 만드시겠습니까?"라고 제안할 수 있다 —
+                # 카메라가 고정이라 같은 지형지물은 항상 같은 화면 좌표에 나타난다.
                 if _HOTSPOTS_AVAILABLE and profile.traffic_db:
                     fh0, fw0 = frame.shape[:2]
-                    for trk in all_cane_tracks:
+                    for trk in g.all_cane_tracks:
                         if (trk.get("static_frames", 0) >= STATIC_CANE_SUPPRESS_FRAMES
                                 and trk["track_id"] not in logged_static):
                             logged_static.add(trk["track_id"])
@@ -1482,50 +1535,16 @@ class CameraPipeline:
                     if len(logged_static) > 256:
                         alive = {t["track_id"] for t in tracks}
                         logged_static &= alive
-                # 움직임 게이트 — 한 번이라도 움직인 적이 있는 지팡이 트랙만 통과시킨다.
-                # 위의 정지 억제는 새 트랙의 static_frames가 0에서 시작하는 탓에 임계값
-                # (24프레임 ≈ 2.7초)에 도달하기 전까지 배경 오탐지를 통과시키는데, 디바운스는
-                # 0.5초라 그 사이에 이미 음성이 나간다. "정지가 증명되기 전까지 통과"를
-                # "움직임이 증명되기 전까지 억제"로 뒤집어 그 공백을 닫는다.
-                # 사람이 동반돼도 면제하지 않는다 — 사람 발치의 기둥/난간이 정확히 그
-                # 유형이고(실측 오탐지 사례), 사람 동반 조건만으로는 막히지 않는다.
-                fh_g, fw_g = frame.shape[:2]
-                moved_min = ((fw_g ** 2 + fh_g ** 2) ** 0.5) * MOVED_MIN_DIAG_RATIO
-                if cane_tracks:
-                    cane_tracks = [t for t in cane_tracks
-                                   if t.get("max_disp", 0.0) >= moved_min]
-
-                # 사람 동반 필수 조건(카메라 설정, 기본 켜짐) — 흰 지팡이는 항상 사람이 들고
-                # 다니므로, 사람 없이 잡힌 지팡이는 배경 오탐지일 가능성이 높다. 움직임
-                # 게이트가 못 막는 "움직이지만 사람이 없는" 유사물(흔들리는 나뭇가지 등)을
-                # 막는다 — 두 게이트는 서로 다른 실패 유형을 담당한다.
-                # 보행자 엔티티 갱신 — 입력은 **여기까지의 두 게이트를 통과한** 지팡이다.
-                # 사람 동반 게이트의 결과를 넣으면 순환이 생긴다(그쪽이 엔티티의 출력을
-                # 쓰므로). 이 분리 덕에 래치는 "이미 검증된 지팡이"의 연장이 되고,
-                # 배경 오탐지가 래치되는 경로가 닫힌다.
-                entities = entity_tracker.update(
-                    tracks, {t["track_id"] for t in cane_tracks}, now)
-                latched_ids = latched_cane_ids(entities)
-
-                with_person: dict[int, bool] = {}
-                if profile.require_person_for_trigger and (cane_tracks or self.shared.debug_gates):
-                    with_person = associate_canes(tracks)
-                    # 프레임 단위 판정 **또는** 래치 — OR이므로 지금 통과하던 지팡이는
-                    # 전부 계속 통과한다(단조 완화). 새로 통과하는 것은 "직전까지
-                    # 사람과 함께 확인됐는데 이번 프레임만 연관이 끊긴" 경우뿐이고,
-                    # 그게 디바운스를 리셋시켜 안내를 놓치던 원인이다.
-                    cane_tracks = [t for t in cane_tracks
-                                   if with_person.get(t["track_id"], False)
-                                   or t["track_id"] in latched_ids]
 
                 if self.shared.debug_gates:
-                    _draw_gate_debug(frame, all_cane_tracks,
-                                     {t["track_id"] for t in cane_tracks},
-                                     moved_min, with_person,
+                    _draw_gate_debug(frame, g.all_cane_tracks,
+                                     {t["track_id"] for t in g.cane_tracks},
+                                     g.moved_min,
+                                     g.with_person or gates.debug_with_person(tracks),
                                      profile.require_person_for_trigger,
-                                     entities, latched_ids)
+                                     g.entities, g.latched_ids)
                 if foot_counter is not None:
-                    person_tracks   = [t for t in tracks if t["class"] == PERSON_CLASS_ID]
+                    person_tracks   = g.person_tracks
                     cane_person_map = associate(tracks)
                     # 래치를 함께 넘긴다 — 동반 프레임 "비율"로 판정하면 트래킹이
                     # 좋아질수록 불리해진다(트랙이 길수록 분모에 지팡이가 안 잡히는
@@ -1533,7 +1552,7 @@ class CameraPipeline:
                     # 살아남은 v6는 23.1%로 미달하고, 522프레임에서 끊긴 v5b는
                     # 30.7%로 통과했다 — 탐지 품질이 아니라 트랙 길이가 판정을 갈랐다.
                     foot_counter.update(person_tracks, cane_person_map, now,
-                                        cane_user_ids=cane_user_person_ids(entities))
+                                        cane_user_ids=cane_user_person_ids(g.entities))
 
                 # ROI 설정 변경/신규 생성 감지 (roi_editor 저장 → 재시작 없이 자동 반영)
                 if profile.roi_config and _TRIGGER_AVAILABLE and now - last_roi_check >= ROI_CHECK_INTERVAL:
@@ -1568,21 +1587,11 @@ class CameraPipeline:
                     # **주체(subject)는 사람 한 명(entity_id)**이다 — 안내 발사를 ROI가
                     # 아니라 사람 단위로 판정해야 지나가는 두 번째 사람이 안내를 놓치지
                     # 않는다(`audio_trigger.StandaloneDispatcher` docstring 참고).
-                    cane_owner = subject_for_canes(entities, tracks)
-                    roi_targets = [
-                        # 엔티티가 없는 지팡이(사람 동반 게이트를 끈 경우)는 트랙 id로
-                        # 폴백한다 — 주체가 없다고 판정을 건너뛰면 그 경로가 죽는다.
-                        (cane_owner.get(t["track_id"], ("cane", t["track_id"])), t["bbox"])
-                        for t in cane_tracks
-                    ]
-                    roi_targets += [(eid, bbox)
-                                    for eid, bbox in virtual_cane_boxes(entities)]
-
                     # ROI별로 이번 프레임에 안에 있는 주체를 모은다. dispatcher.update()는
                     # ROI마다 **프레임당 정확히 한 번** 불러야 한다(이탈 판정이 "이번
                     # 프레임에 없었다"에 달려 있다).
                     present: dict[str, set] = {}
-                    for subject, (x1, y1, x2, y2) in roi_targets:
+                    for subject, (x1, y1, x2, y2) in g.roi_targets:
                         # 바운딩 박스 하단 10% 구간(지팡이 끝이 바닥에 닿는 지점)으로 ROI
                         # 교차 판정 — 박스 전체 중심점은 손으로 쥔 위치까지 포함해 실제
                         # 접지 지점과 어긋날 수 있다 (simulator/app.py와 동일 로직).
@@ -1604,12 +1613,19 @@ class CameraPipeline:
                               f"audio={r.audio_file or '없음'}")
                         _roi_name = r.name
                         _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
+                        # 서버로 보낼 신뢰도 — 이번 프레임에 **실제로 탐지된** 지팡이
+                        # 중 최고값이다. 가상 지팡이 박스만으로 발사된 경우에는 실제
+                        # 탐지가 없으므로 None으로 두어 "추정으로 나간 안내"임을 남긴다.
+                        _conf = max((t.get("conf", 0.0) for t in g.cane_tracks),
+                                    default=None)
                         announcement = Announcement(
                             source="camera",
                             trigger_id=r.name,
                             audio_file=r.audio_file,
                             event_db=profile.traffic_db,
                             event_class=CLASS_NAMES[CANE_CLASS_ID],
+                            camera_id=tag,
+                            confidence=_conf,
                         )
                         if self.shared.announcements is not None:
                             self.shared.announcements.submit(announcement, on_done=_done_cb)
@@ -1628,9 +1644,25 @@ class CameraPipeline:
                 cv2.putText(frame, f"[{tag}] FPS: {fps:.1f}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
 
+                # 하트비트용 런타임 지표 보고 — 프레임마다가 아니라 몇 초에 한 번.
+                # 값이 프레임마다 크게 튀므로 EMA로 눌러서 넘긴다.
+                if _METRICS_AVAILABLE and profile.traffic_db:
+                    loop_ms = (time.time() - loop_t0) * 1000.0
+                    infer_ema = (infer_ms if infer_ema is None
+                                 else infer_ema * 0.8 + infer_ms * 0.2)
+                    loop_ema = (loop_ms if loop_ema is None
+                                else loop_ema * 0.8 + loop_ms * 0.2)
+                    if now - last_metric_report >= REPORT_INTERVAL_SEC:
+                        last_metric_report = now
+                        report_metrics(profile.traffic_db, tag,
+                                       streaming=self.headless,
+                                       infer_ms=round(infer_ema, 1),
+                                       loop_ms=round(loop_ema, 1),
+                                       fps=round(fps, 1), now=now)
+
                 if self.headless:
                     assert mjpeg is not None
-                    mjpeg.push(frame, fps)
+                    mjpeg.push(frame, fps, raw=raw_frame)
                 else:
                     cv2.imshow(f"VisionGuide — {tag}", frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -1697,7 +1729,9 @@ def main() -> None:
 
     audio_player = AudioPlayer() if _TRIGGER_AVAILABLE else None
     announcements = (
-        AnnouncementRouter(audio_player, log_event if _EVENTS_AVAILABLE else None)
+        AnnouncementRouter(audio_player,
+                           log_event if _EVENTS_AVAILABLE else None,
+                           outbox=queue_event if _OUTBOX_AVAILABLE else None)
         if _TRIGGER_AVAILABLE else None
     )
 

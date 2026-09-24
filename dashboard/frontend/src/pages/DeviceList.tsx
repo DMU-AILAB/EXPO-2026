@@ -1,21 +1,23 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, ChevronRight } from 'lucide-react'
+
+import * as api from '../api'
 import StatusBadge from '../components/StatusBadge'
-import { mockDevices } from '../data/mockData'
+import { useApi } from '../hooks/useApi'
+import { formatLastSeen } from '../format'
 
 export default function DeviceList() {
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
 
-  const filtered = mockDevices.filter(
-    (d) =>
-      d.name.toLowerCase().includes(query.toLowerCase()) ||
-      d.ip.includes(query) ||
-      d.location.includes(query)
-  )
-
-  const onlineCount = mockDevices.filter((d) => d.status !== 'offline').length
+  // 검색은 **서버가** 한다(명세 §3의 `search` 파라미터) — 이름·IP·위치를 함께 본다.
+  const { data, loading, error } = useApi(() => api.listDevices(query || undefined),
+                                          [query], 10_000)
+  const devices = data?.data ?? []
+  const total = data?.total ?? 0
+  const onlineCount = devices.filter((d) => d.status === 'online').length
+  const filtered = devices
 
   return (
     <div className="max-w-[1720px] mx-auto px-8 py-7">
@@ -24,7 +26,7 @@ export default function DeviceList() {
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">디바이스 목록</h1>
           <span className="text-xs px-2.5 py-0.5 rounded-lg bg-slate-200/70 text-slate-700 font-semibold border border-slate-300/60">
-            {mockDevices.length}대
+            {total}대
           </span>
           <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200/70">
             온라인 {onlineCount}
@@ -56,16 +58,18 @@ export default function DeviceList() {
           <tbody>
             {filtered.map((device) => {
               const isOffline = device.status === 'offline'
+              const cpu = device.cpu
+              const temp = device.temperature
               const cpuColor =
-                device.cpu > 70 ? 'text-amber-600' : device.cpu > 0 ? 'text-slate-800' : 'text-slate-400'
+                cpu == null ? 'text-slate-400' : cpu > 70 ? 'text-amber-600' : 'text-slate-800'
               const tempColor =
-                device.temperature > 60
+                temp == null
+                  ? 'text-slate-400'
+                  : temp > 60
                   ? 'text-red-500'
-                  : device.temperature > 55
+                  : temp > 55
                   ? 'text-amber-500'
-                  : device.temperature > 0
-                  ? 'text-emerald-600'
-                  : 'text-slate-400'
+                  : 'text-emerald-600'
 
               return (
                 <tr
@@ -79,20 +83,20 @@ export default function DeviceList() {
                   <td className="px-4 py-3.5 font-mono font-semibold text-slate-800 whitespace-nowrap">
                     {device.name}
                   </td>
-                  <td className="px-4 py-3.5 text-slate-600">{device.location}</td>
+                  <td className="px-4 py-3.5 text-slate-600">{device.location ?? '—'}</td>
                   <td className="px-4 py-3.5 font-mono text-slate-500">{device.ip}</td>
-                  <td className="px-4 py-3.5 text-slate-600">{isOffline ? '—' : device.uptime}</td>
+                  <td className="px-4 py-3.5 text-slate-600">{isOffline ? '—' : device.uptime ?? '—'}</td>
                   <td className={`px-4 py-3.5 font-mono font-bold ${cpuColor}`}>
-                    {device.cpu > 0 ? `${device.cpu}%` : '—'}
+                    {cpu != null ? `${cpu.toFixed(0)}%` : '—'}
                   </td>
                   <td className={`px-4 py-3.5 font-mono font-bold ${tempColor}`}>
-                    {device.temperature > 0 ? `${device.temperature}°C` : '—'}
+                    {temp != null ? `${temp.toFixed(1)}°C` : '—'}
                   </td>
                   <td className="px-4 py-3.5 text-slate-600 text-center">{device.cameras.length}</td>
                   <td className="px-4 py-3.5 font-bold text-slate-800">
-                    {device.todayDetections > 0 ? `${device.todayDetections}건` : '—'}
+                    {device.today_detections > 0 ? `${device.today_detections}건` : '—'}
                   </td>
-                  <td className="px-4 py-3.5 text-slate-500">{device.lastSeen}</td>
+                  <td className="px-4 py-3.5 text-slate-500">{formatLastSeen(device.last_seen)}</td>
                   <td className="px-4 py-3.5">
                     <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-[#2c4be0] transition-colors" />
                   </td>
@@ -101,8 +105,18 @@ export default function DeviceList() {
             })}
           </tbody>
         </table>
-        {filtered.length === 0 && (
-          <div className="py-16 text-center text-slate-400 text-sm">검색 결과 없음</div>
+        {loading && filtered.length === 0 && (
+          <div className="py-16 text-center text-slate-400 text-sm">불러오는 중…</div>
+        )}
+        {!loading && filtered.length === 0 && (
+          <div className="py-16 text-center text-slate-400 text-sm">
+            {query ? '검색 결과 없음' : '등록된 디바이스가 없습니다'}
+          </div>
+        )}
+        {error && (
+          <div className="px-4 py-3 text-xs font-semibold text-red-700 bg-red-50 border-t border-red-200">
+            {error.message}
+          </div>
         )}
       </div>
     </div>

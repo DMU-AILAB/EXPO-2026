@@ -1,0 +1,21 @@
+# VisionGuide 서비스 제어만 비밀번호 없이 허용한다.
+#
+# 기기가 여러 대로 흩어지면 재시작할 때마다 각 Pi에 접속해 비밀번호를 치는 것이
+# 현실적이지 않다(`make restart PI="ip1 ip2 ip3"`가 성립하려면 필수).
+#
+# **범위를 유닛 이름까지 못박는다.** `systemctl` 전체를 열면 아무 서비스나 멈출 수
+# 있고, 인자 없는 `systemctl`은 셸 확장으로 다른 동작을 끌어올 수 있다. uhubctl
+# sudoers와 같은 원칙이다.
+#
+# 여기 없는 동작(enable/disable/edit 등)은 여전히 비밀번호가 필요하다 — 설치·해제는
+# 자주 하지 않고, 실수로 자동 시작을 꺼버리면 현장에 가야 복구된다.
+#
+# `reboot`는 대시보드의 원격 재부팅(`POST /api/system/reboot`)이 쓴다. 인자가 없는
+# 고정 명령이라 범위를 넓히지 않는다 — shutdown -h(전원이 끊긴 채로 남음)는 넣지
+# 않았다. 이 Pi는 PoE 어댑터가 GPIO3를 막고 있어 **버튼으로 다시 켤 수 없고**,
+# 완전 종료되면 현장에 가서 전원을 껐다 켜야 한다.
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-device, /usr/bin/systemctl stop visionguide-device, /usr/bin/systemctl restart visionguide-device, /usr/bin/systemctl status visionguide-device
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-roi-editor, /usr/bin/systemctl stop visionguide-roi-editor, /usr/bin/systemctl restart visionguide-roi-editor, /usr/bin/systemctl status visionguide-roi-editor
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-controls, /usr/bin/systemctl stop visionguide-controls, /usr/bin/systemctl restart visionguide-controls, /usr/bin/systemctl status visionguide-controls
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-fan, /usr/bin/systemctl stop visionguide-fan, /usr/bin/systemctl restart visionguide-fan, /usr/bin/systemctl status visionguide-fan
+__USER__ ALL=(root) NOPASSWD: /usr/sbin/reboot

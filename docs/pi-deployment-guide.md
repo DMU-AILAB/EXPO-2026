@@ -95,7 +95,7 @@ make deploy
 
 | 순서 | 타겟 | 내용 |
 |------|------|------|
-| 1 | `sync` | `device/*.py` 18개 + TFLite 모델 전송 (**Pi에는 평면으로 전개**) |
+| 1 | `sync` | `device/*.py` 24개 + TFLite 모델 전송 (**Pi에는 평면으로 전개**) |
 | 2 | `sync-roi-editor` | `apps/roi_editor/`, `apps/simulator/roi_manager.py` 전송 |
 | 3 | `deps` | `ai-edge-litert`, `opencv`, `shapely`, `pillow`, `fonts-nanum` 설치 |
 | 4 | `deps-roi-editor` | `fastapi`, `uvicorn` 설치 |
@@ -201,6 +201,43 @@ make run-roi-editor
 | `5000` | ROI 웹 에디터 | `http://192.168.0.89:5000` |
 
 > Pi IP가 바뀐 경우: `make deploy PI=<새IP>` 형식으로 덮어쓸 수 있습니다.
+
+---
+
+## 기기가 여러 대일 때
+
+카메라를 멀리 떼어 Pi를 나눠 두는 배치라면, `PI`에 주소를 공백으로 나열합니다.
+**한 대씩 차례로** 실행되고, 한 대가 실패해도 나머지는 계속합니다.
+
+```bash
+make deploy     PI="192.168.0.101 192.168.0.102 192.168.0.103"
+make sync       PI="192.168.0.101 192.168.0.102 192.168.0.103"
+make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
+```
+
+마지막에 실패한 기기를 모아 보여줍니다.
+
+```
+[실패] deploy — 성공 2대 / 실패: 192.168.0.103
+```
+
+### 시계 동기 (NTP)
+
+기기가 여러 대면 **시계가 맞아야 데이터가 맞습니다.** 이벤트 타임스탬프를 Pi가 찍어
+서버로 보내기 때문에, 어긋나면 서버에서 순서가 뒤바뀌고 통계가 엉킵니다.
+
+```bash
+make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
+#   [192.168.0.101] NTP동기=yes  PC와의 차이=+0s
+#   [192.168.0.102] NTP동기=no   PC와의 차이=-127s
+#     → 동기 안 됨. make setup-ntp PI=192.168.0.102 로 켜세요
+
+make setup-ntp PI=192.168.0.102
+```
+
+Raspberry Pi OS는 `systemd-timesyncd`를 내장하므로 보통 이미 켜져 있습니다. 다만
+**인터넷이 없는 폐쇄망**이면 동기가 안 되니, 그때는 내부 NTP 서버를 지정해야 합니다
+(`/etc/systemd/timesyncd.conf`의 `NTP=`).
 
 ---
 

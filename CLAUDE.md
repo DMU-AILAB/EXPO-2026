@@ -38,6 +38,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `apps/roi_editor/server.py` | Pi 로컬 FastAPI 서버(포트 5000) — ROI CRUD(폴리곤 Shapely 유효성 검증 포함) + 카메라 프로필 CRUD(`/api/cameras`, `model_variant` 포함) + `/api/model-variants`(모델 선택 드롭다운용) + `/api/device/status`(가동시간/CPU온도/부하/메모리, `/proc`·`/sys` 표준 파일만 사용) + 오디오 파일 업로드(`/api/audio/upload`) + 오디오 미리듣기(`/api/audio/file`, audio_dir 밖 경로 차단) + `/api/stats/timeseries`(기간별 유동인구 시계열) + `/api/events`(최근 감지 이벤트), `rois.json`/`camera_config.json` atomic write. `?camera=<id>` 쿼리로 카메라별 ROI 파일 분리 |
 | `apps/roi_editor/static/index.html` | 브라우저 ROI 웹 에디터 — `dashboard/demo`의 디자인 토큰(accent/good/amber/danger, Pretendard)과 레이아웃(상단 탭 + 화면별 페이지)을 그대로 채용. 탭 4개: **모니터링**(카메라 상태 배지, 최근 감지 이벤트 표, 오늘 총 유동인구/지팡이 사용자 감지, ROI별 오디오 안내 테스트 재생) / **ROI 편집**("+ 새 구역 그리기" 명시적 토글로만 캔버스 클릭이 꼭짓점을 추가, 목록에서 기존 ROI 클릭 시 우측 폼에 로드되어 이름/안내텍스트/오디오/우선순위/구역유형 편집 및 삭제, 카메라 선택·설정·신뢰도 슬라이더 포함) / **통계**(기간 오늘/7일/30일, 순수 canvas 꺾은선 그래프) / **녹화**(수동 시작/중지 클립 목록·재생·다운로드) |
 | `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스** · 안내 주체 매핑(`subject_for_canes`). 표준 라이브러리만 사용 |
+| `gate_chain.py` | **게이트 체인의 단일 구현** — 정지 억제 → 움직임 → 엔티티 갱신 → 사람 동반(래치 완화) 순서와 상수(`STATIC_CANE_SUPPRESS_FRAMES`·`MOVED_MIN_DIAG_RATIO`)를 한 곳에 둔다. `camera_live_pi.py`·`eval_video_recall.py`·`replay_engine.py`가 **같은 것**을 돌린다 |
+| `replay_engine.py` | 저장된 영상을 **배포와 같은 경로**로 재생하며 주석 프레임을 만든다 — roi_editor의 "검증" 탭이 MJPEG로 띄운다. 오디오는 재생하지 않고 발사 시점만 기록 |
+| `device_identity.py` | 서버가 발급한 `device_id`·`api_key`·`server_url` 보관. **값의 주인은 서버** — 등록 시 `POST /api/identity`로 심긴다. `rois.json`과 같은 Pi 로컬 런타임 파일(rsync·git 대상 아님) |
+| `event_logger.py` | Pi → 서버 아웃바운드 2종 — `EventSender`(감지 이벤트 outbox, 실패해도 보관) · `HeartbeatSender`(살아있음+상태, 실패하면 **버리고** 다음 주기에 최신값). 탐지 루프는 sqlite 한 줄만 쓰고 전송은 `roi_editor`의 스레드가 맡는다. `urllib`만 써서 Pi 의존성을 늘리지 않는다 |
+| `device_status.py` | `/proc`·`/sys`만으로 읽는 가동시간·CPU온도·부하·메모리 + **CPU 사용률**(두 시점 차이). psutil 미사용 |
+| `device_metrics.py` | 탐지 루프의 추론 시간·프레임 시간·스트리밍 여부를 sqlite로 `roi_editor`에 넘긴다 — 하트비트가 쓰는 값이 탐지 프로세스에만 있기 때문 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -57,19 +63,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 미구현 (계획)
 
-- 관리자 대시보드 백엔드 (`visionguide-backend/` — FastAPI)
-- 관리자 대시보드 프론트엔드 (`visionguide-frontend/` — React)
 - GPIO 릴레이 트리거 (`gpiozero`)
-- 설정 폴링 (`config_syncer.py`)
-- 이벤트 로거 / 서버 전송 (`event_logger.py`)
 - 헬스 워치독 (`watchdog.py`)
+- 폴리곤 편집기(대시보드) — 현재 ROI 모양은 기기의 `roi_editor`(포트 5000)에서만 그린다
+
+> **설정 폴링(`config_syncer.py`)은 만들지 않는다.** 명세 §13.0의 소유권 결정(Pi가 원본)과
+> 충돌한다 — 서버가 설정을 내려보내면 작성자가 둘이 되고, Pi의 변경 감지가 mtime뿐이라
+> 현장 편집이 조용히 덮인다. 대신 백엔드가 `roi_editor` API를 **중계**한다.
 
 ---
 
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 18개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 24개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
@@ -259,6 +266,77 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
 
 ---
 
+## 서버 연동 (다중 Pi) — 설계 결정
+
+Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세서가 정의하지 않은 Pi 측**이며
+서버 구현과 겹치지 않는다 — 명세 §6이 "현재 Pi에는 아웃바운드 HTTP 클라이언트가 없다 …
+서버만 구현해서는 동작하지 않는다"고 적어둔 자리다.
+
+- **탐지 루프는 네트워크를 모른다.** `camera_live_pi.py`는 sqlite에 한 줄 쓸 뿐이고
+  (`event_logger.queue_event`, `device_metrics.report`), 전송은 `roi_editor`의 백그라운드
+  스레드가 맡는다. 안전 기능인 음성 안내가 서버 응답을 기다리는 일이 있어서는 안 된다.
+  → **서버 연동을 쓰려면 `visionguide-roi-editor` 서비스를 켜 두어야 한다.**
+- **신원의 주인은 서버다.** `device_id`·`api_key`는 서버가 발급해 `POST /api/identity`로
+  심는다. 기기가 자기 id를 지어내면 서버 것과 두 체계가 생긴다.
+- **이벤트는 보관하고 하트비트는 버린다.** 못 보낸 이벤트는 outbox에 남지만(나중에라도
+  올라가야 의미가 있다), 5분 전의 CPU 온도는 쓸모가 없어 다음 주기에 최신값으로 대체한다.
+- **`GET /api/device/status`의 응답 스키마를 늘리지 말 것.** 백엔드의 기기 탐색(명세 §12)이
+  이 200 응답의 **바디 스키마**로 VisionGuide 여부를 판별한다(캡티브 포털 catch-all 때문에
+  "404가 아니면 있음" 식으로는 판별할 수 없다). 카메라 지표는 `/api/metrics`로 따로 낸다.
+- **신원이 바뀌면 백오프를 리셋한다.** 잘못된 주소로 실패해 백오프가 최대치까지 늘어난 뒤
+  주소를 고쳐도 리셋하지 않으면 최대 2분을 더 기다린다 — 등록 직후 "왜 연동이 안 되지?"가
+  되는 지점이라 실제 테스트에서 걸렸다.
+
+## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
+
+`tests/test_pipeline_integration.py`가 **프레임 루프를 끝까지 실제로 돌리는 유일한
+테스트**다. 탐지 결과·ROI·traffic_db를 모두 붙여 게이트 → 엔티티 → ROI → 안내 →
+서버 전송 대기열까지 한 번에 지난다.
+
+**핵심은 `thread_exceptions` 픽스처다.** 파이프라인은 자체 스레드에서 돌고, **스레드에서
+터진 예외는 pytest를 실패시키지 않는다** — 콘솔에 Traceback만 찍히고 통과로 잡힌다.
+실기기 검증에서 단위 테스트 265개가 전부 통과하는 상태인데도 탐지 루프가 매 프레임
+죽고 있었던 것(NameError·UnboundLocalError 각 1건)이 정확히 이 구멍이다. 훅을 걸어
+스레드 예외를 전부 실패로 만든다.
+
+**빈 탐지(`predict() -> []`)만 흘려보내는 테스트로는 부족하다** — 게이트·엔티티·지표·
+outbox 코드가 한 줄도 실행되지 않는다. 사람과 지팡이가 실제로 **움직이는** 좌표를 줘야
+움직임 게이트를 통과해 그 경로가 열린다.
+
+## 게이트 체인은 한 곳에만 있다 (`gate_chain.py`)
+
+같은 판정을 돌려야 하는 곳이 셋이다 — 배포(`device/camera_live_pi.py`), 모델 채택
+판정(`tools/eval/eval_video_recall.py`), 화면 검증(`device/replay_engine.py`).
+각자 구현을 들고 있으면 **배포가 바뀔 때 나머지가 조용히 어긋나** 평가가 실제와 다른
+것을 재고 화면이 실제와 다른 것을 보여준다. `GateChain.step()`이 유일한 구현이고,
+세 곳 모두 이것을 호출한다. 게이트를 추가·수정할 때는 반드시 여기만 고칠 것.
+
+- **순서에 의미가 있다.** `정지 억제 → 움직임 게이트 → 엔티티 갱신 → 사람 동반`.
+  엔티티 갱신이 움직임 게이트 **뒤**, 사람 동반 게이트 **앞**에 오는 것이 핵심이다 —
+  래치의 입력은 앞의 두 게이트를 통과한 지팡이이고 출력은 사람 동반 게이트의
+  완화라, 순서를 바꾸면 순환이 생긴다.
+- `STATIC_CANE_SUPPRESS_FRAMES`·`MOVED_MIN_DIAG_RATIO`는 여기 있다.
+  `camera_live_pi.py`가 재수출하므로 기존 `from camera_live_pi import ...`는 그대로 쓴다.
+- `GateResult.roi_targets`는 `(주체, bbox)` 목록이다 — 실제 지팡이 박스와 가상 지팡이
+  박스가 같은 목록에 들어가므로, ROI 판정부는 둘을 구분할 필요가 없다.
+
+## 영상 검증 재생 (`replay_engine.py` + roi_editor "검증" 탭)
+
+게이트 동작을 터미널 숫자로만 볼 수 있던 것을 화면으로 옮긴 것이다. **가상 지팡이
+박스가 맞는 자리에 그려졌는지 같은 것은 수치로 판단할 수 없고**, ROI를 그려 놓고
+"이 영상이면 안내가 나갔을까"를 확인할 방법도 없었다.
+
+- **ROI는 지금 편집 중인 `rois.json`을 그대로 쓴다** — 그려 놓고 바로 확인하는 것이
+  이 기능의 목적이다.
+- **시각은 영상 시간**(프레임 ÷ fps)이다. 벽시계를 쓰면 디코딩 속도에 따라 래치·
+  재식별·쿨다운 판정이 달라져 같은 영상에서 결과가 재현되지 않는다.
+- **오디오는 재생하지 않는다.** 기기에서는 실제 안내 서비스가 같은 사운드 장치를
+  쓰고 있어 검증 재생이 끼어들면 안 된다. 발사 시점은 이벤트 목록으로 남는다.
+- 영상은 `datasets/videos/` 또는 기기의 `~/visionguide/videos/`에서 찾는다.
+  경로 탈출을 막으려고 **파일명만** 받는다.
+- 추론 백엔드 import는 재생을 시작할 때 한다 — 검증 탭을 쓰지 않는 기기에서
+  roi_editor 기동이 무거워지지 않게.
+
 ## 보행자 엔티티 (`pedestrian_entity.py`) — 설계 결정
 
 `cane_person_assoc.py`는 스스로 밝히듯 **"이번 한 프레임"만** 본다. 지팡이 트랙과 사람
@@ -311,9 +389,13 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   `roi_editor`를 거치지 않음)이므로, 녹화 제어(`/recording/start|stop|status|list|clips/*`)도
   `MJPEGServer`의 같은 포트에 라우트를 추가해 브라우저가 직접 호출한다 — 별도 프록시나 HTTP
   클라이언트 의존성이 필요 없다.
-- **녹화 대상 프레임은 `MJPEGServer.push()`가 받는, 이미 회전/탐지오버레이/ROI오버레이가 그려진
-  최종 프레임**이다 — 별도의 raw 프레임 캡처 경로는 두지 않았다(위 정책 예외로 raw/오버레이
-  구분이 실익이 없음).
+- **녹화 대상 프레임은 기본적으로 오버레이가 그려진 최종 프레임**이다(`MJPEGServer.push()`가
+  받는 그것). 데모·검토용으로는 그쪽이 쓸모 있다.
+  - **학습 데이터로 쓰려면 `?raw=1`로 녹화해야 한다.** 오버레이가 그려진 프레임으로
+    학습하면 모델이 **그려진 박스를 단서로 배우는** 오염이 생긴다. raw 모드는 그리기
+    이전 프레임을 저장하고, 사이드카에 `"raw": true`를 남긴다(파일만 보고는 구분할 수 없다).
+  - **복사 비용은 raw 녹화 중에만 낸다**(`ClipRecorder.wants_raw`) — 1080p 한 장 복사가
+    Pi에서 1~2ms다. 화면·스트리밍은 항상 오버레이본이다.
 - **저장 위치**: `recordings/<camera_id>/`(레거시 단일카메라는 `recordings/legacy/`).
   `rois.json`/`camera_config.json`과 같은 원칙으로 **git 추적 대상도 rsync 배포 대상도 아니다**
   (`.gitignore`의 `recordings/`) — Pi 로컬에만 쌓이는 산출물이다.
@@ -471,6 +553,14 @@ make install-service
 make ping
 ```
 
+**서비스 재시작은 반드시 `systemctl`로** — `pkill`로는 되살아나지 않는다. 앱이
+SIGTERM을 받아 **정상 종료(exit 0)** 하므로 `Restart=on-failure`가 걸리지 않는다.
+`make install-service`가 유닛 4개에 대한 `systemctl start/stop/restart/status`만
+비밀번호 없이 허용하는 sudoers(`deploy/visionguide-systemctl.sudoers`)를 함께 설치하므로,
+그 뒤로는 `make restart PI="ip1 ip2 ip3"`로 여러 대를 한 번에 재시작할 수 있다.
+**`enable`/`disable`은 일부러 넣지 않았다** — 실수로 자동 시작을 꺼버리면 현장에 가야
+복구된다.
+
 **임베디드 headless 운영 흐름**: `make install-service` 이후로는 Pi IP 접속이 최초 ROI/오디오 설정(또는 재설정) 시에만 필요합니다.
 탐지·음성 안내(`visionguide-device.service`)는 네트워크 연결 여부와 무관하게 기기 단독으로 부팅 시 자동 시작되며,
 `roi_editor`(포트 5000, `visionguide-roi-editor.service`)에서 저장한 `rois.json` 변경은 최대 2초 내 재시작 없이 자동 반영됩니다
@@ -490,7 +580,23 @@ make sync   PI=192.168.0.89
 # 현재 Pi IP 확인 (라우터 DHCP 테이블 또는 Pi에서 실행)
 #   Pi에서: hostname -I
 #   PC에서: arp -a | findstr raspberry  (Windows)
+
+# ★ 기기가 여러 대면 공백으로 나열한다 — 한 대씩 차례로 실행된다
+make deploy     PI="192.168.0.101 192.168.0.102 192.168.0.103"
+make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 ```
+
+**다중 호스트는 재귀 호출이다** — 개별 레시피는 한 대만 상대하고, `PI`에 주소가 둘
+이상이면 `MULTI_TARGETS`가 한 대씩 다시 `make`를 부른다. 병렬로 돌리지 않는 이유는
+한 대가 실패했을 때 출력이 뒤섞여 원인을 못 찾기 때문이고, **한 대가 실패해도 나머지는
+계속한다** — 3대 중 1대만 꺼져 있을 때 나머지 배포까지 막을 이유가 없다. 실패한 기기는
+마지막에 모아서 보여주고 종료코드로 알린다.
+
+**기기가 여러 대면 시계를 맞춰야 한다.** 이벤트 타임스탬프는 Pi가 찍어 서버로 보내므로
+(`event_logger.py`), 시계가 어긋나면 서버에서 순서가 뒤바뀌고 시간대별 통계가 엉킨다.
+나중에 카메라 간 핸드오프를 넣으면 "몇 초 전에 저쪽에서 사라졌다"를 비교하게 되는데,
+그때는 어긋남이 곧 오작동이다. `make setup-ntp`로 켜고 `make check-time`으로 확인한다
+(Raspberry Pi OS는 `systemd-timesyncd`를 내장하므로 보통 이미 켜져 있다).
 
 **배포 대상 파일** — `Makefile` 상단 `DEPLOY_PY` 변수로 관리:
 
@@ -594,41 +700,42 @@ Pi에서 실행될 코드를 작성하거나 수정할 때 반드시 지켜야 �
 ## 대시보드 백엔드 개발 명령어
 
 ```bash
-cd visionguide-backend
+cd dashboard/backend
 
-# 의존성 설치
-pip install -e ".[dev]"          # pyproject.toml 기준
-# 또는
-pip install fastapi uvicorn sqlalchemy pydantic-settings passlib[bcrypt] \
-            python-jose httpx loguru shapely
+pip install -r requirements.txt
 
-# 개발 서버 실행
-uvicorn app.main:app --reload --port 8000
-
-# DB 초기화 (관리자 계정 시드)
+# DB 초기화 (관리자 계정 시드) — 최초 1회
 python -m app.db.init_db
 
-# 테스트 실행
-pytest tests/ -v
-pytest tests/test_auth.py -v      # 특정 파일만
+# 개발 서버. ★ --workers 금지 (명세 §1.3: 인메모리 하트비트 버퍼 + APScheduler)
+uvicorn app.main:app --reload --port 8000
 
-# Docker Compose
-docker-compose up --build
+# 테스트
+python -m pytest tests/ -v
+python -m pytest tests/test_pi_contract.py -v   # Pi 계약 정합만
 ```
+
+**`.env`에서 반드시 설정할 것**: `PUBLIC_BASE_URL`(기기가 이벤트를 보낼 **서버 자신의 주소**).
+비어 있으면 Pi의 `DeviceIdentity.is_usable()`이 False가 되어 **아무것도 전송되지 않는다**.
+
+`tests/test_pi_contract.py`는 `device/`의 Pi 모듈을 실제로 import해 페이로드를 맞대어 본다 —
+스키마를 눈으로 비교하는 방식으로는 못 잡는 종류의 사고가 두 번 있었다(파일 주석 참고).
 
 ---
 
 ## 대시보드 프론트엔드 개발 명령어
 
 ```bash
-cd visionguide-frontend
+cd dashboard/frontend
 
 npm install
-npm run dev          # Vite 개발 서버
-npm run build        # 프로덕션 빌드
-npm run lint         # ESLint
+npm run dev          # Vite 개발 서버 (5173)
+npm run build        # tsc + 프로덕션 빌드
 npm run typecheck    # tsc --noEmit
 ```
+
+백엔드 주소는 `VITE_API_BASE`로 준다(`.env.example` 참고, 기본 `http://localhost:8000`).
+백엔드의 `CORS_ORIGINS`에 `http://localhost:5173`이 있어야 한다.
 
 ---
 
@@ -665,8 +772,10 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
 | `apps/simulator/trigger_dispatcher.py` | Streamlit 전용 디바운싱/쿨다운 (시뮬레이터용) | ✅ 구현됨 |
 | `preprocess.py` | Letterbox 리사이즈 + CLAHE 야간 보정 | 미구현 (예정) |
 | `priority_policy.py` | 다중 ROI 동시 점유 시 heapq 우선순위 | 미구현 (예정) |
-| `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 | 미구현 (예정) |
-| `event_logger.py` | 로컬 SQLite 버퍼 → 비동기 서버 전송 | 미구현 (예정) |
+| `config_syncer.py` | 60초 폴링, atomic config 교체, 핫리로드 | **만들지 않음** — 명세 §13.0의 소유권 결정과 충돌 |
+| `event_logger.py` | outbox(sqlite) → 비동기 서버 전송 + 하트비트 | ✅ 구현됨 |
+| `device_identity.py` | 서버가 발급한 device_id·api_key·server_url 보관 | ✅ 구현됨 |
+| `device_metrics.py` | 탐지 루프의 추론/프레임 시간을 roi_editor로 전달 | ✅ 구현됨 |
 | `watchdog.py` | psutil CPU/온도/디스크, 픽셀 분산으로 렌즈 오염 탐지 | 미구현 (예정) |
 
 ---

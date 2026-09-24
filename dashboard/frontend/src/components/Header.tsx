@@ -1,10 +1,13 @@
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Scan, Bell, LayoutGrid, Cpu, Video, BarChart3, Search } from 'lucide-react'
-import { mockDevices } from '../data/mockData'
+import { Scan, LayoutGrid, Cpu, Video, BarChart3, Search, LogOut } from 'lucide-react'
+
+import * as api from '../api'
+import { useApi } from '../hooks/useApi'
+import { useAuth } from '../auth'
 
 const tabs = [
   { label: '관제 현황', path: '/', icon: LayoutGrid },
-  { label: '디바이스', path: '/devices', icon: Cpu, badge: String(mockDevices.length) },
+  { label: '디바이스', path: '/devices', icon: Cpu },
   { label: '실시간 스트림', path: '/streams', icon: Video, live: true },
   { label: '통계', path: '/stats', icon: BarChart3 },
   { label: '디바이스 탐색', path: '/scan', icon: Search },
@@ -13,7 +16,12 @@ const tabs = [
 export default function Header() {
   const location = useLocation()
   const navigate = useNavigate()
-  const onlineCount = mockDevices.filter((d) => d.status !== 'offline').length
+  const { user, logout } = useAuth()
+
+  // 헤더의 온라인 배지는 어느 화면에 있든 최신이어야 해서 자체적으로 폴링한다.
+  const { data: summary } = useApi(() => api.statsSummary(), [], 10_000)
+  const onlineCount = summary?.online_device_count ?? 0
+  const totalCount = summary?.total_device_count ?? 0
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
@@ -52,9 +60,9 @@ export default function Header() {
               >
                 <Icon className="w-3.5 h-3.5" strokeWidth={active ? 2.2 : 2} />
                 {tab.label}
-                {'badge' in tab && tab.badge && (
+                {tab.path === '/devices' && totalCount > 0 && (
                   <span className={`text-[10px] px-1.5 rounded-full font-semibold ${active ? 'bg-white/20 text-white' : 'bg-slate-300/60 text-slate-700'}`}>
-                    {tab.badge}
+                    {totalCount}
                   </span>
                 )}
                 {'live' in tab && tab.live && (
@@ -68,31 +76,39 @@ export default function Header() {
         {/* Right actions */}
         <div className="flex items-center gap-3.5">
           {/* Online status */}
-          <div className="glass-badge gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-200/70 shadow-sm shadow-emerald-500/5">
+          <div className={`glass-badge gap-2 px-3.5 py-1.5 rounded-full shadow-sm ${
+            onlineCount === totalCount && totalCount > 0
+              ? 'bg-emerald-50/80 border border-emerald-200/70 shadow-emerald-500/5'
+              : 'bg-amber-50/80 border border-amber-200/70 shadow-amber-500/5'}`}>
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600" />
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                onlineCount === totalCount && totalCount > 0 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                onlineCount === totalCount && totalCount > 0 ? 'bg-emerald-600' : 'bg-amber-600'}`} />
             </span>
-            <span className="text-xs font-bold text-emerald-700 tracking-tight">
-              {onlineCount} / {mockDevices.length} 온라인
+            <span className={`text-xs font-bold tracking-tight ${
+              onlineCount === totalCount && totalCount > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+              {onlineCount} / {totalCount} 온라인
             </span>
           </div>
 
-          {/* Notification bell */}
-          <button className="glass-btn w-10 h-10 rounded-2xl justify-center relative">
-            <Bell className="w-4 h-4" strokeWidth={2} />
-            <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white" />
-          </button>
-
-          {/* Admin avatar */}
+          {/* Admin */}
           <div className="flex items-center gap-3 pl-2.5 border-l border-slate-200">
             <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-[#2c4be0] to-[#7c3aed] flex items-center justify-center text-xs font-bold text-white shadow-md shadow-[#2c4be0]/20">
               관제
             </div>
             <div className="hidden xl:block text-left">
-              <div className="text-xs font-bold text-slate-800 leading-tight">Admin_Ops</div>
-              <div className="text-[10.5px] text-slate-500 font-medium">보행안전 통합팀</div>
+              <div className="text-xs font-bold text-slate-800 leading-tight">
+                {user?.display_name ?? user?.username ?? '—'}
+              </div>
+              <div className="text-[10.5px] text-slate-500 font-medium">{user?.team ?? ''}</div>
             </div>
+            <button
+              onClick={() => { void logout().then(() => navigate('/login')) }}
+              title="로그아웃"
+              className="glass-btn w-10 h-10 rounded-2xl justify-center">
+              <LogOut className="w-4 h-4" strokeWidth={2} />
+            </button>
           </div>
         </div>
       </div>

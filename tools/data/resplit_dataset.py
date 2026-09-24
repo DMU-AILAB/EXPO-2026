@@ -95,6 +95,16 @@ _RF_SUFFIX = re.compile(r"_[A-Za-z0-9]+\.rf\.[0-9a-f]+$")
 # (20210514_182405-0-_jpg...). 밑줄만 받으면 그 8장이 촬영세션이 아니라 파일명
 # 단위로 묶여 인접 세션과 split이 갈린다.
 _AIHUB = re.compile(r"^20210514_(\d{2})(\d{2})(\d{2})[-_]")
+# 영상에서 뽑은 프레임. **한 클립 = 한 그룹**이어야 한다.
+#
+# 이 규칙이 없으면 프레임마다 다른 그룹이 되어 거의 같은 장면이 train/val/test에
+# 흩어진다 — AIHub 연속 촬영에서 **실측 누수율 99.7%**를 만든 바로 그 경로다.
+# 파일명 규칙은 `docs/data_collection_plan.md` §3:
+#     tr_lab_20260920_007_f000180.jpg  ->  클립 tr_lab_20260920_007
+#
+# `_f` + 숫자 4자리 이상만 잡는다. 기존 21,631장(v1·v2 train)에 이 형태가 **0건**임을
+# 확인했으므로 Roboflow/AIHub/bg/lk 파일과 충돌하지 않는다.
+_CLIP_FRAME = re.compile(r"^(.+)_f\d{4,}$")
 
 
 def stratum_of(name: str) -> str:
@@ -115,6 +125,10 @@ def stratum_of(name: str) -> str:
         return "pedcctv"
     if _AIHUB.match(name):
         return "aihub_cane"
+    if _CLIP_FRAME.match(Path(name).stem):
+        # 자체 촬영본. 기존 소스(실외/AIHub)와 도메인이 달라 층을 나눈다 — 섞으면
+        # 실내 프레임이 val/test에 거의 안 들어가 실내 지표가 둔감해진다.
+        return "clip_" + name.split("_", 1)[0]
     return "roboflow_cane"
 
 
@@ -124,6 +138,8 @@ def group_key(name: str, aihub_sessions: dict[int, int]) -> str:
     - Roboflow 증강본은 해시를 떼면 같은 원본 stem으로 모인다
     - AIHub는 초 단위 시각을 촬영 세션으로 묶는다 (이웃한 초는 같은 장면이라
       원본 stem만으로는 부족하다)
+    - **영상 프레임(`..._f000180.jpg`)은 클립 단위로 묶는다** — 인접 프레임은 거의
+      같은 그림이라 파일 단위로 나누면 그대로 누수가 된다
     - 나머지(pedcctv/bg/lk)는 서로 독립된 사진이라 1파일 1그룹
     """
     stem = Path(name).stem
@@ -131,6 +147,9 @@ def group_key(name: str, aihub_sessions: dict[int, int]) -> str:
     if m:
         h, mi, s = (int(x) for x in m.groups())
         return f"aihub_s{aihub_sessions[h * 3600 + mi * 60 + s]}"
+    clip = _CLIP_FRAME.match(stem)
+    if clip:
+        return "clip_" + clip.group(1)
     return "rf_" + _RF_SUFFIX.sub("", stem)
 
 

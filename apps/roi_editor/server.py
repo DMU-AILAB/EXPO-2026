@@ -9,16 +9,22 @@
     python roi_editor/server.py --rois /home/ailab/visionguide/rois.json --port 5000
 """
 import argparse
+import hmac
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, RedirectResponse, StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from shapely.geometry import Polygon
@@ -46,6 +52,13 @@ from camera_config import (  # noqa: E402
     load_camera_config, save_camera_config, validate_camera_config,
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
+from event_logger import EventSender, HeartbeatSender, pending_count  # noqa: E402
+from device_metrics import read_metrics  # noqa: E402
+from device_status import read_status  # noqa: E402
+from device_identity import (  # noqa: E402
+    APP_VERSION, DeviceIdentity, clear_identity, default_path, load_identity,
+    save_identity,
+)
 
 # ---------------------------------------------------------------------------
 # Paths (overridden by CLI args at startup)
@@ -58,6 +71,7 @@ rois_path: Path = _DEFAULT_ROIS
 audio_dir: Path = _DEFAULT_AUDIO_DIR
 traffic_db_path: Path = _DEFAULT_TRAFFIC_DB
 camera_config_path: Path = _DEFAULT_CAMERA_CONFIG
+identity_path: Path = default_path(_ROOT)
 STATIC_DIR = Path(__file__).parent / "static"
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _VALID_ZONE_TYPES = {"trigger", "exclude"}
@@ -104,6 +118,21 @@ def _safe_filename(name: str) -> str:
     return name or "audio.mp3"
 
 
+def _all_traffic_dbs() -> list[Path]:
+    """등록된 모든 카메라의 traffic_db + 기본 경로.
+
+    **카메라마다 db 파일이 다를 수 있다**(`CameraProfile.traffic_db`). 기본 경로 하나만
+    보면 다른 카메라의 이벤트 outbox·런타임 지표가 통째로 보이지 않는다 — 그 상태에서는
+    이벤트가 쌓이기만 하고 서버로 영영 올라가지 않는다.
+    """
+    paths: dict[str, Path] = {str(traffic_db_path): traffic_db_path}
+    for profile in load_camera_config(camera_config_path):
+        value = Path(profile.traffic_db)
+        resolved = value if value.is_absolute() else (rois_path.parent / value).resolve()
+        paths.setdefault(str(resolved), resolved)
+    return list(paths.values())
+
+
 def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
     """?camera=<id> 쿼리가 있으면 해당 카메라 프로필의 roi_config/traffic_db 경로를,
     없으면 기존 단일-카메라 기본 경로를 반환한다 (완전 하위호환).
@@ -120,42 +149,17 @@ def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
 
 
 def _read_device_status() -> dict:
-    """Pi 상태(가동시간/CPU온도/부하/메모리)를 표준 라이브러리 /proc, /sys 파일만으로 읽는다.
-    psutil 등 신규 의존성을 추가하지 않기 위해서다 (Pi에는 무거운 패키지를 최소화하는 방침).
-    Pi가 아닌 환경(개발 PC 등)에서 실행되면 해당 항목만 조용히 null로 빠진다."""
-    status: dict = {"uptime_seconds": None, "cpu_temp_c": None, "load_avg": None,
-                     "mem_used_mb": None, "mem_total_mb": None}
+    """Pi 상태(가동시간/CPU온도/부하/메모리).
 
-    try:
-        with open("/proc/uptime") as f:
-            status["uptime_seconds"] = float(f.read().split()[0])
-    except OSError:
-        pass
+    `/proc`·`/sys` 읽기는 `device/device_status.py`로 옮겼다 — 하트비트
+    (`event_logger.HeartbeatSender`)가 같은 값을 쓰면서 두 곳에 같은 코드가 생길
+    상황이었다.
 
-    try:
-        with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            status["cpu_temp_c"] = round(int(f.read().strip()) / 1000.0, 1)
-    except (OSError, ValueError):
-        pass
-
-    try:
-        status["load_avg"] = list(os.getloadavg())
-    except (OSError, AttributeError):
-        pass
-
-    try:
-        meminfo = {}
-        with open("/proc/meminfo") as f:
-            for line in f:
-                key, _, rest = line.partition(":")
-                meminfo[key] = int(rest.strip().split()[0])  # kB
-        if "MemTotal" in meminfo and "MemAvailable" in meminfo:
-            status["mem_total_mb"] = round(meminfo["MemTotal"] / 1024, 1)
-            status["mem_used_mb"] = round((meminfo["MemTotal"] - meminfo["MemAvailable"]) / 1024, 1)
-    except OSError:
-        pass
-
-    return status
+    **응답 스키마를 늘리지 말 것.** 백엔드의 기기 탐색(명세 §12)이 "이 200 응답의
+    바디 스키마"로 VisionGuide 기기 여부를 판별한다. 카메라별 런타임 지표는
+    `/api/metrics`로 따로 낸다.
+    """
+    return read_status()
 
 
 def _validate_rois(rois: list) -> list[str]:
@@ -221,20 +225,30 @@ async def get_stats(camera: str | None = None):
 
 
 _STATS_PERIOD_DAYS = {"7d": 7, "30d": 30}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @app.get("/api/stats/timeseries")
-async def get_stats_timeseries(camera: str | None = None, period: str = "today"):
+async def get_stats_timeseries(camera: str | None = None, period: str = "today",
+                               date: str | None = None):
     """유동인구 시계열 — period=today면 시간대별(0~23시), 7d/30d면 일별 합계.
 
     ROI별 집계는 현재 DB 스키마(카메라 단위 시간별 합계만 기록)로는 낼 수 없어 대상 외.
+
+    `date`(YYYY-MM-DD)는 **시간대별 조회에만** 쓴다 — 서버가 꺼져 있던 구간을 나중에
+    메우기 위한 것이다. 이 값이 없으면 수집기가 볼 수 있는 시간별 데이터는 '오늘'뿐이라,
+    중단된 시간대는 영영 0으로 남는다. `read_hourly_breakdown()`이 이미 date를 받으므로
+    여기서는 넘겨주기만 하면 된다.
     """
     if period != "today" and period not in _STATS_PERIOD_DAYS:
         raise HTTPException(status_code=400, detail=f"unknown period: {period}")
+    if date is not None and not _DATE_RE.match(date):
+        raise HTTPException(status_code=400, detail="date는 YYYY-MM-DD 형식이어야 합니다")
 
     path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
     if period == "today":
-        return {"granularity": "hour", "points": read_hourly_breakdown(path)}
+        return {"granularity": "hour", "points": read_hourly_breakdown(path, date),
+                "date": date}
     days = _STATS_PERIOD_DAYS[period]
     return {"granularity": "day", "points": read_range_daily_totals(path, days)}
 
@@ -346,7 +360,8 @@ async def get_model_variants():
     """카메라 편집 UI가 드롭다운을 채울 때 쓰는 모델 목록 — camera_config.MODEL_VARIANTS가
     유일한 출처라서 UI에 라벨을 하드코딩해도 드리프트가 안 나지만, API로 노출해두면
     새 모델을 추가할 때 index.html을 건드릴 필요가 없다."""
-    return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()]}
+    return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()],
+            "default": _DEFAULT_MODEL_VARIANT}
 
 
 @app.get("/api/capture-presets")
@@ -492,6 +507,356 @@ async def switch_to_ap():
 # ---------------------------------------------------------------------------
 # iptables가 AP 클라이언트의 포트 80 요청을 5000으로 리다이렉트할 때
 # OS별 캡티브 포털 감지 URL이 여기로 들어오면 대시보드로 302 응답.
+# ---------------------------------------------------------------------------
+# 기기 신원 / 버전 — 서버의 기기 탐색·등록(백엔드 명세 §12)이 쓴다.
+#
+# 명세는 "서버가 Pi를 찾는 것"까지만 정의하고 **발급한 api_key를 Pi에 넣는 경로는
+# 비어 있다.** 여기서 그 수신구를 연다. 서버가 Pi에 쓰는 패턴 자체는 이미 있다 —
+# 명세 §13.0이 카메라/ROI 설정을 `POST /api/cameras`로 밀어 넣도록 정의한다.
+# ---------------------------------------------------------------------------
+
+class IdentityIn(BaseModel):
+    device_id: str
+    api_key: str
+    server_url: str = ""
+    name: str = ""
+    location: str = ""
+    registered_at: str = ""
+
+
+@app.get("/api/version")
+def get_version():
+    """기기 탐색이 `version` 필드를 채우는 소스.
+
+    명세 §12에 "이 필드를 채울 소스가 현재 Pi에 없다"고 적힌 공백이다.
+    **등록 전에도 인증 없이 응답해야 한다** — 등록 자체가 이 응답을 보고 이뤄진다.
+    """
+    ident = load_identity(identity_path)
+    return {
+        "version": APP_VERSION,
+        "product": "VisionGuide",
+        "registered": ident is not None,
+        "device_id": ident.device_id if ident else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 기기 제어 — 대시보드의 "서비스 재시작" · "재부팅" 버튼
+#
+# 이 두 라우트가 없어서 백엔드의 제어 기능이 통째로 동작하지 않았다(없는 경로를
+# 부르고 예외를 삼켜 항상 202를 돌려주고 있었다).
+#
+# **인증을 붙인다.** 포트 5000의 나머지 라우트는 무인증이지만, 그건 같은 망에서
+# 설정을 바꾸는 것까지고 재부팅은 서비스 자체를 끊는다. 서버가 등록 때 심어둔
+# api_key를 헤더로 받아 대조한다 — 신원이 없는 기기는 아직 아무에게도 속하지 않았
+# 으므로 제어를 거부한다(현장 설치 중 오작동 방지).
+#
+# 재시작은 반드시 systemctl로 한다. CLAUDE.md에 적힌 대로 앱이 SIGTERM에 정상
+# 종료(exit 0)하므로 pkill로는 Restart=on-failure가 걸리지 않아 되살아나지 않는다.
+# ---------------------------------------------------------------------------
+
+def _require_device_key(request: Request) -> None:
+    """서버가 심어둔 api_key와 대조한다."""
+    ident = load_identity(identity_path)
+    if ident is None or not ident.api_key:
+        raise HTTPException(403, "기기가 아직 서버에 등록되지 않아 원격 제어를 받지 않습니다")
+    presented = request.headers.get("x-device-key", "")
+    # 길이가 달라도 같은 시간이 걸리도록 비교한다.
+    if not hmac.compare_digest(presented, ident.api_key):
+        raise HTTPException(401, "device key가 일치하지 않습니다")
+
+
+def _run_privileged(cmd: list[str], what: str) -> None:
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=10)
+    except FileNotFoundError as exc:
+        raise HTTPException(500, f"{what} 실패: 명령을 찾을 수 없습니다 ({cmd[0]})") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(504, f"{what} 실패: 명령이 응답하지 않습니다") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        # sudoers가 안 깔린 기기에서 비밀번호를 기다리다 실패하는 경우가 흔하다.
+        raise HTTPException(500, f"{what} 실패: {stderr or exc}") from exc
+
+
+@app.post("/api/service/restart")
+def post_service_restart(request: Request):
+    """탐지 서비스만 재시작한다 — 라즈베리파이 재부팅이 아니다."""
+    _require_device_key(request)
+    _run_privileged(["sudo", "-n", "/usr/bin/systemctl", "restart", "visionguide-device"],
+                    "서비스 재시작")
+    print("[INFO] 원격 요청으로 visionguide-device 재시작")
+    return {"ok": True, "service": "visionguide-device"}
+
+
+@app.post("/api/system/reboot")
+def post_system_reboot(request: Request, confirm: bool = False):
+    """기기를 재부팅한다.
+
+    `confirm=true`를 요구하는 이유: 이 Pi는 PoE 어댑터가 GPIO3를 점유해 **버튼으로
+    다시 켤 수 없다**. 재부팅이 실패해 꺼진 채로 남으면 현장에 가야 한다.
+    """
+    _require_device_key(request)
+    if not confirm:
+        raise HTTPException(400, "재부팅은 confirm=true가 필요합니다")
+    # 응답을 먼저 돌려주고 끊기도록 짧게 지연시킨다 — 즉시 죽으면 호출자는 연결
+    # 리셋만 보고 성공인지 실패인지 구분할 수 없다.
+    threading.Timer(
+        1.0,
+        lambda: subprocess.run(["sudo", "-n", "/usr/sbin/reboot"], capture_output=True),
+    ).start()
+    print("[INFO] 원격 요청으로 재부팅 예약(1초 후)")
+    return {"ok": True, "rebooting_in_sec": 1}
+
+
+@app.get("/api/metrics")
+def get_metrics():
+    """카메라별 런타임 지표(추론 시간·프레임 시간·스트리밍 여부).
+
+    탐지 프로세스가 sqlite로 넘겨준 값이다 — 보고가 끊기면 `stale`로 표시된다.
+    """
+    cameras = []
+    seen: set[str] = set()
+    for path in _all_traffic_dbs():
+        for row in read_metrics(path):
+            if row.get("camera_id") in seen:
+                continue
+            seen.add(row.get("camera_id"))
+            cameras.append(row)
+    return {"cameras": cameras}
+
+
+@app.get("/api/outbox")
+def get_outbox():
+    """서버 연동 상태 — 이벤트 전송과 하트비트가 살아있는지 한눈에 본다."""
+    ev, hb = _sender["thread"], _sender["heartbeat"]
+    return {
+        "events": {
+            "pending": sum(pending_count(p) for p in _all_traffic_dbs()),
+            "sent_total": ev.sent_total if ev else 0,
+            "last_error": ev.last_error if ev else None,
+            "running": bool(ev and ev.is_alive()),
+        },
+        "heartbeat": {
+            "sent_total": hb.sent_total if hb else 0,
+            "last_sent_at": hb.last_sent_at if hb else None,
+            "last_error": hb.last_error if hb else None,
+            "running": bool(hb and hb.is_alive()),
+        },
+    }
+
+
+@app.get("/api/heartbeat/preview")
+def heartbeat_preview():
+    """지금 보낼 하트비트 본문 — 서버 없이도 필드가 채워지는지 확인하는 용도."""
+    hb = _sender["heartbeat"]
+    if hb is None:
+        raise HTTPException(503, "하트비트 스레드가 없습니다")
+    return hb.build_payload()
+
+
+@app.get("/api/identity")
+def get_identity():
+    """현재 신원. **api_key는 돌려주지 않는다** — 한 번 심으면 읽어갈 이유가 없고
+    포트 5000은 같은 네트워크에 열려 있다."""
+    ident = load_identity(identity_path)
+    if ident is None:
+        return {"registered": False}
+    return {"registered": True, "device_id": ident.device_id,
+            "server_url": ident.server_url, "name": ident.name,
+            "location": ident.location, "registered_at": ident.registered_at}
+
+
+@app.post("/api/identity")
+def post_identity(req: IdentityIn):
+    """서버가 등록 시 발급한 신원을 심는다.
+
+    **덮어쓰기를 허용한다** — 기기를 다른 서버로 옮기거나 키를 교체하는 정상 흐름이
+    있고, 거부하면 사람이 파일을 직접 지워야 한다.
+    """
+    ident = DeviceIdentity(
+        device_id=req.device_id.strip(), api_key=req.api_key.strip(),
+        server_url=req.server_url.rstrip("/"), name=req.name,
+        location=req.location, registered_at=req.registered_at,
+    )
+    if not ident.device_id or not ident.api_key:
+        raise HTTPException(400, "device_id와 api_key는 비워둘 수 없습니다")
+    try:
+        save_identity(identity_path, ident)
+    except OSError as exc:
+        raise HTTPException(500, f"신원 저장 실패: {exc}") from exc
+    print(f"[INFO] 기기 신원 등록: {ident.device_id} -> {ident.server_url or '(서버 미지정)'}")
+    return {"ok": True, "device_id": ident.device_id, "usable": ident.is_usable()}
+
+
+@app.delete("/api/identity")
+def delete_identity():
+    """등록 해제. 기기를 회수하거나 다른 현장으로 옮길 때 쓴다."""
+    return {"ok": True, "removed": clear_identity(identity_path)}
+
+
+# ---------------------------------------------------------------------------
+# 검증 재생 — 저장된 영상을 배포와 같은 경로로 돌려 화면에서 확인한다.
+#
+# 게이트 로직은 `device/replay_engine.py`가 `gate_chain.GateChain`으로 돌린다.
+# 여기서는 세션 하나를 만들고 MJPEG로 내보내는 것만 한다.
+# ---------------------------------------------------------------------------
+
+# 영상을 찾을 디렉터리. PC 개발 트리에는 datasets/videos/ 가 있고, 기기에는 보통
+# ~/visionguide/videos/ 에 사람이 직접 올려둔다.
+def _video_dirs() -> list[Path]:
+    return [d for d in (_ROOT / "datasets" / "videos", _ROOT / "videos",
+                        Path(__file__).parent.parent / "videos") if d.is_dir()]
+
+
+_replay = {"session": None}
+_sender: dict = {"thread": None, "heartbeat": None}
+
+
+class ReplayStart(BaseModel):
+    video: str
+    conf: float = 0.55
+    model_variant: str = _DEFAULT_MODEL_VARIANT
+    require_person: bool = _DEFAULT_REQUIRE_PERSON
+    speed: float = 1.0
+    loop: bool = False
+    debug_gates: bool = True
+
+
+def _resolve_video(name: str) -> Path:
+    """이름으로 영상을 찾는다. 경로 탈출(../)을 막으려고 파일명만 받는다."""
+    safe = Path(name).name
+    for d in _video_dirs():
+        cand = d / safe
+        if cand.is_file():
+            return cand
+    raise HTTPException(404, f"영상을 찾을 수 없습니다: {safe}")
+
+
+@app.get("/api/replay/videos")
+def replay_videos():
+    out = []
+    for d in _video_dirs():
+        for f in sorted(d.glob("*.mp4")) + sorted(d.glob("*.avi")):
+            out.append({"name": f.name, "size_mb": round(f.stat().st_size / 1e6, 1),
+                        "dir": str(d)})
+    # 같은 이름이 여러 디렉터리에 있으면 먼저 찾은 것만 남긴다(_resolve_video와 동일 순서).
+    seen, uniq = set(), []
+    for v in out:
+        if v["name"] in seen:
+            continue
+        seen.add(v["name"])
+        uniq.append(v)
+    return {"videos": uniq}
+
+
+@app.post("/api/replay/start")
+def replay_start(req: ReplayStart):
+    from replay_engine import ReplaySession
+
+    path = _resolve_video(req.video)
+    variant = MODEL_VARIANTS.get(req.model_variant)
+    if variant is None:
+        raise HTTPException(400, f"알 수 없는 모델: {req.model_variant}")
+
+    old = _replay["session"]
+    if old is not None:
+        old.stop()
+
+    # ROI는 지금 편집 중인 파일을 그대로 쓴다 — 그려 놓고 바로 "이 영상이면 안내가
+    # 나갔을까"를 확인하는 것이 이 기능의 목적이다.
+    roi_manager = None
+    try:
+        from roi_manager import ROIManager           # Pi 평면 배치
+    except ImportError:
+        try:
+            from simulator.roi_manager import ROIManager
+        except ImportError:
+            ROIManager = None
+    if ROIManager is not None and rois_path.exists():
+        try:
+            roi_manager = ROIManager.load(str(rois_path))
+        except Exception as exc:                      # noqa: BLE001
+            print(f"[WARN] ROI 로드 실패 — ROI 없이 재생합니다: {exc}")
+
+    weights_dir = str(_ROOT / variant["weights_dir"])
+    session = ReplaySession(
+        path, weights_dir, conf=req.conf,
+        input_size=variant.get("input_size", 320), roi_manager=roi_manager,
+        require_person=req.require_person, speed=req.speed, loop=req.loop,
+        debug_gates=req.debug_gates,
+    )
+    session.start()
+    _replay["session"] = session
+    return {"ok": True, "video": path.name, "weights_dir": weights_dir,
+            "rois": len(roi_manager.rois) if roi_manager else 0}
+
+
+class ReplayPause(BaseModel):
+    # None이면 토글. UI 버튼 하나로 정지/재개를 오가는 게 자연스럽다.
+    paused: bool | None = None
+
+
+@app.post("/api/replay/pause")
+def replay_pause(req: ReplayPause):
+    s = _replay["session"]
+    if s is None:
+        raise HTTPException(409, "재생 중인 세션이 없습니다")
+    if req.paused is None:
+        return {"paused": s.toggle_pause()}
+    s.set_paused(req.paused)
+    return {"paused": req.paused}
+
+
+@app.post("/api/replay/step")
+def replay_step():
+    """일시정지 상태에서 한 프레임만 진행 — 멈춰 놓고 들여다보기 위한 것."""
+    s = _replay["session"]
+    if s is None:
+        raise HTTPException(409, "재생 중인 세션이 없습니다")
+    s.step_once()
+    return {"ok": True}
+
+
+@app.post("/api/replay/stop")
+def replay_stop():
+    s = _replay["session"]
+    if s is not None:
+        s.stop()
+        _replay["session"] = None
+    return {"ok": True}
+
+
+@app.get("/api/replay/status")
+def replay_status():
+    s = _replay["session"]
+    return s.status() if s is not None else {"running": False, "done": False}
+
+
+@app.get("/api/replay/stream.mjpg")
+def replay_stream():
+    s = _replay["session"]
+    if s is None:
+        raise HTTPException(409, "재생 중인 세션이 없습니다")
+
+    def gen():
+        last = None
+        while True:
+            frame = s.latest_jpeg
+            if frame is None or frame is last:
+                if s.status()["done"] and frame is None:
+                    break
+                time.sleep(0.02)
+                continue
+            last = frame
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                   + frame + b"\r\n")
+
+    return StreamingResponse(
+        gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
 _CAPTIVE_REDIRECT = f"http://{_nm.AP_IP}:5000"
 
 
@@ -532,6 +897,8 @@ if __name__ == "__main__":
     parser.add_argument("--audio-dir", default=str(_DEFAULT_AUDIO_DIR), help="업로드된 오디오 저장 경로")
     parser.add_argument("--traffic-db", default=str(_DEFAULT_TRAFFIC_DB),
                          help="유동인구 집계 sqlite 경로 (camera_live_pi.py --traffic-db와 동일해야 함)")
+    parser.add_argument("--identity", default=None,
+                         help="기기 신원 파일 경로 (기본: rois.json과 같은 디렉터리의 device_identity.json)")
     parser.add_argument("--camera-config", default=str(_DEFAULT_CAMERA_CONFIG),
                          help="다중 카메라 프로필 JSON 경로 (camera_live_pi.py --camera-config와 동일해야 함)")
     parser.add_argument("--port", type=int, default=5000)
@@ -542,10 +909,26 @@ if __name__ == "__main__":
     audio_dir = Path(args.audio_dir).resolve()
     traffic_db_path = Path(args.traffic_db).resolve()
     camera_config_path = Path(args.camera_config).resolve()
+    identity_path = (Path(args.identity).resolve() if args.identity
+                     else default_path(rois_path.parent))
     print(f"[ROI Editor] rois.json: {rois_path}")
     print(f"[ROI Editor] audio_dir: {audio_dir}")
     print(f"[ROI Editor] traffic_db: {traffic_db_path}")
     print(f"[ROI Editor] camera_config: {camera_config_path}")
+    # 이벤트 전송 스레드. 신원이 없어도 띄운다 — 등록되는 순간 밀린 것이 함께
+    # 올라가야 하고, 그때 프로세스를 재시작하게 만들면 안 된다.
+    _sender["thread"] = EventSender(_all_traffic_dbs, identity_path)
+    _sender["thread"].start()
+    # 하트비트는 이벤트와 목적이 다르다 — 아무 일이 없어도 나가야 서버가 "조용한
+    # 것"과 "죽은 것"을 구분한다(기기가 여러 대로 흩어지면 특히).
+    _sender["heartbeat"] = HeartbeatSender(
+        _all_traffic_dbs, identity_path,
+        camera_ids=[p.id for p in load_camera_config(camera_config_path)])
+    _sender["heartbeat"].start()
+
+    _ident = load_identity(identity_path)
+    print(f"[ROI Editor] 기기 신원: "
+          f"{_ident.device_id + ' (' + (_ident.server_url or '서버 미지정') + ')' if _ident else '미등록'}")
     print(f"[ROI Editor] 브라우저: http://<Pi-IP>:{args.port}")
 
     uvicorn.run(
