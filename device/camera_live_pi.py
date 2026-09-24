@@ -110,6 +110,22 @@ except ImportError:
     _EVENTS_AVAILABLE = False
 
 try:
+    # 서버 전송 대기열. 여기서는 **sqlite에 한 줄 쓸 뿐** 네트워크를 건드리지 않는다 —
+    # 실제 전송은 roi_editor의 EventSender가 맡는다(event_logger.py 헤더 참고).
+    from event_logger import queue_event
+    _OUTBOX_AVAILABLE = True
+except ImportError:
+    _OUTBOX_AVAILABLE = False
+
+try:
+    # 하트비트가 쓸 런타임 지표를 프로세스 밖으로 넘긴다 — 여기서도 sqlite 한 줄뿐,
+    # 네트워크는 건드리지 않는다(device_metrics.py 헤더 참고).
+    from device_metrics import REPORT_INTERVAL_SEC, report as report_metrics
+    _METRICS_AVAILABLE = True
+except ImportError:
+    _METRICS_AVAILABLE = False
+
+try:
     from fp_hotspots import log_suppressed
     _HOTSPOTS_AVAILABLE = True
 except ImportError:
@@ -1340,6 +1356,12 @@ class CameraPipeline:
                 print(f"[ERROR][{tag}] 추론 백엔드 초기화 실패: {e}")
                 return
 
+            # 하트비트용 지표. 매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막히므로
+            # EMA로 눌러두었다가 몇 초에 한 번만 보고한다.
+            infer_ema: float | None = None
+            loop_ema: float | None = None
+            last_metric_report = 0.0
+
             # 트래커 + 엔티티 + 3중 게이트를 한 묶음으로 든다. 순서와 상수는
             # gate_chain.py에만 있다 — 평가(`eval_video_recall.py`)와 재생검증
             # (`replay_engine.py`)이 같은 것을 돌려야 하기 때문이다.
@@ -1401,6 +1423,7 @@ class CameraPipeline:
                 frame = _apply_rotation(frame, profile.rotation)
                 frame = _apply_channel_swap(frame, profile.swap_rb)
 
+                loop_t0 = time.time()
                 # ROI 크롭 추론 — 카메라가 고정이라 trigger 구역은 항상 같은 화면
                 # 좌표에 있다. 그 영역만 잘라 넣으면 같은 입력 해상도로 객체 픽셀
                 # 밀도가 올라간다(실측: 지팡이 탐지 108 → 148프레임/805). 크롭 박스는
@@ -1428,6 +1451,7 @@ class CameraPipeline:
                             d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
                     else:
                         dets = backend.predict(frame)
+                    infer_ms = (time.time() - loop_t0) * 1000.0
                 except Exception as e:
                     print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
                     break
@@ -1545,12 +1569,19 @@ class CameraPipeline:
                               f"audio={r.audio_file or '없음'}")
                         _roi_name = r.name
                         _done_cb = lambda _n=_roi_name: dispatcher.update_last_triggered(_n, time.time())
+                        # 서버로 보낼 신뢰도 — 이번 프레임에 **실제로 탐지된** 지팡이
+                        # 중 최고값이다. 가상 지팡이 박스만으로 발사된 경우에는 실제
+                        # 탐지가 없으므로 None으로 두어 "추정으로 나간 안내"임을 남긴다.
+                        _conf = max((t.get("conf", 0.0) for t in g.cane_tracks),
+                                    default=None)
                         announcement = Announcement(
                             source="camera",
                             trigger_id=r.name,
                             audio_file=r.audio_file,
                             event_db=profile.traffic_db,
                             event_class=CLASS_NAMES[CANE_CLASS_ID],
+                            camera_id=tag,
+                            confidence=_conf,
                         )
                         if self.shared.announcements is not None:
                             self.shared.announcements.submit(announcement, on_done=_done_cb)
@@ -1568,6 +1599,22 @@ class CameraPipeline:
 
                 cv2.putText(frame, f"[{tag}] FPS: {fps:.1f}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
+
+                # 하트비트용 런타임 지표 보고 — 프레임마다가 아니라 몇 초에 한 번.
+                # 값이 프레임마다 크게 튀므로 EMA로 눌러서 넘긴다.
+                if _METRICS_AVAILABLE and profile.traffic_db:
+                    loop_ms = (time.time() - loop_t0) * 1000.0
+                    infer_ema = (infer_ms if infer_ema is None
+                                 else infer_ema * 0.8 + infer_ms * 0.2)
+                    loop_ema = (loop_ms if loop_ema is None
+                                else loop_ema * 0.8 + loop_ms * 0.2)
+                    if now - last_metric_report >= REPORT_INTERVAL_SEC:
+                        last_metric_report = now
+                        report_metrics(profile.traffic_db, tag,
+                                       streaming=self.headless,
+                                       infer_ms=round(infer_ema, 1),
+                                       loop_ms=round(loop_ema, 1),
+                                       fps=round(fps, 1), now=now)
 
                 if self.headless:
                     assert mjpeg is not None
@@ -1638,7 +1685,9 @@ def main() -> None:
 
     audio_player = AudioPlayer() if _TRIGGER_AVAILABLE else None
     announcements = (
-        AnnouncementRouter(audio_player, log_event if _EVENTS_AVAILABLE else None)
+        AnnouncementRouter(audio_player,
+                           log_event if _EVENTS_AVAILABLE else None,
+                           outbox=queue_event if _OUTBOX_AVAILABLE else None)
         if _TRIGGER_AVAILABLE else None
     )
 

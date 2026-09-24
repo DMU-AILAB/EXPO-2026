@@ -40,6 +40,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `pedestrian_entity.py` | 사람+지팡이를 하나의 `PedestrianEntity`로 묶어 프레임 사이에 상태를 유지 — 1:1 배정(히스테리시스) · 지팡이 사용자 **래치** · 지팡이 트랙이 끊긴 구간의 **가상 지팡이 박스** · 안내 주체 매핑(`subject_for_canes`). 표준 라이브러리만 사용 |
 | `gate_chain.py` | **게이트 체인의 단일 구현** — 정지 억제 → 움직임 → 엔티티 갱신 → 사람 동반(래치 완화) 순서와 상수(`STATIC_CANE_SUPPRESS_FRAMES`·`MOVED_MIN_DIAG_RATIO`)를 한 곳에 둔다. `camera_live_pi.py`·`eval_video_recall.py`·`replay_engine.py`가 **같은 것**을 돌린다 |
 | `replay_engine.py` | 저장된 영상을 **배포와 같은 경로**로 재생하며 주석 프레임을 만든다 — roi_editor의 "검증" 탭이 MJPEG로 띄운다. 오디오는 재생하지 않고 발사 시점만 기록 |
+| `device_identity.py` | 서버가 발급한 `device_id`·`api_key`·`server_url` 보관. **값의 주인은 서버** — 등록 시 `POST /api/identity`로 심긴다. `rois.json`과 같은 Pi 로컬 런타임 파일(rsync·git 대상 아님) |
+| `event_logger.py` | Pi → 서버 아웃바운드 2종 — `EventSender`(감지 이벤트 outbox, 실패해도 보관) · `HeartbeatSender`(살아있음+상태, 실패하면 **버리고** 다음 주기에 최신값). 탐지 루프는 sqlite 한 줄만 쓰고 전송은 `roi_editor`의 스레드가 맡는다. `urllib`만 써서 Pi 의존성을 늘리지 않는다 |
+| `device_status.py` | `/proc`·`/sys`만으로 읽는 가동시간·CPU온도·부하·메모리 + **CPU 사용률**(두 시점 차이). psutil 미사용 |
+| `device_metrics.py` | 탐지 루프의 추론 시간·프레임 시간·스트리밍 여부를 sqlite로 `roi_editor`에 넘긴다 — 하트비트가 쓰는 값이 탐지 프로세스에만 있기 때문 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
 | `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
@@ -71,7 +75,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 20개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 24개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
@@ -260,6 +264,27 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   않도록 큐 방식으로 변경했다.
 
 ---
+
+## 서버 연동 (다중 Pi) — 설계 결정
+
+Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세서가 정의하지 않은 Pi 측**이며
+서버 구현과 겹치지 않는다 — 명세 §6이 "현재 Pi에는 아웃바운드 HTTP 클라이언트가 없다 …
+서버만 구현해서는 동작하지 않는다"고 적어둔 자리다.
+
+- **탐지 루프는 네트워크를 모른다.** `camera_live_pi.py`는 sqlite에 한 줄 쓸 뿐이고
+  (`event_logger.queue_event`, `device_metrics.report`), 전송은 `roi_editor`의 백그라운드
+  스레드가 맡는다. 안전 기능인 음성 안내가 서버 응답을 기다리는 일이 있어서는 안 된다.
+  → **서버 연동을 쓰려면 `visionguide-roi-editor` 서비스를 켜 두어야 한다.**
+- **신원의 주인은 서버다.** `device_id`·`api_key`는 서버가 발급해 `POST /api/identity`로
+  심는다. 기기가 자기 id를 지어내면 서버 것과 두 체계가 생긴다.
+- **이벤트는 보관하고 하트비트는 버린다.** 못 보낸 이벤트는 outbox에 남지만(나중에라도
+  올라가야 의미가 있다), 5분 전의 CPU 온도는 쓸모가 없어 다음 주기에 최신값으로 대체한다.
+- **`GET /api/device/status`의 응답 스키마를 늘리지 말 것.** 백엔드의 기기 탐색(명세 §12)이
+  이 200 응답의 **바디 스키마**로 VisionGuide 여부를 판별한다(캡티브 포털 catch-all 때문에
+  "404가 아니면 있음" 식으로는 판별할 수 없다). 카메라 지표는 `/api/metrics`로 따로 낸다.
+- **신원이 바뀌면 백오프를 리셋한다.** 잘못된 주소로 실패해 백오프가 최대치까지 늘어난 뒤
+  주소를 고쳐도 리셋하지 않으면 최대 2분을 더 기다린다 — 등록 직후 "왜 연동이 안 되지?"가
+  되는 지점이라 실제 테스트에서 걸렸다.
 
 ## 게이트 체인은 한 곳에만 있다 (`gate_chain.py`)
 
@@ -507,6 +532,14 @@ make install-service
 make ping
 ```
 
+**서비스 재시작은 반드시 `systemctl`로** — `pkill`로는 되살아나지 않는다. 앱이
+SIGTERM을 받아 **정상 종료(exit 0)** 하므로 `Restart=on-failure`가 걸리지 않는다.
+`make install-service`가 유닛 4개에 대한 `systemctl start/stop/restart/status`만
+비밀번호 없이 허용하는 sudoers(`deploy/visionguide-systemctl.sudoers`)를 함께 설치하므로,
+그 뒤로는 `make restart PI="ip1 ip2 ip3"`로 여러 대를 한 번에 재시작할 수 있다.
+**`enable`/`disable`은 일부러 넣지 않았다** — 실수로 자동 시작을 꺼버리면 현장에 가야
+복구된다.
+
 **임베디드 headless 운영 흐름**: `make install-service` 이후로는 Pi IP 접속이 최초 ROI/오디오 설정(또는 재설정) 시에만 필요합니다.
 탐지·음성 안내(`visionguide-device.service`)는 네트워크 연결 여부와 무관하게 기기 단독으로 부팅 시 자동 시작되며,
 `roi_editor`(포트 5000, `visionguide-roi-editor.service`)에서 저장한 `rois.json` 변경은 최대 2초 내 재시작 없이 자동 반영됩니다
@@ -526,7 +559,23 @@ make sync   PI=192.168.0.89
 # 현재 Pi IP 확인 (라우터 DHCP 테이블 또는 Pi에서 실행)
 #   Pi에서: hostname -I
 #   PC에서: arp -a | findstr raspberry  (Windows)
+
+# ★ 기기가 여러 대면 공백으로 나열한다 — 한 대씩 차례로 실행된다
+make deploy     PI="192.168.0.101 192.168.0.102 192.168.0.103"
+make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 ```
+
+**다중 호스트는 재귀 호출이다** — 개별 레시피는 한 대만 상대하고, `PI`에 주소가 둘
+이상이면 `MULTI_TARGETS`가 한 대씩 다시 `make`를 부른다. 병렬로 돌리지 않는 이유는
+한 대가 실패했을 때 출력이 뒤섞여 원인을 못 찾기 때문이고, **한 대가 실패해도 나머지는
+계속한다** — 3대 중 1대만 꺼져 있을 때 나머지 배포까지 막을 이유가 없다. 실패한 기기는
+마지막에 모아서 보여주고 종료코드로 알린다.
+
+**기기가 여러 대면 시계를 맞춰야 한다.** 이벤트 타임스탬프는 Pi가 찍어 서버로 보내므로
+(`event_logger.py`), 시계가 어긋나면 서버에서 순서가 뒤바뀌고 시간대별 통계가 엉킨다.
+나중에 카메라 간 핸드오프를 넣으면 "몇 초 전에 저쪽에서 사라졌다"를 비교하게 되는데,
+그때는 어긋남이 곧 오작동이다. `make setup-ntp`로 켜고 `make check-time`으로 확인한다
+(Raspberry Pi OS는 `systemd-timesyncd`를 내장하므로 보통 이미 켜져 있다).
 
 **배포 대상 파일** — `Makefile` 상단 `DEPLOY_PY` 변수로 관리:
 
