@@ -55,7 +55,7 @@ for _cand in (_BASE, _BASE / "apps"):
     if (_cand / "simulator").is_dir() and str(_cand) not in sys.path:
         sys.path.insert(0, str(_cand))
 
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import cv2
 import numpy as np
@@ -609,13 +609,36 @@ class ClipRecorder:
         self._clip_id: str | None = None
         self._frame_shape: tuple[int, int] | None = None
         self._fps: float = 10.0
+        # 오버레이가 그려지기 전 프레임을 저장할지. start(raw=True)로 켠다.
+        self._raw: bool = False
         self._session_started_at: float = 0.0  # 사용자가 "시작"을 누른 시각 — 경과시간 표시 기준
         self._segment_started_at: float = 0.0  # 현재 세그먼트(파일) 시작 시각 — 10분 분할 판단 기준
 
-    def start(self, frame_shape: tuple[int, int], fps: float) -> dict:
+    @property
+    def wants_raw(self) -> bool:
+        """지금 raw 녹화 중인가 — 호출부가 **복사 비용을 낼지 정하는** 데 쓴다.
+
+        raw 녹화가 꺼져 있으면 원본 프레임을 따로 뜰 이유가 없다(1080p 한 장 복사가
+        Pi에서 1~2ms다).
+        """
+        return self._writer is not None and self._raw
+
+    def start(self, frame_shape: tuple[int, int], fps: float,
+              raw: bool = False) -> dict:
+        """`raw=True`면 오버레이가 그려지기 **전** 프레임을 저장한다.
+
+        기본 녹화본은 탐지 박스·ROI가 이미 그려진 최종 프레임이라(`MJPEGServer.push`가
+        받는 그것) **학습 데이터로 쓸 수 없다** — 모델이 그려진 박스를 단서로 배우는
+        오염이 생긴다. 학습용 촬영은 이 모드로 해야 한다
+        (`docs/data_collection_plan.md` §1-2).
+
+        기본값을 False로 둔 이유: 기존 녹화는 데모·검토용이라 오버레이가 있는 쪽이
+        쓸모 있고, raw는 프레임마다 복사 비용을 내기 때문이다.
+        """
         with self._lock:
             if self._writer is not None:
                 return {"ok": False, "error": "이미 녹화 중입니다"}
+            self._raw = bool(raw)
             self._frame_shape = frame_shape
             self._fps = fps
             self._session_started_at = time.time()
@@ -650,8 +673,10 @@ class ClipRecorder:
         self._writer.release()
         clip_id = self._clip_id
         duration = round(time.time() - self._segment_started_at, 1)
+        # raw 여부를 사이드카에 남긴다 — 나중에 이 클립이 학습에 쓸 수 있는 것인지
+        # 파일만 보고는 알 수 없다.
         sidecar = {"started_at": datetime.fromtimestamp(self._segment_started_at).isoformat(),
-                   "duration_sec": duration}
+                   "duration_sec": duration, "raw": self._raw}
         (self.out_dir / f"{clip_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
         return clip_id, duration
 
@@ -803,8 +828,14 @@ class MJPEGServer:
         self._httpd: ThreadingHTTPServer | None = None
         self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
 
-    def push(self, frame: np.ndarray, fps: float | None = None) -> None:
-        """메인 루프에서 매 프레임마다 호출."""
+    def push(self, frame: np.ndarray, fps: float | None = None,
+             raw: np.ndarray | None = None) -> None:
+        """메인 루프에서 매 프레임마다 호출.
+
+        `raw`는 오버레이가 그려지기 **전** 프레임이다. 스트리밍·표시에는 항상
+        `frame`(오버레이 포함)을 쓰고, **녹화만** raw 모드일 때 이쪽을 저장한다 —
+        학습 데이터로 쓰려면 그려진 박스가 없어야 한다.
+        """
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         with self._lock:
             self._jpeg = buf.tobytes()
@@ -813,7 +844,8 @@ class MJPEGServer:
                 self._fps_samples.append(fps)
                 if len(self._fps_samples) > 30:
                     self._fps_samples.pop(0)
-        self.recorder.write(frame)
+        self.recorder.write(raw if (raw is not None and self.recorder.wants_raw)
+                            else frame)
 
     def _avg_fps(self) -> float:
         with self._lock:
@@ -862,12 +894,15 @@ class MJPEGServer:
                 if action == "status":
                     self._write_json(200, srv.recorder.status())
                 elif action == "start":
+                    # ?raw=1 이면 오버레이 없는 원본을 저장한다(학습용 촬영).
+                    raw = parse_qs(urlsplit(self.path).query).get(
+                        "raw", ["0"])[0] not in ("0", "", "false")
                     with srv._lock:
                         shape = srv._frame_shape
                     if shape is None:
                         self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
                     else:
-                        result = srv.recorder.start(shape, srv._avg_fps())
+                        result = srv.recorder.start(shape, srv._avg_fps(), raw=raw)
                         self._write_json(200 if result.get("ok") else 409, result)
                 elif action == "stop":
                     result = srv.recorder.stop()
@@ -1465,6 +1500,15 @@ class CameraPipeline:
                 now    = time.time()
                 g      = gates.step(dets, frame.shape[:2], now)
                 tracks = g.tracks
+
+                # 학습용 촬영(raw 녹화) 중에만 오버레이 이전 원본을 떠 둔다.
+                # 아래 그리기 함수들이 frame을 **제자리에서** 고치므로, 여기서
+                # 복사하지 않으면 원본이 남지 않는다. raw가 꺼져 있으면 복사하지
+                # 않는다 — 1080p 한 장 복사가 Pi에서 1~2ms다.
+                raw_frame = (frame.copy()
+                             if (mjpeg is not None and mjpeg.recorder.wants_raw)
+                             else None)
+
                 _draw_detections(frame, tracks)
 
                 fps    = 1.0 / (now - prev_t) if (now - prev_t) > 0 else 0.0
@@ -1618,7 +1662,7 @@ class CameraPipeline:
 
                 if self.headless:
                     assert mjpeg is not None
-                    mjpeg.push(frame, fps)
+                    mjpeg.push(frame, fps, raw=raw_frame)
                 else:
                     cv2.imshow(f"VisionGuide — {tag}", frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
