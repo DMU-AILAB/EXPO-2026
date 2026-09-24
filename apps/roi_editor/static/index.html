@@ -793,6 +793,33 @@ main {
           <audio id="audioTestPlayer" style="display:none"></audio>
         </div>
       </div>
+
+      <!-- 구조물 마스크 — 새벽 캘리브레이션 제안·확인 -->
+      <div class="sum-card" style="padding:14px 16px; margin-top:14px">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+          <div class="stat-tile__label" style="flex:1">🏛 구조물 마스크</div>
+          <input id="calibSecs" type="number" min="10" max="1800" value="300"
+                 style="width:78px; padding:5px; border-radius:5px; border:1px solid #ccc">
+          <span style="font-size:11px; color:#888">초</span>
+          <button class="btn btn-sm" id="btnCalibStart">관측 시작</button>
+          <button class="btn btn-sm" id="btnCalibCancel" style="display:none">취소</button>
+          <button class="btn btn-sm" id="btnMaskClear">초기화</button>
+        </div>
+        <div id="calibHint" style="font-size:11px; color:#888; line-height:1.6; margin-top:8px">
+          <b>사람이 없는 시간(폐장 후)에 돌리세요.</b> 그때 탐지되는 것은 전부 오탐이므로
+          현장 고정물(기둥·개찰구·안내판)을 학습할 수 있습니다.
+          사람이 지나다니는 시간에 수집하면 그 자리가 <b>사각지대</b>가 됩니다.
+        </div>
+        <div id="calibStatus" style="font-size:12px; color:var(--accent); margin-top:6px"></div>
+        <div id="maskHits" style="font-size:11px; color:#888; margin-top:4px"></div>
+        <div id="maskList" style="margin-top:10px"></div>
+        <div style="margin-top:10px; display:none" id="maskApplyRow">
+          <button class="btn btn-sm btn-primary" id="btnMaskApply">선택 항목 적용</button>
+          <span style="font-size:11px; color:#888; margin-left:8px">
+            적용하면 탐지 프로세스가 2초 내에 반영합니다(재시작 불필요)
+          </span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1955,6 +1982,124 @@ document.getElementById('btnClearAll').addEventListener('click', async () => {
 ================================================================ */
 document.getElementById('btnSaveAll').addEventListener('click', saveToServer);
 
+// ── 구조물 마스크 (새벽 캘리브레이션) ──────────────────────────────
+//
+// 수집은 **카메라 포트로 직접** 호출한다 — roi_editor는 별도 프로세스라 프레임에
+// 접근할 수 없어서, 녹화 제어와 같은 방식이다(recordingUrlFor).
+// 후보 조회/적용은 roi_editor API(sqlite/json을 다루므로).
+let _calibTimer = null;
+
+async function calibStart() {
+  const secs = Number(document.getElementById('calibSecs').value) || 300;
+  try {
+    const r = await fetch(recordingUrlFor(currentPort, `/calibrate/start?seconds=${secs}`),
+                          { method: 'POST' });
+    const b = await r.json();
+    if (!b.ok) { alert(`관측 시작 실패: ${b.error || r.status}`); return; }
+    calibPoll();
+  } catch (e) { alert(`카메라 앱에 연결할 수 없습니다 (포트 ${currentPort}): ${e.message}`); }
+}
+
+async function calibCancel() {
+  try { await fetch(recordingUrlFor(currentPort, '/calibrate/cancel'), { method: 'POST' }); }
+  catch (e) { /* 이미 끝났을 수 있다 */ }
+  calibPoll();
+}
+
+async function calibPoll() {
+  const st = document.getElementById('calibStatus');
+  const btnS = document.getElementById('btnCalibStart');
+  const btnC = document.getElementById('btnCalibCancel');
+  let s = null;
+  try { s = await (await fetch(recordingUrlFor(currentPort, '/calibrate/status'))).json(); }
+  catch (e) { st.textContent = ''; return; }
+
+  if (s.running) {
+    st.textContent = `관측 중… 남은 ${s.remaining_sec}초 · ${s.frames}프레임`;
+    btnS.style.display = 'none'; btnC.style.display = '';
+    if (_calibTimer) clearTimeout(_calibTimer);
+    _calibTimer = setTimeout(calibPoll, 2000);
+  } else {
+    btnS.style.display = ''; btnC.style.display = 'none';
+    st.textContent = s.result
+      ? `관측 완료 — 후보 ${s.result.candidates}개 (${s.result.frames}프레임)` : '';
+    if (_calibTimer) { clearTimeout(_calibTimer); _calibTimer = null; }
+    loadMaskCandidates();
+  }
+}
+
+async function loadMaskCandidates() {
+  const box = document.getElementById('maskList');
+  const row = document.getElementById('maskApplyRow');
+  let rows = [];
+  try { rows = (await (await fetch(_apiUrl('/api/static-mask/candidates'))).json()).candidates || []; }
+  catch (e) { box.innerHTML = ''; row.style.display = 'none'; return; }
+
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#888; font-size:12px">수집된 후보가 없습니다</div>';
+    row.style.display = 'none';
+  } else {
+    box.innerHTML = rows.map(r => {
+      const cls = r.cls === 0 ? '🦯 지팡이 오탐' : '🧑 사람 오탐';
+      // 지팡이는 기본 체크(트리거가 지팡이 트랙만 순회하므로 위험이 거의 없다).
+      // 사람은 기본 해제 — 그 자리의 진짜 사람을 가릴 수 있다.
+      const checked = (r.applied || r.recommend) ? 'checked' : '';
+      const warn = r.cls === 1
+        ? '<div style="color:var(--amber); font-size:11px">⚠ 켜면 이 자리에 <b>가만히 선 사람</b>도 가려집니다</div>'
+        : '';
+      const thumb = r.thumb
+        ? `<img src="${_apiUrl('/api/static-mask/thumb?name=' + encodeURIComponent(r.thumb)).replace('?name', '?name')}"
+                style="height:56px; border-radius:4px; background:#0d0d1a" onerror="this.style.display='none'">`
+        : '';
+      return `<label class="box-item" style="display:flex; gap:10px; align-items:center; margin-bottom:6px">
+        <input type="checkbox" class="maskChk" data-id="${r.id}" ${checked}>
+        ${thumb}
+        <span style="flex:1; font-size:12px">
+          <b>${cls}</b> · ${r.hits}/${r.frames}프레임 · 최고 conf ${r.max_conf}
+          <div style="color:#888; font-size:11px">
+            이동량 ${r.max_disp} ${r.max_disp < 0.005 ? '(고정물로 보임)' : '(움직인 흔적 — 확인 필요)'}
+            ${r.rotation != null ? ` · 수집 시 회전 ${r.rotation}°` : ''}
+          </div>
+          ${warn}
+        </span>
+      </label>`;
+    }).join('');
+    row.style.display = '';
+  }
+
+  // 마스크가 실제로 무엇을 지웠는지 — 사각지대를 발견하는 유일한 수단
+  try {
+    const h = (await (await fetch(_apiUrl('/api/static-mask/hits'))).json()).hits || [];
+    document.getElementById('maskHits').textContent = h.length
+      ? '마스크가 걸러낸 트랙: ' + h.map(x =>
+          `${x.cls === 0 ? '지팡이' : '사람'} ${x.count}건`).join(' · ')
+      : '';
+  } catch (e) { /* 선택 정보 */ }
+}
+
+async function applyMask() {
+  const ids = [...document.querySelectorAll('.maskChk:checked')].map(c => Number(c.dataset.id));
+  const personOn = [...document.querySelectorAll('.maskChk:checked')].some(
+    c => c.closest('label').textContent.includes('사람 오탐'));
+  if (personOn && !confirm(
+      '사람 클래스 마스크를 켜면 그 자리에 가만히 선 사람도 탐지되지 않습니다.\n' +
+      '사람 동반 게이트는 모든 안내의 필수 조건입니다. 계속할까요?')) return;
+  const r = await fetch(_apiUrl('/api/static-mask/apply'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  const b = await r.json();
+  alert(b.ok ? `${b.applied}개 적용됐습니다` : '적용 실패');
+  loadMaskCandidates();
+}
+
+async function clearMask() {
+  if (!confirm('수집된 후보와 적용된 마스크를 모두 지웁니다. 계속할까요?')) return;
+  await fetch(_apiUrl('/api/static-mask'), { method: 'DELETE' });
+  document.getElementById('calibStatus').textContent = '';
+  loadMaskCandidates();
+}
+
 function _apiUrl(path) {
   if (!activeCameraId) return path;
   const sep = path.includes('?') ? '&' : '?';
@@ -2139,6 +2284,10 @@ function refreshAudioTestOptions() {
   ).join('');
 }
 
+document.getElementById('btnCalibStart')?.addEventListener('click', calibStart);
+document.getElementById('btnCalibCancel')?.addEventListener('click', calibCancel);
+document.getElementById('btnMaskApply')?.addEventListener('click', applyMask);
+document.getElementById('btnMaskClear')?.addEventListener('click', clearMask);
 document.getElementById('btnAudioTest').addEventListener('click', () => {
   const sel = document.getElementById('audioTestSelect');
   if (!sel.value) return;
