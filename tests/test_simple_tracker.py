@@ -140,3 +140,108 @@ def test_new_track_starts_with_zero_displacement():
     tracks = t.update([{"bbox": [100, 200, 120, 260], "conf": 0.8,
                         "class": 0, "label": "white_cane"}])
     assert tracks[0]["max_disp"] == 0.0
+
+
+# --------------------------------------------------------------------- #
+# 재식별(re-id) — max_age를 넘겨 죽은 트랙을 원래 track_id로 되살린다
+# --------------------------------------------------------------------- #
+
+DT = 0.1                    # 가짜 시계 간격(초). Pi 실측 12.76 FPS에 가깝게 10 FPS 가정
+
+
+def _kill(t, clock, frames=None, dets=()):
+    """탐지를 끊어 트랙이 max_age를 넘겨 죽게 만든다."""
+    for _ in range(frames if frames is not None else t.max_age + 2):
+        t.update(list(dets), clock())
+    return t
+
+
+def _clock(dt=DT):
+    state = {"n": 0}
+
+    def tick():
+        state["n"] += 1
+        return state["n"] * dt
+    return tick
+
+
+def test_reid_is_off_when_now_is_not_given():
+    """`now`를 안 넘기면 보관소를 쓰지 않아 동작이 종전과 완전히 같다."""
+    t = SimpleTracker()
+    first = t.update([_det([100, 100, 120, 200])])[0]["track_id"]
+    for _ in range(t.max_age + 2):
+        t.update([])
+    again = t.update([_det([100, 100, 120, 200])])[0]["track_id"]
+    assert again != first
+
+
+def test_track_revives_with_the_same_id_after_a_short_gap():
+    t, c = SimpleTracker(), _clock()
+    first = t.update([_det([100, 100, 120, 200])], c())[0]["track_id"]
+    _kill(t, c)
+    revived = t.update([_det([104, 100, 124, 200])], c())[0]
+    assert revived["track_id"] == first
+
+
+def test_revived_track_inherits_the_movement_gate_credit():
+    """되살릴 때 origin_center/max_disp를 물려받는다 — 이게 재식별의 목적이다.
+
+    새 트랙으로 시작하면 움직임 게이트(원점 대비 변위)를 처음부터 다시 벌어야 하고,
+    `pedestrian_entity`의 래치와 안내 주체도 끊긴다.
+    """
+    t, c = SimpleTracker(), _clock()
+    t.update([_det([100, 100, 120, 200])], c())
+    for x in range(110, 210, 10):                  # 오른쪽으로 크게 이동
+        moved = t.update([_det([x, 100, x + 20, 200])], c())[0]
+    assert moved["max_disp"] > 50
+
+    _kill(t, c)
+    revived = t.update([_det([205, 100, 225, 200])], c())[0]
+    assert revived["max_disp"] == moved["max_disp"]
+    assert revived["origin_center"] == moved["origin_center"]
+
+
+def test_revived_track_does_not_inherit_static_frames():
+    """죽어 있는 동안 물체가 움직였을 수 있어 '정지'를 물려줄 근거가 없다."""
+    t, c = SimpleTracker(), _clock()
+    for _ in range(30):                            # 제자리 → static_frames 누적
+        still = t.update([_det([100, 100, 120, 200])], c())[0]
+    assert still["static_frames"] > 20
+
+    _kill(t, c)
+    revived = t.update([_det([100, 100, 120, 200])], c())[0]
+    assert revived["track_id"] == still["track_id"]
+    assert revived["static_frames"] == 0
+
+
+def test_no_revival_after_the_window_expires():
+    t, c = SimpleTracker(revive_sec=0.5), _clock()
+    first = t.update([_det([100, 100, 120, 200])], c())[0]["track_id"]
+    _kill(t, c, frames=20)                         # 2.0초 공백 > 0.5초
+    assert t.update([_det([100, 100, 120, 200])], c())[0]["track_id"] != first
+
+
+def test_no_revival_when_it_reappears_far_away():
+    t, c = SimpleTracker(), _clock()
+    first = t.update([_det([100, 100, 120, 200])], c())[0]["track_id"]
+    _kill(t, c)
+    far = t.update([_det([900, 700, 920, 800])], c())[0]
+    assert far["track_id"] != first
+
+
+def test_no_revival_across_classes():
+    """지팡이 자리에 사람이 잡혔다고 지팡이 트랙을 되살리면 안 된다."""
+    t, c = SimpleTracker(), _clock()
+    first = t.update([_det([100, 100, 120, 200])], c())[0]["track_id"]
+    _kill(t, c)
+    person = t.update([_det([100, 100, 120, 200], cls=1, label="person")], c())[0]
+    assert person["track_id"] != first
+
+
+def test_one_grave_revives_at_most_one_detection():
+    """한 무덤이 두 탐지를 되살리면 같은 track_id가 둘 생긴다."""
+    t, c = SimpleTracker(), _clock()
+    t.update([_det([100, 100, 120, 200])], c())
+    _kill(t, c)
+    tracks = t.update([_det([102, 100, 122, 200]), _det([108, 104, 128, 204])], c())
+    assert len({x["track_id"] for x in tracks}) == 2

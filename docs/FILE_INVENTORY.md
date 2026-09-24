@@ -26,7 +26,7 @@
 
 ```
 expo/
-├── device/            Pi에서 실행되는 런타임 17개 ★ Makefile의 DEPLOY_PY와 정확히 일치
+├── device/            Pi에서 실행되는 런타임 18개 ★ Makefile의 DEPLOY_PY와 정확히 일치
 ├── tools/             PC 전용 스크립트 17개
 │   ├── data/            데이터 준비 9 + lookalike_exclude.txt
 │   ├── eval/            평가 2 (eval_video_recall · eval_background_fp)
@@ -76,7 +76,7 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 `DEPLOY_PY`에도 추가**한다 — 둘이 어긋나면 기기에서 ImportError가 나거나, 더 나쁘게는
 구버전 파일이 조용히 남는다. PC에서만 쓰면 `tools/` 아래 용도별 디렉터리에 넣는다.
 
-## 2-1. `device/` — Pi 런타임 17개 (= `DEPLOY_PY`)
+## 2-1. `device/` — Pi 런타임 18개 (= `DEPLOY_PY`)
 
 | 파일 | 역할 |
 |---|---|
@@ -84,7 +84,8 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `yolo_postprocess.py` | 전처리(letterbox)·후처리 공유 — CPU/EdgeTPU 양쪽이 쓴다 |
 | `edgetpu_infer.py` | Coral EdgeTPU Python 3.9 서브프로세스 워커 |
 | `detect.py` | `WhiteCaneDetector` (PyTorch 폴백) |
-| `simple_tracker.py` · `cane_person_assoc.py` | 트래킹 · 지팡이–사람 짝짓기 |
+| `simple_tracker.py` · `cane_person_assoc.py` | 트래킹(IoU + 거리 폴백 + **재식별**) · 지팡이–사람 짝짓기 |
+| `pedestrian_entity.py` | 사람+지팡이를 하나의 보행자 엔티티로 묶어 추적 (래치 · 가상 지팡이 박스) |
 | `camera_config.py` | 다중 카메라 프로필 + `MODEL_VARIANTS` |
 | `audio_trigger.py` · `announcement_router.py` | 디바운스·쿨다운·순차 재생 · 안내 라우팅 |
 | `foot_traffic_counter.py` · `detection_events.py` · `fp_hotspots.py` | 유동인구 · 이벤트 로그 · 오탐지 핫스팟 |
@@ -215,7 +216,7 @@ Pi에는 아무 영향이 없다 — 배포 경로 자체가 없다.
 ## 9. 배포 경로 요약
 
 ```
-PC 작업본 ──┬── make sync            → DEPLOY_PY 17개 + DEPLOY_MODEL_DIRS의 tflite
+PC 작업본 ──┬── make sync            → DEPLOY_PY 18개 + DEPLOY_MODEL_DIRS의 tflite
             ├── make sync-roi-editor → roi_editor/ + simulator/roi_manager.py
             └── make install-service → deploy/ 의 systemd 유닛
                                           ↓

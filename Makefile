@@ -40,6 +40,7 @@ DEPLOY_PY = \
 	device/yolo_postprocess.py \
 	device/simple_tracker.py \
 	device/cane_person_assoc.py \
+	device/pedestrian_entity.py \
 	device/foot_traffic_counter.py \
 	device/camera_config.py \
 	device/detection_events.py \

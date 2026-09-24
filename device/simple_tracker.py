@@ -6,6 +6,15 @@
 
 from __future__ import annotations
 
+# 재식별(re-id) 기본값 — **초 단위**다. 프레임으로 두면 촬영 프레임레이트에 묶여
+# 평가에서 고른 값이 실기기로 전이되지 않는다(pedestrian_entity 헤더의 같은 논점).
+#
+# 실측 근거: 트랙이 죽은 뒤 근처에서 다시 태어나기까지의 공백 중앙값이 지팡이
+# 0.50~0.68초, 사람 0.50~1.17초였고, 재출현 지점은 마지막 박스 대각선의 0.17~0.57배
+# 거리 안이었다(test1~test3).
+_DEFAULT_REVIVE_SEC = 2.0
+_DEFAULT_REVIVE_DIST_RATIO = 1.0
+
 
 class SimpleTracker:
     """IoU 기반 단순 객체 트래커.
@@ -42,13 +51,18 @@ class SimpleTracker:
 
     def __init__(self, max_age: int = 10, min_iou: float = 0.3,
                  ema_alpha: float = 0.6, max_center_dist_ratio: float = 1.5,
-                 static_move_px: float = 3.0) -> None:
+                 static_move_px: float = 3.0,
+                 revive_sec: float = _DEFAULT_REVIVE_SEC,
+                 revive_dist_ratio: float = _DEFAULT_REVIVE_DIST_RATIO) -> None:
         self.max_age  = max_age
         self.min_iou  = min_iou
         self.alpha    = ema_alpha   # 높을수록 새 탐지에 빠르게 반응
         self.max_center_dist_ratio = max_center_dist_ratio
         self.static_move_px = static_move_px  # 이 픽셀 이하 이동은 "안 움직임"으로 간주
+        self.revive_sec = revive_sec
+        self.revive_dist_ratio = revive_dist_ratio
         self._tracks: list[dict] = []
+        self._graves: list[dict] = []   # 죽은 트랙의 임시 보관소 (재식별용)
         self._next_id = 0
 
     @staticmethod
@@ -96,10 +110,31 @@ class SimpleTracker:
         if disp > self._tracks[ti]["max_disp"]:
             self._tracks[ti]["max_disp"] = disp
 
-    def update(self, detections: list[dict]) -> list[dict]:
-        """탐지 결과를 받아 트랙 목록을 갱신하고 반환."""
+    def update(self, detections: list[dict], now: float | None = None) -> list[dict]:
+        """탐지 결과를 받아 트랙 목록을 갱신하고 반환.
+
+        `now`(초 단위 단조 시각)를 주면 **재식별**이 켜진다 — `max_age`를 넘겨 죽은
+        트랙을 잠시 보관했다가, 같은 자리 근처에서 같은 클래스가 다시 잡히면 **원래
+        track_id로 되살린다.** 생략하면 보관소를 쓰지 않아 동작이 종전과 완전히 같다.
+
+        **coasting(max_age)을 늘리는 것과는 성격이 다르다.** coasting은 공백 동안
+        마지막 박스를 **얼려서 계속 내보내므로**, 길게 잡으면 사람이 이미 지나간
+        자리에 유령 박스가 남아 ROI를 오판한다(실측: max_age 10 -> 40에서 정답 구간
+        밖 오탐율이 10.5% -> 27.7%로 뛰고 헛트리거도 늘었다). 재식별은 공백 동안
+        **아무것도 내보내지 않고** 다시 잡혔을 때 신원만 잇는다.
+
+        되살릴 때 `origin_center`와 `max_disp`를 그대로 물려준다 — 이게 목적이다.
+        새 트랙으로 시작하면 움직임 게이트(원점 대비 2% 변위)를 처음부터 다시 벌어야
+        하고, `pedestrian_entity`의 래치와 안내 주체도 끊긴다. 반면 `static_frames`는
+        0으로 시작한다(죽어 있는 동안 물체가 움직였을 수 있어 "정지"를 물려줄 근거가
+        없다). 움직임 게이트는 `max_disp`가 그대로라 느슨해지지 않는다.
+        """
         matched_det: set[int] = set()
         matched_trk: set[int] = set()
+
+        if now is not None:
+            self._graves = [g for g in self._graves
+                            if now - g["died_at"] <= self.revive_sec]
 
         # 1차: 탐지-트랙 greedy IoU 매칭
         for di, det in enumerate(detections):
@@ -134,9 +169,13 @@ class SimpleTracker:
                 matched_trk.add(best_ti)
                 self._apply_match(best_ti, det)
 
-        # 미매칭 탐지 → 신규 트랙 생성
+        # 미매칭 탐지 → 보관소에서 되살리거나, 안 되면 신규 트랙 생성
         for di, det in enumerate(detections):
             if di not in matched_det:
+                revived = self._revive(det) if now is not None else None
+                if revived is not None:
+                    self._tracks.append(revived)
+                    continue
                 self._tracks.append({
                     "track_id":     self._next_id,
                     "bbox":         det["bbox"][:],
@@ -155,7 +194,48 @@ class SimpleTracker:
             if ti not in matched_trk:
                 self._tracks[ti]["age"] += 1
 
-        # max_age 초과 트랙 제거
+        # max_age 초과 트랙 제거 — 재식별이 켜져 있으면 보관소로 옮긴다
+        expired = [t for t in self._tracks if t["age"] > self.max_age]
         self._tracks = [t for t in self._tracks if t["age"] <= self.max_age]
+        if now is not None:
+            for t in expired:
+                self._graves.append({**t, "died_at": now})
 
         return [dict(t) for t in self._tracks]
+
+    def _revive(self, det: dict) -> dict | None:
+        """보관소에서 이 탐지와 같은 물체로 볼 만한 트랙을 찾아 되살린다.
+
+        같은 클래스이면서 **마지막 박스 대각선의 `revive_dist_ratio`배** 안에서 다시
+        잡힌 것만 대상이다. 픽셀 절대값이 아니라 박스 크기 비율인 이유는 원근에 따라
+        같은 기준이 유지되어야 하기 때문이다(`cane_person_assoc.max_gap_ratio`와 같은 논리).
+
+        후보가 여럿이면 가장 가까운 것을 고르고, 되살린 무덤은 즉시 지운다 — 한 무덤이
+        두 탐지를 되살리면 같은 track_id가 둘 생긴다.
+        """
+        dcx, dcy = self._center(det["bbox"])
+        best_i, best_dist = -1, None
+        for gi, g in enumerate(self._graves):
+            if g["class"] != det["class"]:
+                continue
+            gcx, gcy = self._center(g["bbox"])
+            dist = ((dcx - gcx) ** 2 + (dcy - gcy) ** 2) ** 0.5
+            if dist > self._diag(g["bbox"]) * self.revive_dist_ratio:
+                continue
+            if best_dist is None or dist < best_dist:
+                best_i, best_dist = gi, dist
+        if best_i < 0:
+            return None
+
+        g = self._graves.pop(best_i)
+        return {
+            "track_id":      g["track_id"],
+            "bbox":          det["bbox"][:],      # 낡은 박스와 섞지 않는다
+            "conf":          det["conf"],
+            "class":         det["class"],
+            "label":         det["label"],
+            "age":           0,
+            "static_frames": 0,
+            "origin_center": g["origin_center"],  # ★ 움직임 게이트를 물려받는다
+            "max_disp":      g["max_disp"],
+        }

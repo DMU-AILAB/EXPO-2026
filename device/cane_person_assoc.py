@@ -38,15 +38,16 @@ def _gap(a: list, b: list) -> float:
     return (dx * dx + dy * dy) ** 0.5
 
 
-def _matched_pairs(
+def candidate_pairs(
     tracks: list[dict],
-    max_gap_ratio: float,
-    cane_cls: int,
-    person_cls: int,
-) -> tuple[list[dict], list[dict], set[tuple[int, int]]]:
-    """(지팡이 트랙, 사람 트랙, 짝지어진 (person_id, cane_id) 집합)을 반환.
+    max_gap_ratio: float = _DEFAULT_MAX_GAP_RATIO,
+    cane_cls: int = CANE_CLASS_ID,
+    person_cls: int = PERSON_CLASS_ID,
+) -> tuple[list[dict], list[dict], list[tuple[int, int, float, float]]]:
+    """(지팡이 트랙, 사람 트랙, **짝 후보 목록**)을 반환.
 
-    두 조건을 모두 만족해야 짝으로 본다.
+    후보 한 건은 `(person_id, cane_id, gap_px, center_dist_norm)`이다. 두 조건을
+    모두 만족해야 후보로 본다.
 
     1. 지팡이 bbox와 사람 bbox의 **최단거리**가 사람 폭 × `max_gap_ratio` 이하
     2. 지팡이 bbox 중심의 y가 사람 bbox의 y 범위 안
@@ -64,20 +65,53 @@ def _matched_pairs(
 
     세로 조건을 남기는 이유: 빼면 사람 위쪽의 나뭇가지나 아래쪽 난간이 거리만
     가까우면 통과해 사람 동반 게이트의 존재 이유가 약해진다.
+
+    **거리까지 함께 돌려주는 이유**는 `pedestrian_entity.EntityTracker`가 1:1 배정을
+    할 때 어느 짝이 더 가까운지로 순위를 매겨야 하기 때문이다. 기하 판정 규칙이
+    두 곳으로 갈라지지 않도록 그 정렬 키를 여기서 같이 계산해 내보낸다 —
+    `associate()` 계열과 엔티티 계열이 **같은 후보 집합**을 보게 된다.
+
+    `center_dist_norm`(중심거리 ÷ 사람 폭)이 2차 정렬 키로 필요한 이유: 지팡이를
+    쥔 상태에서는 두 박스가 겹쳐 `gap`이 0으로 **동점이 되는 것이 정상**이라,
+    gap만으로는 밀착한 두 사람 사이에서 순위를 가릴 수 없다.
     """
     canes = [t for t in tracks if t["class"] == cane_cls]
     people = [t for t in tracks if t["class"] == person_cls]
 
-    pairs: set[tuple[int, int]] = set()
+    out: list[tuple[int, int, float, float]] = []
     for person in people:
         px1, py1, px2, py2 = person["bbox"]
-        max_gap = (px2 - px1) * max_gap_ratio
+        pw = px2 - px1
+        max_gap = pw * max_gap_ratio
+        pcx, pcy = _center(person["bbox"])
         for cane in canes:
-            _, cy = _center(cane["bbox"])
-            if py1 <= cy <= py2 and _gap(cane["bbox"], person["bbox"]) <= max_gap:
-                pairs.add((person["track_id"], cane["track_id"]))
+            ccx, ccy = _center(cane["bbox"])
+            if not (py1 <= ccy <= py2):
+                continue
+            gap = _gap(cane["bbox"], person["bbox"])
+            if gap > max_gap:
+                continue
+            dist = ((ccx - pcx) ** 2 + (ccy - pcy) ** 2) ** 0.5
+            out.append((person["track_id"], cane["track_id"], gap,
+                        dist / pw if pw else dist))
+    return canes, people, out
 
-    return canes, people, pairs
+
+def _matched_pairs(
+    tracks: list[dict],
+    max_gap_ratio: float,
+    cane_cls: int,
+    person_cls: int,
+) -> tuple[list[dict], list[dict], set[tuple[int, int]]]:
+    """`candidate_pairs()`의 결과를 (person_id, cane_id) 집합으로 축약한다.
+
+    **1:1 배정을 하지 않는다** — 밀착한 두 사람 사이에서는 지팡이 하나가 양쪽
+    모두와 조건을 만족해 둘 다 동반으로 잡힌다. 프레임 단위 게이트에서는 허용
+    가능한 단순화이고, 1:1이 필요한 쪽(유동인구·엔티티)은
+    `pedestrian_entity.EntityTracker`가 히스테리시스까지 포함해 처리한다.
+    """
+    canes, people, cands = candidate_pairs(tracks, max_gap_ratio, cane_cls, person_cls)
+    return canes, people, {(pid, cid) for pid, cid, _, _ in cands}
 
 
 def associate(
