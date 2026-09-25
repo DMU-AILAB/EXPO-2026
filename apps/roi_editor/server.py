@@ -46,6 +46,7 @@ from foot_traffic_counter import (  # noqa: E402
 )
 from detection_events import read_recent_events  # noqa: E402
 from fp_hotspots import clear_hotspots, read_hotspots  # noqa: E402
+import static_mask as _static_mask  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CAPTURE_PRESETS, CameraProfile,
     _DEFAULT_MODEL_VARIANT, _DEFAULT_REQUIRE_PERSON, _DEFAULT_ROI_CROP_INFERENCE,
@@ -131,6 +132,22 @@ def _all_traffic_dbs() -> list[Path]:
         resolved = value if value.is_absolute() else (rois_path.parent / value).resolve()
         paths.setdefault(str(resolved), resolved)
     return list(paths.values())
+
+
+def _static_mask_path(camera: str | None = None) -> Path:
+    """`static_mask.json` 경로 — **`rois.json`과 같은 자리**에 둔다.
+
+    탐지 프로세스가 rois.json과 같은 mtime 폴링으로 함께 읽으므로 경로가 어긋나면
+    조용히 반영되지 않는다. 카메라별 roi_config가 있으면 그 디렉터리를 따른다.
+    """
+    if camera is not None:
+        return _resolve_camera_path(camera, "roi_config", rois_path).parent / "static_mask.json"
+    return rois_path.parent / "static_mask.json"
+
+
+def _calib_thumb_dir(camera: str | None = None) -> Path:
+    """수집 썸네일 디렉터리 — camera_live_pi가 쓰는 자리와 같아야 한다."""
+    return rois_path.parent / "recordings" / (camera or "legacy") / "calib"
 
 
 def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
@@ -280,6 +297,84 @@ async def delete_fp_hotspots(camera: str | None = None):
     path = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
     clear_hotspots(path)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 구조물 마스크 — 새벽 캘리브레이션 결과를 제안하고, 운영자가 고른 것만 적용한다
+# ---------------------------------------------------------------------------
+@app.get("/api/static-mask/candidates")
+async def get_static_mask_candidates(camera: str | None = None):
+    """수집된 구조물 후보 목록.
+
+    `fp_hotspots`와 같은 **제안-확인** 구조다. 자동으로 적용하지 않는 이유도 같다 —
+    캘리브레이션 중 청소·보수 인력이 지나가면 그 자리가 구조물로 굳어 **사각지대**가
+    된다. 운영자가 썸네일·탐지횟수·이동량을 보고 판단한다.
+
+    응답의 `applied`는 현재 `static_mask.json`에 켜져 있는지다(IoU로 대조).
+    """
+    db = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    rows = _static_mask.read_candidates(db)
+    active = _static_mask.load_mask_file(_static_mask_path(camera))
+    for r in rows:
+        r["applied"] = any(
+            b["cls"] == r["cls"] and _static_mask.iou(b["bbox"], r["bbox"]) >= 0.9
+            for b in active.boxes)
+        # 지팡이는 적용해도 위험이 거의 없지만(트리거는 지팡이 트랙만 순회) 사람은
+        # 그 자리의 진짜 사람을 가릴 수 있다 — UI가 기본 선택을 다르게 하도록 알린다.
+        r["recommend"] = (r["cls"] == 0)
+    return {"candidates": rows}
+
+
+@app.post("/api/static-mask/apply")
+async def apply_static_mask(payload: dict, camera: str | None = None):
+    """선택한 후보만 `static_mask.json`에 쓴다 — 탐지 프로세스가 mtime 폴링으로 반영한다.
+
+    `{"ids": [1, 3, 7]}` 형식. 빈 목록이면 마스크를 모두 끈다.
+    """
+    ids = {int(i) for i in (payload or {}).get("ids", [])}
+    db = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    rows = [r for r in _static_mask.read_candidates(db) if r["id"] in ids]
+    path = _static_mask_path(camera)
+    _static_mask.save_mask_file(
+        path,
+        [{"cls": r["cls"], "bbox": r["bbox"]} for r in rows],
+        meta={"applied_at": time.time(), "count": len(rows),
+              "rotation": rows[0]["rotation"] if rows else None,
+              "preset": rows[0]["preset"] if rows else None})
+    return {"ok": True, "applied": len(rows), "path": str(path)}
+
+
+@app.delete("/api/static-mask")
+async def delete_static_mask(camera: str | None = None):
+    """후보와 적용 상태를 모두 초기화 — 재캘리브레이션 전이나 카메라를 옮긴 뒤."""
+    db = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    _static_mask.clear_candidates(db)
+    _static_mask.clear_mask_hits(db)
+    _static_mask.save_mask_file(_static_mask_path(camera), [])
+    return {"ok": True}
+
+
+@app.get("/api/static-mask/hits")
+async def get_static_mask_hits(camera: str | None = None):
+    """마스크가 걸러낸 트랙 수(클래스별).
+
+    **사각지대를 발견하는 유일한 수단이다** — 안내가 조용해진 것이 오탐이 줄어서인지
+    사람을 못 봐서인지는 이 값으로만 구분된다. 사람 클래스 적중이 늘고 있다면
+    그 마스크를 꺼야 한다.
+    """
+    db = _resolve_camera_path(camera, "traffic_db", traffic_db_path)
+    return {"hits": _static_mask.read_mask_hits(db)}
+
+
+@app.get("/api/static-mask/thumb")
+async def get_static_mask_thumb(name: str, camera: str | None = None):
+    """후보 썸네일. 경로 탈출을 막으려고 **파일명만** 받는다(오디오 서빙과 같은 원칙)."""
+    if "/" in name or "\\" in name or not name.endswith(".jpg"):
+        raise HTTPException(status_code=400, detail="잘못된 파일명")
+    f = (_calib_thumb_dir(camera) / name).resolve()
+    if not f.is_file():
+        raise HTTPException(status_code=404, detail="썸네일 없음")
+    return FileResponse(f)
 
 
 @app.get("/api/audio/file")

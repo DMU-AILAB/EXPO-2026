@@ -1,0 +1,54 @@
+# E3 — 다중 시드 확정 (seed 2) · pedcctv keep=0.25
+#
+# E2는 단일 시드라 축마다 순위가 어긋났다 — 실외 통과 프레임은 ped50 1위인데
+# 실내 탐지는 ped25 1위이고 ped50이 꼴찌였다(리포트 §14-3-1). 런 간 분산이
+# 효과 크기와 비슷하다는 뜻이라, 세 시드 평균으로만 판정한다.
+#
+# **기준선도 같이 3시드로 만든다.** 변형만 3시드로 재고 기준선을 1시드로 두면,
+# 기준선이 운 좋은/나쁜 draw였을 때 그대로 오판한다 — 분산이 바로 이 실험의
+# 쟁점이므로 한쪽만 평균내는 것은 비교가 성립하지 않는다.
+#
+# 데이터·증강·epoch는 E2와 동일하고 seed만 다르다.
+# ★ workers를 8 → 3으로 낮췄다. 성능 튜닝이 아니라 **이 기기에서 학습이 끝까지
+# 돌게 하기 위한 조치**다. 실측(이 저장소, RAM 15GB):
+#
+#   workers=8 → 사용 12.5GB / 여유 3.2GB / 프로세스 29개  → 기동 단계에서 반복 강제종료
+#   workers=3 → 사용  8.2GB / 여유 7.6GB / 프로세스 11개  → 여유 확보
+#
+# **여섯 런 전부 같은 값이어야 한다.** 워커 수가 바뀌면 배치가 워커에 배정되는
+# 순서가 달라져 배치별 증강 RNG 스트림이 달라진다 — 시드 간 차이를 재는 실험에서
+# 워커 수가 섞이면 그 차이가 시드 탓인지 워커 탓인지 가를 수 없다. 그래서 이미
+# workers=8로 완주했던 base_s1도 폐기하고(runs/..._workers8로 보존) 다시 돌린다.
+
+task: detect
+mode: train
+
+model: yolov8n.pt
+data: datasets/data_v3_ped25.yaml
+
+epochs: 100
+patience: 30
+batch: 64
+imgsz: 320
+device: 0
+workers: 3
+seed: 2
+deterministic: true
+amp: true
+
+project: /home/ubuntu/expo/runs
+name: white_cane_v14_ped25_s2
+
+# --- 증강: augB (v10_nolkc와 동일) ---
+degrees: 10.0
+scale: 0.7
+translate: 0.2
+multi_scale: 0.5
+hsv_v: 0.6
+close_mosaic: 20
+mixup: 0.1
+
+# 강제종료 후 재시작할 때 ultralytics가 디렉터리를 자동 증가(<name>-2, -3 …)시키면
+# 러너의 완료/재개 판정이 엉뚱한 경로를 보게 된다. 같은 자리에 쓰게 고정한다.
+# (디렉터리 이름만 바뀔 뿐 학습 결과에는 영향이 없다)
+exist_ok: True

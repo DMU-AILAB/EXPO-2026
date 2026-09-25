@@ -54,12 +54,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
 | `lookalike_exclude.txt` | 유사물 네거티브에서 뺄 원본 파일명 + 근거 주석 (`--exclude-file`) — 흰지팡이가 찍힌 사진을 걸러내는 육안 검수 결과 |
 | `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `datasets/sources/lookalike_lvis_oi/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
+| `static_mask.py` | **현장 고정 구조물을 객체 단위로 기억**해 오탐을 막는다. 폐장 시간에 몇 분 관측하면 (사람이 없으니) 탐지되는 것이 전부 오탐이라 라벨링 없이 그 현장의 네거티브가 생긴다. 제외구역과 달리 **중심점이 아니라 박스(IoU + 클래스)** 로 판정해, 기둥 앞에 선 사람을 같이 지우지 않는다. 표준 라이브러리만 사용 |
 | `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
 | `eval_video_recall.py` | 로컬 전용 — **실영상 기준 지팡이 탐지/트리거 벤치마크. 모델 채택의 1차 기준.** `camera_live_pi.py`의 백엔드·게이트 상수·연관 로직을 그대로 import해 배포와 같은 경로로 잰다(복붙 금지). `--gt`로 정답 구간을 주면 재현율과 오탐지를 분리 집계한다(`datasets/videos/video_gt.json`) |
 | `resplit_dataset.py` + `tests/test_resplit_dataset.py` | 로컬 전용 1회성 — 누수 없는 **그룹 단위 재분할**(`datasets/v2/`, 하드링크). 증강 해시/AIHub 세션을 그룹으로 묶고 층별 md5로 배정한다. `--relabel-person`으로 cane_only의 누락 사람 라벨도 보완. 테스트가 split 쌍의 그룹키 교집합이 공집합인지 검증한다 |
+| `build_pseudo_videos.py` | 로컬 전용 — `datasets/v2/test`의 AIHub **연속 촬영 프레임**을 의사 영상 5편(417프레임)으로 복원해 평가 표본을 1편 → 6편으로 늘린다. 본체는 **좌우 반전 정렬**이다: Roboflow export라 무증강 원본이 0장이고 인덱스마다 있는 1~2장이 사실상 전부 서로의 반전본이라(73/73 등) 그냥 이으면 매 프레임 뒤집힌다. 복사본을 고르는 전역 DP는 팬 구간에서 약 10%를 뒤집으므로, **복사본은 고정하고 방향만 히스테리시스로 정렬**한다. 절대 방향은 무의미하다(`fliplr=0.5`로 학습됨). 세션 전체가 test 전용이라 누수가 없다 |
+| `make_stratum_variant.py` | 로컬 전용 — **확정된 split을 유지한 채** 한 층(stratum)만 비율로 줄인 하드링크 변형. 재분할이 아니다 — `val`/`test`를 손대지 않아야 학습셋 구성 하나만 바뀐 A/B가 되고, 줄인 층이 val에 남아야 그 층의 회귀(pedcctv의 경우 person recall)가 지표에 잡힌다. **선택 해시에 소금을 친다** — `resplit_dataset`이 `md5(group)` 순서로 split을 배정하므로 train 그룹은 해시 상위 70%에만 존재하고, 같은 해시를 재사용하면 keep=0.25가 0장이 된다(실제로 겪음) |
 | `prepare_night_eval.py` | 로컬 전용 1회성 — 합성 야간 평가셋(`datasets/v2_night/`, 감마 0.35~0.55 + 노이즈 σ=6). **KPI 달성 근거가 아니라 회귀 감시용** |
 | `configs/train_*.yaml` | 학습 설정 — `yolo train cfg=<yaml>`로 재현 가능하게 고정. `project:`는 반드시 절대경로(상대경로면 `runs/detect/runs/<name>`으로 중첩된다) |
-| `apps/label_tool/server.py` + `apps/label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 데이터셋 라벨링 보완 툴 — `datasets/v1/{train,val,test}`에서 class 0(지팡이)만 있고 class 1(사람)이 없는 이미지("cane_only")만 골라 보여주고, 사람 바운딩박스를 그려 저장. 기존 지팡이 라벨은 읽기 전용으로 표시, 검토 진행상황은 `apps/label_tool/reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업 가능 |
+| `apps/label_tool/server.py` + `apps/label_tool/static/index.html` | 로컬 전용(Pi 배포 대상 아님) 라벨 보완·검수 툴(포트 5050). **대기열 방식 3가지** — `--targets cane_only`(지팡이만 있고 사람 라벨이 없는 이미지) · `all`(전수 검수) · `queue --queue <json>`(감사 결과가 지목한 이미지만, **그 파일의 순서대로**). **사람·지팡이 둘 다 편집**하며 캔버스에서 `1`/`2` 키로 클래스를 전환한다. 새 이미지를 열면 **기존 라벨과 IoU 0.3 이상 겹치지 않는 자동검출만** 주황색으로 미리 얹어 준다 — 겹침을 빼지 않으면 이미 라벨된 사람 위에 박스가 중복으로 쌓여 무엇을 확인해야 할지 알 수 없게 된다. 진행상황은 `reviewed.json`(gitignore)에 저장돼 재시작해도 이어서 작업. **기본 대상은 `datasets/v2`의 `train`뿐이다** — 아래 '라벨 편집 시 주의' 참고 |
 
 ### 미구현 (계획)
 
@@ -76,7 +79,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 24개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 25개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
@@ -211,6 +214,27 @@ PC는 `apps/simulator/`다. `camera_live_pi.py`가 `sys.path`에 둘 다 시도�
   만드시겠습니까?"라고 제안한다. **자동으로 만들지 않고 사람 확인을 거치는 이유**는 지팡이
   사용자가 늘 같은 지점에서 멈춰 서면 그 위치도 핫스팟으로 잡힐 수 있기 때문이다. 기록은
   **트랙 id당 1회**만 한다 — 매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다.
+- **구조물 마스크**(`static_mask.py`)는 제외구역의 정밀판이다. 제외구역은 **bbox 중심점이
+  폴리곤 안인가**로 판정하고 클래스를 가리지 않으므로, 기둥을 딱 맞게 그려도 **그 앞에
+  선 사람의 중심점이 같은 자리**라 함께 지워진다 — 사람 동반 게이트는 모든 트리거의
+  필수 조건이라 그대로 안내 실패다. 마스크는 **IoU + 같은 클래스**로 판정해 이를 가른다.
+  - **수집은 폐장 시간에 한다.** 사람이 없으면 탐지되는 것이 정의상 전부 오탐이라
+    라벨링 없이 그 현장의 네거티브가 생긴다. 실측(기기, 60초): 791프레임에서 후보 1개 —
+    **흰 문짝과 벽이 만나는 모서리를 conf 0.729로 지팡이라고 부르고 있었다.**
+  - **★ 버리지 않고 표시만 한다.** `static_mask`는 탐지에 `static_masked`를 붙일 뿐이고,
+    실제 제거는 `gate_chain`이 **트랙이 움직였는지(`max_disp`)까지 보고** 정한다.
+    마스크는 움직임 게이트의 **사전확률**이지 최종 판정이 아니다 — 최종 판정이면 그 자리가
+    **영구 사각지대**가 된다. 기둥 앞을 걸어가는 사람/지팡이 사용자는 트랙이 움직이므로 살아난다.
+  - **메우는 구멍**: 정지 억제는 `static_frames`가 24가 될 때까지 약 2초가 걸리는데
+    디바운스는 0.5초라 그 사이에 이미 음성이 나간다. 마스크는 **첫 프레임부터** 막는다.
+  - **자동 적용하지 않는다.** `fp_hotspots`와 같은 이유 — 캘리브레이션 중 청소·보수
+    인력이 지나가면 그 자리가 구조물로 굳어 사각지대가 된다. roi_editor가 썸네일·탐지횟수·
+    이동량을 보여주고 운영자가 고른다. **지팡이는 기본 선택, 사람은 기본 해제**다
+    (사람 마스크는 그 자리에 가만히 선 진짜 사람을 가릴 수 있다).
+  - **걸러낸 것을 로그로 남긴다**(`log_mask_hit`, 트랙당 1회). 안내가 조용해진 것이
+    오탐이 줄어서인지 **사람을 못 봐서인지** 구분하는 유일한 수단이다.
+  - 적용 상태는 `static_mask.json`(rois.json과 같은 자리)에 쓰고 **같은 mtime 폴링으로
+    핫리로드**된다 — 실측 6초 내 반영, 재시작 불필요.
 - **감지 제외구역**(`ROI.zone_type="exclude"`)은 지형지물(손잡이/점자블록/기둥 등) 오탐지 대응용. 트래킹
   이후가 아니라 **raw detection 단계**(`backend.predict()` 직후, `tracker.update()` 이전)에서 지팡이+사람
   전체 클래스에 필터링한다 — 트래킹 이후 필터링은 EMA 스무딩/coasting 때문에 구역 경계에서 트랙이
@@ -426,7 +450,23 @@ outbox 코드가 한 줄도 실행되지 않는다. 사람과 지팡이가 실�
 
 ## 데이터셋
 
-- 학습에 실제로 쓰이는 건 `datasets/v1/{train,val,test}/{images,labels}` (`data.yaml`이 참조하는 경로).
+### ★ 라벨을 편집할 때 반드시 지킬 것 (2026-09-21)
+
+- **`val`/`test` 라벨을 고치지 말 것.** 리포트 §13~§15의 모든 수치가 그 라벨을 잣대로
+  잰 값이라, 고치는 순간 이전 결과와 나란히 놓을 수 없게 된다. `label_tool`은 기본적으로
+  `train`만 열고 저장 경로에서도 한 번 더 막는다(`--splits`로만 해제).
+- **★ 라벨 파일은 여러 데이터셋이 하드링크로 공유한다.** 같은 `.txt` 하나를
+  `v1`·`v2`·`v2_nolkc`·`v3_ped00`·`v3_ped25`·`v3_ped50`이 함께 가리킨다(실측 링크 수 6).
+  **제자리에서 열어 쓰면 여섯 데이터셋이 동시에 바뀌어 E2/E3 재현이 불가능해진다.**
+  반드시 **임시파일 + `os.replace`**(원자적 교체)로 써서 링크를 끊을 것 —
+  `label_tool`의 저장 경로가 그렇게 돼 있고, 새 도구도 같은 방식을 따라야 한다.
+  대신 편집 후 파생 변형(`v3_ped*`)은 **낡은 상태가 되므로 다시 생성**해야 한다.
+- **라벨 형식은 전 데이터셋이 동일하다**(전수 감사 확인): 5필드 `cls cx cy w h`,
+  클래스 0·1만, 좌표 0~1, 확장자 `.jpg`, 빈 라벨 319개는 정상(bg/lk 네거티브).
+  폴리곤·CRLF·좌표범위 초과·짝 없는 파일은 0건이다.
+
+
+- **현행 학습에 쓰이는 건 `datasets/v2` 계열이다** — `configs/train_*.yaml`이 참조하는 것은 전부 `data_v2*.yaml`/`data_v3_ped*.yaml`이고 **`data.yaml`(= v1)을 쓰는 설정은 하나도 없다**. `datasets/v1`(11,660장)은 누수가 있던 옛 split이고 `v2`(9,971장)가 그것을 그룹 단위로 재분할한 결과다. v1은 **재생성의 원본으로만** 커밋돼 있다(파생 split은 `.gitignore`).
   파생 스플릿(`v2`·`v2_nolkc`·`v2_night`)과 나란히 놓이도록 `v1/`로 묶었다.
   `datasets/sources/cane_pool/{images,labels}`는 지팡이 전용 원본 풀(스플릿 전)로, `v1/{train,val,test}`의
   cane_only 이미지 합계와 장수가 일치한다.
@@ -602,7 +642,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py`, `detect.py`, `edgetpu_infer.py`, `audio_trigger.py`, `gpio_controls.py`, `fan_controller.py`, `yolo_postprocess.py`, `simple_tracker.py`, `cane_person_assoc.py`, `pedestrian_entity.py`, `foot_traffic_counter.py`, `camera_config.py` | Pi에 배포할 Python 소스 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `gpio_controls.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` | Pi에 배포할 Python 소스 **25개**. 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
@@ -803,9 +843,14 @@ Pi Camera → YOLOv8n(TFLite INT8) → SORT 추적 → ROI Point-in-Polygon
    추론을 한 번만 하고 임계값별로 게이트만 재실행하므로 `--thresholds 0.10 0.25 0.40 0.55`
    스윕이 거의 공짜다. 백본 비교에는 스윕을 쓸 것.
 
-5. **실영상 지표의 표본 수를 반드시 병기한다.** 현재 깨끗한 평가 영상은 `test1.mp4`
-   805프레임 1개뿐이라, 수십 프레임 규모의 차이는 신호가 아니라 노이즈로 취급한다
-   (`docs/model_evaluation_report_v3.md` §3-2에 부호가 뒤집힌 실례가 있다).
+5. **실영상 지표의 표본 수와 성격을 반드시 병기한다.** 평가 영상은 실촬영 4편
+   (`test1`~`test4`)과 **AIHub 연속 촬영 프레임을 복원한 의사 영상 5편**
+   (`pseudo_*.mp4`, 417프레임, `tools/eval/build_pseudo_videos.py`)이다.
+   **의사 영상은 학습 도메인 안(in-domain)이라 confidence가 높아 conf 0.10과 0.55의
+   결과가 거의 같다** — 재는 것은 트랙 지속성과 게이트 동작이고, **confidence 격차와
+   오탐은 못 잰다**(그쪽은 `test1`~`test3`). 정답 구간이 거의 전 구간이라 오탐 분모도 없다.
+   축을 섞지 말고 목적에 맞는 영상으로 판정할 것. 영상 1편으로 판정하면 그 영상에
+   과적합한다 — §3-2의 augC 우위가 6편으로 넓히자 뒤집힌 실례가 §13에 있다.
 
 6. **INT8 두 경로(LiteRT / onnx2tf full-integer)의 우열은 모델마다 뒤집힌다** —
    v3는 full-integer, v5b는 LiteRT, v10은 다시 full-integer가 우세했다. 어느 한쪽이
