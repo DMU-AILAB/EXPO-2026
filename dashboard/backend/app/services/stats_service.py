@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from ..models.stats import HourlyStats
 from ..models.event import DetectionEvent
 from ..models.device import Device, DeviceStatusCache
+from ..models.camera import Camera
+from .heartbeat_service import get_buffered_status
 from ..utils.timeutil import KST, kst_day_bounds_utc, naive_utc_to_kst, utcnow
 
 # 시간대 변환은 utils/timeutil.py 한 곳에서만 한다 — 같은 변환이 이 파일 안에만
@@ -12,7 +14,7 @@ from ..utils.timeutil import KST, kst_day_bounds_utc, naive_utc_to_kst, utcnow
 def get_today_kst_bounds():
     return kst_day_bounds_utc()
 
-def get_summary_stats(db: Session, date_str: str = None):
+async def get_summary_stats(db: Session, date_str: str = None):
     # Determine bounds based on date_str (defaults to today)
     start_utc, end_utc = kst_day_bounds_utc(date_str)
 
@@ -54,10 +56,27 @@ def get_summary_stats(db: Session, date_str: str = None):
     
     total_device_count = db.query(Device).count()
     online_rate = round(online_device_count / total_device_count, 3) if total_device_count > 0 else 0.0
-    
-    active_streams = online_device_count  # Mocked logic as per requirement
-    total_streams = total_device_count    # Mocked logic
-    active_alert_count = 0                # Mocked logic
+
+    # A device being online does not mean every configured camera is streaming.
+    # Use the camera state from the latest heartbeat and keep the configured camera
+    # count as the denominator for the dashboard cards.
+    configured_cameras = {
+        (camera.device_id, camera.id)
+        for camera in db.query(Camera).filter(Camera.is_active.is_(True)).all()
+    }
+    total_streams = len(configured_cameras)
+    active_streams = 0
+    active_alert_count = sum(
+        1 for device in db.query(Device).all() if device.status == "warning"
+    )
+    for device in db.query(Device).all():
+        heartbeat = await get_buffered_status(device.id)
+        for camera in (heartbeat or {}).get("cameras") or []:
+            if (not isinstance(camera, dict)
+                    or (device.id, camera.get("id")) not in configured_cameras):
+                continue
+            active_streams += int(bool(camera.get("is_streaming")))
+            active_alert_count += int(bool(camera.get("current_alert")))
 
     # Most active device
     most_active = db.query(

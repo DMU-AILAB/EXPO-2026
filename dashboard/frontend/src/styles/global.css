@@ -1,3 +1,16 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.stream-cell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  background: #020617;
+}
+
+.stream-cell:fullscreen img {
+  object-fit: contain;
+}

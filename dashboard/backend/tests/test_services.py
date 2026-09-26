@@ -129,6 +129,38 @@ async def test_offline_sweep_transitions_only_on_change(db_session, monkeypatch)
     assert sent == []
 
 
+@pytest.mark.asyncio
+async def test_camera_missing_turns_online_device_into_warning(db_session, monkeypatch):
+    from app.services import monitor_service
+
+    monkeypatch.setattr(monitor_service, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+
+    now = utcnow()
+    db_session.add(Device(
+        id="camera-missing", name="camera-missing", ip="1.1.1.4",
+        api_key_hash="x", status="online", last_seen=now,
+    ))
+    db_session.commit()
+
+    async def fake_heartbeat(_device_id):
+        return {"status": "online", "cameras": [], "updated_at": now}
+
+    sent = []
+
+    async def fake_broadcast(kind, data, device_id=None):
+        sent.append((kind, data))
+
+    monkeypatch.setattr(monitor_service, "get_buffered_status", fake_heartbeat)
+    monkeypatch.setattr(monitor_service.manager, "broadcast_event", fake_broadcast)
+
+    assert await sweep_offline_devices() == 1
+    assert db_session.query(Device).filter_by(id="camera-missing").one().status == "warning"
+    assert [item[0] for item in sent] == ["device_status_change", "alert"]
+    assert sent[1][1]["camera_id"] == "__device__"
+    assert "카메라가 인식되지 않았습니다" in sent[1][1]["message"]
+
+
 # --------------------------------------------------------------------------
 # 유동인구 수집기
 # --------------------------------------------------------------------------

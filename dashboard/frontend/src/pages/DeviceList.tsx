@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, ChevronRight } from 'lucide-react'
 
@@ -9,11 +9,21 @@ import { formatLastSeen } from '../format'
 
 export default function DeviceList() {
   const [query, setQuery] = useState('')
+  const [search, setSearch] = useState('')
   const navigate = useNavigate()
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(query), 250)
+    return () => window.clearTimeout(timer)
+  }, [query])
+
   // 검색은 **서버가** 한다(명세 §3의 `search` 파라미터) — 이름·IP·위치를 함께 본다.
-  const { data, loading, error } = useApi(() => api.listDevices(query || undefined),
-                                          [query], 10_000)
+  const { data, loading, error } = useApi(
+    () => api.listDevices(search || undefined),
+    [search],
+    30_000,
+    api.getCachedDeviceList(search || undefined),
+  )
   const devices = data?.data ?? []
   const total = data?.total ?? 0
   const onlineCount = devices.filter((d) => d.status === 'online').length

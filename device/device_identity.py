@@ -24,8 +24,10 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-__all__ = ["APP_VERSION", "DeviceIdentity", "load_identity", "save_identity",
-           "clear_identity", "default_path"]
+__all__ = [
+    "APP_VERSION", "DeviceIdentity", "load_identity", "save_identity",
+    "clear_identity", "default_path",
+]
 
 # 기기가 스스로 밝히는 버전. 서버의 기기 탐색(`GET /api/scan/{id}`)이 `version`
 # 필드를 채우는 유일한 소스다 — 명세서에 "이 필드를 채울 소스가 현재 Pi에 없다"고

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pi ROI Web Editor — FastAPI 서버
+"""Pi ROI API와 호환용 웹 에디터를 제공하는 FastAPI 서버
 
 포트 5000에서 실행. rois.json CRUD + 정적 파일 서빙.
 같은 Wi-Fi의 PC/스마트폰 브라우저에서 http://<Pi-IP>:5000 으로 접속.
@@ -7,6 +7,7 @@
 실행:
     python roi_editor/server.py
     python roi_editor/server.py --rois /home/ailab/visionguide/rois.json --port 5000
+    python roi_editor/server.py --api-only  # PC 대시보드가 화면을 제공할 때
 """
 import argparse
 import hmac
@@ -56,8 +57,8 @@ from event_logger import EventSender, HeartbeatSender, pending_count  # noqa: E4
 from device_metrics import read_metrics  # noqa: E402
 from device_status import read_status  # noqa: E402
 from device_identity import (  # noqa: E402
-    APP_VERSION, DeviceIdentity, clear_identity, default_path, load_identity,
-    save_identity,
+    APP_VERSION, DeviceIdentity, clear_identity,
+    default_path, load_identity, save_identity,
 )
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ audio_dir: Path = _DEFAULT_AUDIO_DIR
 traffic_db_path: Path = _DEFAULT_TRAFFIC_DB
 camera_config_path: Path = _DEFAULT_CAMERA_CONFIG
 identity_path: Path = default_path(_ROOT)
+api_only = False
 STATIC_DIR = Path(__file__).parent / "static"
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _VALID_ZONE_TYPES = {"trigger", "exclude"}
@@ -145,6 +147,11 @@ def _resolve_camera_path(camera: str | None, field: str, default: Path) -> Path:
             value = getattr(p, field)
             value_path = Path(value)
             return value_path if value_path.is_absolute() else (rois_path.parent / value_path).resolve()
+    # Legacy single-camera mode has no camera_config.json profile.  Keep the
+    # API camera name used by the dashboard mapped to the original files while
+    # the browser editor is retired.
+    if camera == "legacy" and not profiles:
+        return default
     raise HTTPException(status_code=404, detail=f"camera '{camera}' not found")
 
 
@@ -209,7 +216,15 @@ def _validate_conf(conf: float | dict | None) -> list[str]:
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    if api_only:
+        return RedirectResponse("/pairing", status_code=307)
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/pairing", response_class=HTMLResponse)
+async def pairing_page():
+    """Small local Wi-Fi setup screen kept available in API-only deployments."""
+    return FileResponse(STATIC_DIR / "pairing.html")
 
 
 @app.get("/api/rois")
@@ -668,12 +683,18 @@ def get_identity():
 
 
 @app.post("/api/identity")
-def post_identity(req: IdentityIn):
+def post_identity(req: IdentityIn, request: Request):
     """서버가 등록 시 발급한 신원을 심는다.
 
-    **덮어쓰기를 허용한다** — 기기를 다른 서버로 옮기거나 키를 교체하는 정상 흐름이
-    있고, 거부하면 사람이 파일을 직접 지워야 한다.
+    미등록 기기는 네트워크 검색 후 등록할 수 있고, 이미 등록된 기기는 기존
+    `X-Device-Key`로만 덮어쓸 수 있다. 등록 후 제어 요청은 계속 키로 보호한다.
     """
+    current = load_identity(identity_path)
+    if current is not None:
+        presented = request.headers.get("x-device-key", "")
+        if not presented or not hmac.compare_digest(presented, current.api_key):
+            raise HTTPException(status_code=401, detail="기존 device key가 일치하지 않습니다")
+
     ident = DeviceIdentity(
         device_id=req.device_id.strip(), api_key=req.api_key.strip(),
         server_url=req.server_url.rstrip("/"), name=req.name,
@@ -690,8 +711,13 @@ def post_identity(req: IdentityIn):
 
 
 @app.delete("/api/identity")
-def delete_identity():
+def delete_identity(request: Request):
     """등록 해제. 기기를 회수하거나 다른 현장으로 옮길 때 쓴다."""
+    ident = load_identity(identity_path)
+    if ident is not None:
+        presented = request.headers.get("x-device-key", "")
+        if not presented or not hmac.compare_digest(presented, ident.api_key):
+            raise HTTPException(status_code=401, detail="device key가 일치하지 않습니다")
     return {"ok": True, "removed": clear_identity(identity_path)}
 
 
@@ -857,7 +883,7 @@ def replay_stream():
         gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
-_CAPTIVE_REDIRECT = f"http://{_nm.AP_IP}:5000"
+_CAPTIVE_REDIRECT = f"http://{_nm.AP_IP}:5000/pairing"
 
 
 def _captive():
@@ -899,6 +925,8 @@ if __name__ == "__main__":
                          help="유동인구 집계 sqlite 경로 (camera_live_pi.py --traffic-db와 동일해야 함)")
     parser.add_argument("--identity", default=None,
                          help="기기 신원 파일 경로 (기본: rois.json과 같은 디렉터리의 device_identity.json)")
+    parser.add_argument("--api-only", action="store_true",
+                        help="정적 대시보드 화면을 끄고 Pi API만 제공")
     parser.add_argument("--camera-config", default=str(_DEFAULT_CAMERA_CONFIG),
                          help="다중 카메라 프로필 JSON 경로 (camera_live_pi.py --camera-config와 동일해야 함)")
     parser.add_argument("--port", type=int, default=5000)
@@ -911,6 +939,7 @@ if __name__ == "__main__":
     camera_config_path = Path(args.camera_config).resolve()
     identity_path = (Path(args.identity).resolve() if args.identity
                      else default_path(rois_path.parent))
+    api_only = args.api_only
     print(f"[ROI Editor] rois.json: {rois_path}")
     print(f"[ROI Editor] audio_dir: {audio_dir}")
     print(f"[ROI Editor] traffic_db: {traffic_db_path}")

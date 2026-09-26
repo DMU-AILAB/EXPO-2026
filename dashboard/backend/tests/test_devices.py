@@ -1,5 +1,9 @@
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
+
+from app.models.device import Device
 
 @pytest.fixture
 def auth_headers(client: TestClient, admin_user):
@@ -39,3 +43,29 @@ def test_create_and_get_device(client: TestClient, auth_headers):
     assert detail_data["data"]["id"] == "test-cam-01"
     assert detail_data["data"]["name"] == "Test Camera"
     assert "cameras" in detail_data["data"]
+
+
+@respx.mock
+def test_create_device_persists_control_key_after_provisioning(client: TestClient, auth_headers, db_session):
+    pi = "http://192.168.1.51:5000"
+    respx.post(f"{pi}/api/identity").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.get(f"{pi}/api/cameras").mock(
+        return_value=httpx.Response(200, json={"cameras": []})
+    )
+
+    response = client.post("/api/devices", json={
+        "id": "pi-01",
+        "name": "Pi 01",
+        "ip": "192.168.1.51",
+    }, headers=auth_headers)
+
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["provisioned"] is True
+    stored = db_session.query(Device).filter(Device.id == "pi-01").one()
+    assert stored.control_key == body["api_key"]
+    identity_request = respx.calls[0].request
+    assert "x-device-key" not in identity_request.headers
+    assert "pairing_token" not in identity_request.read().decode()

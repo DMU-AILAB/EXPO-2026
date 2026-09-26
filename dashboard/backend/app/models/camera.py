@@ -8,7 +8,7 @@ class Camera(Base):
     device_id = Column(String, ForeignKey("devices.id", ondelete="CASCADE"), primary_key=True)
     port = Column(Integer, nullable=False)
     capture_preset = Column(String, default='auto')
-    fps = Column(Integer, default=20)
+    fps = Column(Integer, default=10)
     model_variant = Column(String, default='v10_320')
     rotation = Column(Integer, default=0)
     require_person = Column(Boolean, default=True)

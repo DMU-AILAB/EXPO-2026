@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { Device } from '../types'
 import StatusBadge from './StatusBadge'
 import StreamThumbnail from './StreamThumbnail'
+import { cameraDisplayName } from '../utils/cameraLabel'
 
 interface DeviceCardProps {
   device: Device
@@ -64,7 +65,7 @@ export default function DeviceCard({ device }: DeviceCardProps) {
                     : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200/80 hover:text-slate-700'
                 }`}
               >
-                {cam.id}
+                {cameraDisplayName(cam.id)}
               </button>
             ))}
           </div>

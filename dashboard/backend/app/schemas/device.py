@@ -9,6 +9,10 @@ class DeviceCreate(BaseModel):
     ip: str
     location: Optional[str] = None
 
+
+class ProvisionDeviceRequest(BaseModel):
+    pass
+
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     location: Optional[str] = None

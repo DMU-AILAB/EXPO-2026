@@ -239,6 +239,7 @@ class UsbAudioPower:
         settle_seconds: float = 1.0,
         command: str = "uhubctl",
         use_sudo: bool = True,
+        always_on: bool = False,
     ) -> None:
         if not location.strip():
             raise ValueError("USB audio hub location must not be empty")
@@ -248,6 +249,7 @@ class UsbAudioPower:
         self.settle_seconds = settle_seconds
         self.command = command
         self.use_sudo = use_sudo
+        self.always_on = always_on
 
     @classmethod
     def from_environment(cls) -> "UsbAudioPower | None":
@@ -267,7 +269,11 @@ class UsbAudioPower:
             settle_seconds = 0.3
 
         try:
-            return cls(location=location, settle_seconds=settle_seconds)
+            always_on = os.environ.get("VISIONGUIDE_USB_AUDIO_ALWAYS_ON", "0").lower() in {
+                "1", "true", "yes", "on",
+            }
+            return cls(location=location, settle_seconds=settle_seconds,
+                       always_on=always_on)
         except ValueError as exc:
             print(f"[WARN] USB 오디오 전원 제어 비활성화: {exc}")
             return None
@@ -325,8 +331,12 @@ class AudioPlayer:
         self._playing = False
         self._usb_power = usb_power if usb_power is not None else UsbAudioPower.from_environment()
         if self._usb_power is not None:
-            # Leave the speaker unpowered until an announcement is actually queued.
-            self._usb_power.power_off()
+            if getattr(self._usb_power, "always_on", False):
+                if self._usb_power.power_on() and self._usb_power.settle_seconds:
+                    time.sleep(self._usb_power.settle_seconds)
+            else:
+                # Leave the speaker unpowered until an announcement is queued.
+                self._usb_power.power_off()
         threading.Thread(target=self._worker, daemon=True).start()
 
     @property
@@ -354,7 +364,7 @@ class AudioPlayer:
                 self._playing = True
             usb_powered = False
             try:
-                if self._usb_power is not None:
+                if self._usb_power is not None and not getattr(self._usb_power, "always_on", False):
                     usb_powered = self._usb_power.power_on()
                     if usb_powered and self._usb_power.settle_seconds:
                         time.sleep(self._usb_power.settle_seconds)

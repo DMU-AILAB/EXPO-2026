@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>VisionGuide Wi-Fi 페어링</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: linear-gradient(145deg, #eef2ff, #f8fafc 48%, #ecfeff); }
+    main { width: min(100% - 32px, 520px); margin: 0 auto; padding: 28px 0 42px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+    .mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 14px; color: #fff; font-weight: 800; background: linear-gradient(135deg, #3346d3, #06b6d4); box-shadow: 0 8px 20px #3346d333; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 20px; letter-spacing: -.03em; }
+    .subtitle { margin-top: 3px; color: #64748b; font-size: 13px; }
+    .card { padding: 20px; border: 1px solid #ffffffcc; border-radius: 22px; background: #ffffffd9; box-shadow: 0 14px 40px #0f172a12; backdrop-filter: blur(14px); }
+    .status { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px; border-radius: 16px; background: #f8fafc; border: 1px solid #e2e8f0; }
+    .status-title { font-size: 12px; color: #64748b; font-weight: 700; }
+    .status-value { margin-top: 4px; font-size: 15px; font-weight: 800; word-break: break-word; }
+    .status-detail { margin-top: 3px; color: #64748b; font-size: 12px; }
+    .chip { flex: 0 0 auto; padding: 6px 9px; border-radius: 999px; color: #075985; background: #e0f2fe; font-size: 11px; font-weight: 800; }
+    .chip.station { color: #166534; background: #dcfce7; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 10px; }
+    h2 { font-size: 14px; }
+    button { border: 0; cursor: pointer; font: inherit; }
+    .secondary { padding: 8px 11px; border: 1px solid #cbd5e1; border-radius: 10px; color: #334155; background: #fff; font-size: 12px; font-weight: 700; }
+    .secondary:disabled, .primary:disabled { cursor: wait; opacity: .5; }
+    .networks { display: grid; gap: 8px; }
+    .network { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; border: 1px solid #e2e8f0; border-radius: 14px; color: #0f172a; background: #fff; text-align: left; }
+    .network:hover, .network.selected { border-color: #6366f1; background: #eef2ff; }
+    .network-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 750; }
+    .network-meta { flex: 0 0 auto; color: #64748b; font-size: 11px; }
+    .empty { padding: 18px 8px; color: #64748b; font-size: 12px; text-align: center; }
+    form { margin-top: 18px; }
+    label { display: block; margin-bottom: 7px; color: #475569; font-size: 12px; font-weight: 750; }
+    .password-row { display: flex; gap: 8px; }
+    input { width: 100%; min-width: 0; padding: 12px 13px; border: 1px solid #cbd5e1; border-radius: 12px; outline: none; color: #0f172a; background: #fff; font: inherit; font-size: 13px; }
+    input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px #6366f122; }
+    .toggle { padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 12px; color: #475569; background: #fff; font-size: 12px; font-weight: 700; }
+    .primary { width: 100%; margin-top: 12px; padding: 13px; border-radius: 12px; color: #fff; background: #3346d3; font-size: 13px; font-weight: 800; box-shadow: 0 8px 16px #3346d333; }
+    .message { min-height: 20px; margin-top: 14px; color: #475569; font-size: 12px; line-height: 1.55; }
+    .message.success { color: #166534; }
+    .message.error { color: #b91c1c; }
+    .hint { margin-top: 16px; color: #64748b; font-size: 11px; line-height: 1.6; }
+    code { padding: 2px 5px; border-radius: 5px; color: #3346d3; background: #eef2ff; }
+    @media (max-width: 420px) { main { width: min(100% - 20px, 520px); padding-top: 18px; } .card { padding: 16px; border-radius: 18px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="mark">VG</div>
+      <div>
+        <h1>VisionGuide</h1>
+        <p class="subtitle">Wi-Fi 페어링</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="status">
+        <div>
+          <div class="status-title">현재 연결 상태</div>
+          <div id="statusValue" class="status-value">확인 중...</div>
+          <div id="statusDetail" class="status-detail">Pi의 네트워크 상태를 확인하고 있습니다.</div>
+        </div>
+        <span id="modeChip" class="chip">확인 중</span>
+      </div>
+
+      <div class="section-head">
+        <h2>연결할 Wi-Fi</h2>
+        <button id="scanButton" class="secondary" type="button">새로 검색</button>
+      </div>
+      <div id="networkList" class="networks">
+        <div class="empty">주변 Wi-Fi를 검색하고 있습니다...</div>
+      </div>
+
+      <form id="connectForm">
+        <label for="password">Wi-Fi 비밀번호</label>
+        <div class="password-row">
+          <input id="password" type="password" autocomplete="off" placeholder="선택한 Wi-Fi의 비밀번호">
+          <button id="togglePassword" class="toggle" type="button">표시</button>
+        </div>
+        <button id="connectButton" class="primary" type="submit" disabled>이 Wi-Fi에 연결</button>
+      </form>
+
+      <p id="message" class="message" role="status"></p>
+      <p class="hint">연결을 시작하면 약 3초 뒤 AP가 종료됩니다. 휴대폰이나 PC를 새 Wi-Fi로 전환한 뒤 이 페이지를 새 Pi 주소에서 다시 열 수 있습니다.</p>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id)
+    let selected = null
+    let connecting = false
+
+    function setMessage(text, kind = '') {
+      const node = $('message')
+      node.textContent = text
+      node.className = `message ${kind}`
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options,
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const detail = typeof body.detail === 'string' ? body.detail : '요청을 처리하지 못했습니다.'
+        throw new Error(detail)
+      }
+      return body
+    }
+
+    function renderStatus(status) {
+      const mode = status.mode || 'disconnected'
+      const labels = { ap: '페어링 모드', station: 'Wi-Fi 연결됨', disconnected: '네트워크 없음' }
+      $('statusValue').textContent = status.ssid || labels[mode] || '확인할 수 없음'
+      $('statusDetail').textContent = status.ip ? `Pi 주소: ${status.ip}` : '연결된 네트워크가 없습니다.'
+      $('modeChip').textContent = labels[mode] || mode
+      $('modeChip').className = `chip ${mode === 'station' ? 'station' : ''}`
+    }
+
+    function selectNetwork(network) {
+      selected = network
+      document.querySelectorAll('.network').forEach((node) => {
+        node.classList.toggle('selected', node.dataset.ssid === network.ssid)
+      })
+      $('password').value = ''
+      $('password').placeholder = network.security ? '비밀번호를 입력하세요' : '공개 네트워크는 비밀번호가 필요 없습니다'
+      $('connectButton').disabled = false
+      $('password').focus()
+    }
+
+    function renderNetworks(networks) {
+      const list = $('networkList')
+      list.replaceChildren()
+      if (!networks.length) {
+        list.innerHTML = '<div class="empty">주변 Wi-Fi를 찾지 못했습니다. 다시 검색해 주세요.</div>'
+        selected = null
+        $('connectButton').disabled = true
+        return
+      }
+      networks.forEach((network) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'network'
+        button.dataset.ssid = network.ssid
+        const name = document.createElement('span')
+        name.className = 'network-name'
+        name.textContent = network.ssid
+        const meta = document.createElement('span')
+        meta.className = 'network-meta'
+        meta.textContent = `${network.signal_pct ?? 0}% · ${network.security || '공개'}`
+        button.append(name, meta)
+        button.addEventListener('click', () => selectNetwork(network))
+        list.append(button)
+      })
+    }
+
+    async function refreshStatus() {
+      try {
+        renderStatus(await api('/api/network/status'))
+      } catch (error) {
+        $('statusValue').textContent = '상태 확인 실패'
+        setMessage(error.message, 'error')
+      }
+    }
+
+    async function scanNetworks() {
+      const button = $('scanButton')
+      button.disabled = true
+      button.textContent = '검색 중...'
+      try {
+        const body = await api('/api/network/scan')
+        renderNetworks(body.networks || [])
+        setMessage(body.networks?.length ? '연결할 Wi-Fi를 선택하세요.' : '주변 Wi-Fi를 찾지 못했습니다.')
+      } catch (error) {
+        setMessage(error.message, 'error')
+      } finally {
+        button.disabled = false
+        button.textContent = '새로 검색'
+      }
+    }
+
+    async function waitForConnection() {
+      const deadline = Date.now() + 16000
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        try {
+          const body = await api('/api/network/connect-result')
+          if (body.result?.status === 'ok') {
+            const ip = body.result.ip
+            setMessage(ip ? `연결되었습니다. 새 Pi 주소는 ${ip}입니다.` : '연결되었습니다. 새 Wi-Fi에서 다시 접속하세요.', 'success')
+            connecting = false
+            $('connectButton').disabled = false
+            return
+          }
+          if (body.result?.status === 'error') throw new Error(body.result.error || 'Wi-Fi 연결에 실패했습니다.')
+        } catch (_) {
+          setMessage('Wi-Fi가 전환되었습니다. 휴대폰이나 PC를 새 Wi-Fi에 연결해 주세요.', 'success')
+          connecting = false
+          $('connectButton').disabled = false
+          return
+        }
+      }
+      setMessage('연결 결과를 확인하지 못했습니다. 새 Wi-Fi에서 Pi를 다시 열어 보세요.')
+      connecting = false
+      $('connectButton').disabled = false
+    }
+
+    $('scanButton').addEventListener('click', () => void scanNetworks())
+    $('togglePassword').addEventListener('click', () => {
+      const input = $('password')
+      input.type = input.type === 'password' ? 'text' : 'password'
+      $('togglePassword').textContent = input.type === 'password' ? '표시' : '숨김'
+    })
+    $('connectForm').addEventListener('submit', async (event) => {
+      event.preventDefault()
+      if (!selected || connecting) return
+      connecting = true
+      $('connectButton').disabled = true
+      setMessage(`${selected.ssid}에 연결을 시도하고 있습니다...`)
+      try {
+        await api('/api/network/connect', {
+          method: 'POST',
+          body: JSON.stringify({ ssid: selected.ssid, password: $('password').value }),
+        })
+        setMessage('잠시 후 AP 연결이 끊기고 선택한 Wi-Fi로 전환됩니다...')
+        void waitForConnection()
+      } catch (error) {
+        connecting = false
+        $('connectButton').disabled = false
+        setMessage(error.message, 'error')
+      }
+    })
+
+    void refreshStatus()
+    void scanNetworks()
+  </script>
+</body>
+</html>

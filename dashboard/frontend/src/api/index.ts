@@ -29,12 +29,23 @@ export const me = () =>
 
 // ---------------------------------------------------------------- 디바이스
 
-export const listDevices = (search?: string) =>
-  requestEnvelope<{ data: Device[]; total: number }>(`/api/devices${qs({ search })}`)
+type DeviceListResponse = { data: Device[]; total: number }
+const deviceListCache = new Map<string, DeviceListResponse>()
+
+export const getCachedDeviceList = (search?: string) =>
+  deviceListCache.get(search ?? '') ?? null
+
+export const listDevices = async (search?: string) => {
+  const result = await requestEnvelope<DeviceListResponse>(`/api/devices${qs({ search })}`)
+  deviceListCache.set(search ?? '', result)
+  return result
+}
 
 export const getDevice = (id: string) => request<DeviceDetail>(`/api/devices/${id}`)
 
-export const createDevice = (body: { id: string; name: string; ip: string; location?: string }) =>
+export const createDevice = (body: {
+  id: string; name: string; ip: string; location?: string
+}) =>
   request<{ id: string; api_key: string; provisioned: boolean; provision_error: string | null; synced: boolean }>(
     '/api/devices', { method: 'POST', body })
 
@@ -46,7 +57,9 @@ export const deleteDevice = (id: string) =>
 
 /** 신원 재주입 — 기기가 꺼져 있어 등록 시 실패했을 때. **새 api_key가 발급된다.** */
 export const provisionDevice = (id: string) =>
-  request<{ id: string; api_key: string }>(`/api/devices/${id}/provision`, { method: 'POST' })
+  request<{ id: string; api_key: string }>(`/api/devices/${id}/provision`, {
+    method: 'POST',
+  })
 
 export const restartDevice = (id: string) =>
   request<{ job_id: string; message: string }>(`/api/devices/${id}/restart`, { method: 'POST' })

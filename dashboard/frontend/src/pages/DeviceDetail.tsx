@@ -4,14 +4,17 @@ import {
   ChevronLeft, Activity, Thermometer, Clock, Wifi, Camera, Video,
   MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle,
   CalendarClock, Trash2, AlertTriangle, Loader2,
+  Upload,
 } from 'lucide-react'
 
 import * as api from '../api'
 import { ApiError } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import { streamUrl } from '../components/StreamThumbnail'
+import RoiCanvas from '../components/RoiCanvas'
 import { DAY_NAMES, formatDays, formatMemory, memoryPercent } from '../format'
 import { useApi } from '../hooks/useApi'
+import { cameraDisplayName } from '../utils/cameraLabel'
 import type { Camera as CameraType, DeviceDetail as DeviceDetailType, RecentEvent, Roi } from '../types'
 
 const inputCls =
@@ -97,7 +100,7 @@ function OverviewTab({ device, events }: { device: DeviceDetailType; events: Rec
                 <div key={cam.id} className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/80 hover:border-[#2c4be0]/30 hover:bg-white transition">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      <Camera className="w-3.5 h-3.5 text-[#2c4be0]" />{cam.id}
+                      <Camera className="w-3.5 h-3.5 text-[#2c4be0]" />{cameraDisplayName(cam.id)}
                     </span>
                     <span className={`glass-badge px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                       cam.is_streaming
@@ -203,7 +206,7 @@ function RoiTab({ device, reload }: Ctx) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { data: audioFiles } = useApi(() => api.listAudio(), [])
+  const { data: audioFiles, reload: reloadAudio } = useApi(() => api.listAudio(), [])
   const activeCam: CameraType | undefined = device.cameras[selectedCam]
   const rois = device.rois.filter((r) => !activeCam || r.camera_id === activeCam.id)
 
@@ -212,14 +215,31 @@ function RoiTab({ device, reload }: Ctx) {
     setEditingId('new')
     setForm({
       camera_id: activeCam?.id, name: '', zone_type: 'trigger', priority: 1,
-      announcement_text: '', audio_file: '', is_active: true,
+      announcement_text: '', audio_file: '', is_active: true, polygon: [],
     })
     setError(null)
   }
   const closeForm = () => { setEditingId(null); setForm({}); setError(null) }
 
+  const uploadAudio = async (file: File) => {
+    setBusy(true); setError(null)
+    try {
+      const uploaded = await api.uploadAudio(file)
+      setForm((current) => ({ ...current, audio_file: uploaded.filename }))
+      reloadAudio()
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const save = async () => {
     if (!activeCam) return
+    if ((form.polygon ?? []).length < 3) {
+      setError('ROI는 꼭짓점을 3개 이상 그려야 저장할 수 있습니다.')
+      return
+    }
     setBusy(true); setError(null)
     try {
       if (editingId === 'new') {
@@ -286,49 +306,33 @@ function RoiTab({ device, reload }: Ctx) {
                   <button key={cam.id} onClick={() => setSelectedCam(idx)}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
                       selectedCam === idx ? 'bg-[#2c4be0] text-white' : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200'}`}>
-                    {cam.id}
+                    {cameraDisplayName(cam.id)}
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          {device.status === 'offline' || !activeCam || !activeCam.is_streaming ? (
-            <div className="aspect-video bg-slate-900/90 rounded-xl flex flex-col items-center justify-center border border-slate-700/50">
-              <Camera className="w-8 h-8 text-slate-600 mb-2" />
-              <p className="text-xs font-semibold text-slate-500">
-                {device.status === 'offline' ? '오프라인 — 스트림 없음' : '스트리밍 중지'}
-              </p>
-            </div>
-          ) : (
-            <div className="relative aspect-video rounded-xl overflow-hidden border border-emerald-500/40 shadow-[0_0_14px_rgba(16,185,129,0.12)]">
-              <img src={streamUrl(device.id, activeCam.id)} alt=""
-                   className="w-full h-full object-cover bg-slate-900" draggable={false} />
-              <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
-                   style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.65), transparent)' }}>
-                <span className="text-[10.5px] font-bold text-white">{device.name} — {activeCam.id}</span>
-                <span className="text-[10px] font-bold text-white/90 tracking-wider">LIVE</span>
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 px-3 py-2"
-                   style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.60), transparent)' }}>
-                <div className="flex items-center justify-between text-[10px] text-white/80">
-                  <span>{activeCam.capture_preset} · {activeCam.model_variant}</span>
-                  <span>ROI {activeCam.roi_count}개</span>
-                </div>
-              </div>
-            </div>
+          {activeCam && (
+            <RoiCanvas
+              deviceId={device.id}
+              camera={activeCam}
+              rois={rois}
+              editingId={editingId}
+              draftPolygon={form.polygon ?? []}
+              onPolygonChange={(polygon) => setForm((current) => ({ ...current, polygon }))}
+            />
           )}
 
           {activeCam && (
             <div className="mt-3 text-[11px] text-slate-500">
-              <span className="font-mono text-slate-700 font-semibold">{device.ip}:{activeCam.port}</span>
+              <span className="text-slate-700 font-semibold flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-[#2c4be0]" />
+                {device.location || device.name} · {cameraDisplayName(activeCam.id)}
+              </span>
             </div>
           )}
 
-          <p className="mt-3 text-[10.5px] text-slate-400 leading-relaxed">
-            폴리곤 모양은 기기의 ROI 편집기(포트 5000)에서 그립니다. 여기서는 이름·안내
-            문구·오디오·우선순위를 관리합니다.
-          </p>
         </div>
       </div>
 
@@ -396,6 +400,7 @@ function RoiTab({ device, reload }: Ctx) {
                 {editingId === roi.id && (
                   <RoiForm form={form} setForm={setForm} audioFiles={audioFiles ?? []}
                            onCancel={closeForm} onSave={() => void save()} busy={busy}
+                           onUploadAudio={(file) => void uploadAudio(file)}
                            submitLabel="저장" warnRename={roi.name !== form.name} />
                 )}
               </div>
@@ -408,6 +413,7 @@ function RoiTab({ device, reload }: Ctx) {
             <p className="text-xs font-bold text-slate-700 mb-3">새 ROI 구역</p>
             <RoiForm form={form} setForm={setForm} audioFiles={audioFiles ?? []}
                      onCancel={closeForm} onSave={() => void save()} busy={busy}
+                     onUploadAudio={(file) => void uploadAudio(file)}
                      submitLabel="추가" warnRename={false} />
           </div>
         )}
@@ -416,12 +422,14 @@ function RoiTab({ device, reload }: Ctx) {
   )
 }
 
-function RoiForm({ form, setForm, audioFiles, onCancel, onSave, busy, submitLabel, warnRename }: {
+function RoiForm({ form, setForm, audioFiles, onCancel, onSave, onUploadAudio,
+                   busy, submitLabel, warnRename }: {
   form: RoiForm
   setForm: React.Dispatch<React.SetStateAction<RoiForm>>
   audioFiles: { filename: string }[]
   onCancel: () => void
   onSave: () => void
+  onUploadAudio: (file: File) => void
   busy: boolean
   submitLabel: string
   warnRename: boolean
@@ -460,11 +468,29 @@ function RoiForm({ form, setForm, audioFiles, onCancel, onSave, busy, submitLabe
       </div>
       <div className="col-span-2">
         <label className={labelCls}>오디오 파일</label>
-        <select className={inputCls} value={form.audio_file ?? ''}
-                onChange={(e) => setForm((p) => ({ ...p, audio_file: e.target.value }))}>
-          <option value="">— 없음 —</option>
-          {audioFiles.map((f) => <option key={f.filename} value={f.filename}>{f.filename}</option>)}
-        </select>
+        <div className="flex gap-2">
+          <select className={`${inputCls} min-w-0 flex-1`} value={form.audio_file ?? ''}
+                  onChange={(e) => setForm((p) => ({ ...p, audio_file: e.target.value }))}>
+            <option value="">— 없음 —</option>
+            {audioFiles.map((f) => <option key={f.filename} value={f.filename}>{f.filename}</option>)}
+          </select>
+          <label className={`shrink-0 glass-btn px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+            busy ? 'opacity-50 pointer-events-none' : ''}`}>
+            <Upload className="w-3.5 h-3.5" /> PC에서 업로드
+            <input
+              type="file"
+              accept=".mp3,audio/mpeg"
+              className="sr-only"
+              disabled={busy}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) onUploadAudio(file)
+              }}
+            />
+          </label>
+        </div>
+        <p className="mt-1 text-[10px] text-slate-400">MP3 · 최대 10MB · 10초 이하</p>
       </div>
       <div className="col-span-2">
         <label className={labelCls}>안내 텍스트</label>
@@ -499,6 +525,15 @@ function SettingsTab({ device, reload }: Ctx) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [deviceSaved, setDeviceSaved] = useState(false)
+  const [deviceForm, setDeviceForm] = useState({
+    name: device.name,
+    location: device.location ?? '',
+  })
+
+  useEffect(() => {
+    setDeviceForm({ name: device.name, location: device.location ?? '' })
+  }, [device.id, device.name, device.location])
 
   const cam: CameraType | undefined = device.cameras[selectedCam]
   const [form, setForm] = useState(() => camFormOf(cam))
@@ -514,8 +549,31 @@ function SettingsTab({ device, reload }: Ctx) {
     if (!cam) return
     setBusy(true); setError(null)
     try {
-      await api.updateCamera(device.id, cam.id, device.etag, form)
+      const { fps: _fps, ...cameraSettings } = form
+      await api.updateCamera(device.id, cam.id, device.etag, cameraSettings)
       setSaved(true); setTimeout(() => setSaved(false), 2500)
+      reload()
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveDeviceProfile = async () => {
+    const name = deviceForm.name.trim()
+    if (!name) {
+      setError('디바이스 이름을 입력하세요.')
+      return
+    }
+    setBusy(true); setError(null)
+    try {
+      await api.updateDevice(device.id, {
+        name,
+        location: deviceForm.location.trim(),
+      })
+      setDeviceSaved(true)
+      setTimeout(() => setDeviceSaved(false), 2500)
       reload()
     } catch (e) {
       setError(describe(e))
@@ -557,6 +615,60 @@ function SettingsTab({ device, reload }: Ctx) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-3 glass-panel p-5">
+        <div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-200/70">
+          <div>
+            <h2 className="text-sm font-bold text-slate-700">디바이스 정보</h2>
+            <p className="text-[11px] text-slate-400 mt-1">대시보드에 표시할 이름과 설치 위치를 설정합니다.</p>
+          </div>
+          {deviceSaved && (
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
+              <CheckCircle className="w-3.5 h-3.5" /> 저장됨
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div className="md:col-span-2">
+            <label className={labelCls}>디바이스 이름</label>
+            <input
+              className={inputCls}
+              value={deviceForm.name}
+              maxLength={80}
+              onChange={(e) => setDeviceForm((current) => ({ ...current, name: e.target.value }))}
+              placeholder="예: 1층 출입구 Pi"
+            />
+          </div>
+          <div>
+            <label className={labelCls}>설치 위치</label>
+            <input
+              className={inputCls}
+              value={deviceForm.location}
+              maxLength={120}
+              onChange={(e) => setDeviceForm((current) => ({ ...current, location: e.target.value }))}
+              placeholder="예: 본관 1층"
+            />
+          </div>
+          <button
+            onClick={() => void saveDeviceProfile()}
+            disabled={busy || !deviceForm.name.trim()}
+            className="bg-[#2c4be0] text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] disabled:opacity-50 transition flex items-center justify-center gap-1.5"
+          >
+            {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+            이름 저장
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-200/70">
+          <div>
+            <label className={labelCls}>디바이스 ID</label>
+            <input readOnly value={device.id} className={`${inputCls} bg-slate-100 cursor-not-allowed font-mono`} />
+          </div>
+          <div>
+            <label className={labelCls}>IP 주소</label>
+            <input readOnly value={device.ip} className={`${inputCls} bg-slate-100 cursor-not-allowed font-mono`} />
+          </div>
+        </div>
+      </div>
+
       {/* 카메라 설정 */}
       <div className="lg:col-span-2 glass-panel p-5 self-start">
         <h2 className="text-sm font-bold text-slate-700 mb-4 pb-3 border-b border-slate-200/70">카메라 설정</h2>
@@ -577,7 +689,7 @@ function SettingsTab({ device, reload }: Ctx) {
                   <button key={c.id} onClick={() => setSelectedCam(idx)}
                     className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
                       selectedCam === idx ? 'bg-[#2c4be0] text-white' : 'bg-slate-100/80 text-slate-500 hover:bg-slate-200'}`}>
-                    {c.id}
+                    {cameraDisplayName(c.id)}
                   </button>
                 ))}
               </div>
@@ -597,12 +709,9 @@ function SettingsTab({ device, reload }: Ctx) {
                 </div>
                 <div>
                   <label className={labelCls}>
-                    FPS <span className="font-normal text-slate-400">(기기 미적용)</span>
+                    FPS <span className="font-normal text-slate-400">(발열 안정화)</span>
                   </label>
-                  <select value={form.fps} className={inputCls}
-                          onChange={(e) => setForm((p) => ({ ...p, fps: Number(e.target.value) }))}>
-                    {[10, 15, 20, 25, 30].map((f) => <option key={f} value={f}>{f}fps</option>)}
-                  </select>
+                  <input readOnly value="10fps" className={`${inputCls} bg-slate-100 cursor-not-allowed font-mono`} />
                 </div>
                 <div>
                   <label className={labelCls}>모델 변형</label>
@@ -788,7 +897,7 @@ const MODEL_VARIANTS = [
 function camFormOf(cam?: CameraType) {
   return {
     capture_preset: cam?.capture_preset ?? 'auto',
-    fps: cam?.fps ?? 20,
+    fps: cam?.fps ?? 10,
     model_variant: cam?.model_variant ?? 'v10_320',
     rotation: cam?.rotation ?? 0,
     require_person: cam?.require_person ?? true,
