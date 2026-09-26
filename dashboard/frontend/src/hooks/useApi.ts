@@ -19,10 +19,10 @@ type State<T> = {
  * 깜빡이면 관제 화면으로 쓸 수 없다. 첫 로드에서만 켠다.
  */
 export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = [],
-                          intervalMs?: number): State<T> {
-  const [data, setData] = useState<T | null>(null)
+                          intervalMs?: number, initialData: T | null = null): State<T> {
+  const [data, setData] = useState<T | null>(initialData)
   const [error, setError] = useState<ApiError | Error | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(initialData === null)
   const [nonce, setNonce] = useState(0)
 
   // fetcher는 매 렌더마다 새 함수라 deps에 넣으면 무한 루프가 된다.
@@ -34,6 +34,15 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = [],
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setInterval> | undefined
+    const hasInitialData = initialData !== null
+
+    if (hasInitialData) {
+      // Show the last successful response immediately while the fresh request
+      // runs in the background.
+      setData(initialData)
+      setError(null)
+      setLoading(false)
+    }
 
     const run = async (isFirst: boolean) => {
       if (isFirst) setLoading(true)
@@ -51,7 +60,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = [],
       }
     }
 
-    run(true)
+    run(!hasInitialData)
     if (intervalMs) timer = setInterval(() => run(false), intervalMs)
 
     return () => {

@@ -198,9 +198,9 @@ run-headless:
 	@echo "[RUN] 스트리밍 주소: http://$(PI):8080/stream.mjpg"
 	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py --headless --port 8080"
 
-## Pi에서 ROI 웹 에디터 실행 (브라우저에서 http://PI:5000 접속)
+## Pi에서 ROI API/호환 웹 에디터 실행 (PC 대시보드는 별도 실행)
 run-roi-editor:
-	@echo "[ROI Editor] 브라우저에서 http://$(PI):5000 으로 접속하세요"
+	@echo "[ROI Editor] Pi API: http://$(PI):5000 (PC 대시보드가 주 화면입니다)"
 	@echo "[ROI Editor] camera_live_pi.py 를 먼저 실행해야 스트림이 표시됩니다 (make run-headless)"
 	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) roi_editor/server.py --rois ~/visionguide/rois.json"
 
@@ -209,13 +209,13 @@ run:
 	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py"
 
 ## systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터 + GPIO 재시작버튼이 완전 자동/headless 로 구동됨
-## 이후로는 최초 ROI/오디오 설정 시에만 http://<Pi-IP>:5000 접속이 필요하고,
-## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
+## 이후에는 PC 중앙 대시보드가 포트 5000 API를 중계한다. Pi 로컬 화면은
+## Wi-Fi 온보딩과 현장 유지보수를 위한 호환 경로로 남아 있다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(USER)@$(PI):/tmp/
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-network.sudoers deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(USER)@$(PI):/tmp/
 	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
-	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(USER)/visionguide/deploy/"
+	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo install -m 440 /tmp/visionguide-network.sudoers /etc/sudoers.d/visionguide-network && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(USER)/visionguide/deploy/"
 	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g' /tmp/visionguide-systemctl.sudoers && sudo install -m 440 /tmp/visionguide-systemctl.sudoers /etc/sudoers.d/visionguide-systemctl && sudo visudo -cf /etc/sudoers.d/visionguide-systemctl"
 	ssh $(USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."

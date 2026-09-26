@@ -13,6 +13,7 @@ import respx
 
 from app.models.camera import Camera
 from app.models.device import Device
+from app.routers import cameras as cameras_router
 
 PI = "http://192.168.1.101:5000"
 
@@ -214,3 +215,25 @@ def test_get_cameras_marks_stale_when_device_is_offline(client, auth, device):
 
     assert res.status_code == 200
     assert res.json()["stale"] is True
+
+
+@respx.mock
+async def test_get_cameras_exposes_running_legacy_camera(client, auth, db_session, device,
+                                                         monkeypatch):
+    """A legacy Pi camera must appear even when camera_config.json is empty."""
+    respx.get(f"{PI}/api/cameras").mock(return_value=httpx.Response(
+        200, json={"cameras": []}))
+    respx.get(f"{PI}/api/cameras/scan").mock(return_value=httpx.Response(
+        200, json={"cameras": [{"num": 0, "model": "imx708_wide_noir"}]}))
+
+    async def runtime_cameras(_device_id):
+        return {"legacy": {"is_streaming": True, "configured": False}}
+
+    monkeypatch.setattr(cameras_router, "get_buffered_cameras", runtime_cameras)
+
+    res = client.get("/api/devices/cam-entrance-01/cameras", headers=auth)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["data"][0]["id"] == "legacy"
+    assert body["data"][0]["is_streaming"] is True

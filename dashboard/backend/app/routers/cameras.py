@@ -15,7 +15,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Path as PathParam, Query
 from fastapi.responses import StreamingResponse
@@ -33,6 +32,7 @@ from ..schemas.camera import CameraResponse, CameraUpdate, DetectionParamsUpdate
 from ..services.heartbeat_service import get_buffered_cameras
 from ..services.pi_client import PiClient
 from ..services.pi_sync import build_roi_payload, merge_camera_profiles, validate_profiles_locally
+from ..services.stream_fanout import STREAM_CONTENT_TYPE, stream_fanout
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,28 @@ router = APIRouter(prefix="/api/devices", tags=["Cameras"])
 
 CAMERA_ID_REGEX = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
-# 명세 §14 — 동시 5개 초과 시 신규 연결 거부.
-# 전역 정수 카운터는 증감이 원자적이지 않아 실제로 5를 넘길 수 있다. 세마포어로 센다.
-_STREAM_SLOTS = asyncio.Semaphore(5)
+PI_CAPTURE_FPS = 10
+
+
+def _legacy_camera_profile(camera: Camera) -> dict[str, Any]:
+    """Build the profile used when a single-camera Pi has no config file yet."""
+    return {
+        "id": "legacy",
+        "enabled": bool(camera.is_active),
+        "label": "Legacy camera",
+        "backend": "auto",
+        "source": "0",
+        "rotation": int(camera.rotation or 0),
+        "inference_backend": "auto",
+        "roi_config": "rois.json",
+        "port": int(camera.port or 8080),
+        "traffic_db": "foot_traffic.db",
+        "swap_rb": False,
+        "model_variant": camera.model_variant or "v10_320",
+        "capture_preset": camera.capture_preset or "auto",
+        "require_person_for_trigger": bool(camera.require_person),
+        "roi_crop_inference": False,
+    }
 
 
 def validate_camera_id(camera_id: str = PathParam(...)):
@@ -160,6 +179,50 @@ async def sync_rois_to_pi(db: Session, device: Device, camera: Camera) -> dict:
 # 조회 — Pi 스냅샷으로 캐시 갱신 후 반환 (§13.0)
 # ---------------------------------------------------------------------------
 
+async def _camera_profiles_from_pi(device: Device) -> list[dict]:
+    """Read configured cameras and expose a running legacy camera as ``legacy``.
+
+    Older Pi deployments run one camera directly from ``camera_live_pi.py``
+    without a ``camera_config.json``.  Their heartbeat still reports the
+    running camera, but ``GET /api/cameras`` is intentionally empty.  Keep the
+    dashboard camera model useful for both deployment modes.
+    """
+    client = PiClient(device.ip)
+    profiles = await client.get_cameras()
+    if profiles:
+        return profiles
+
+    runtime = await get_buffered_cameras(device.id)
+    if not runtime:
+        return []
+
+    try:
+        detected = await client.scan_cameras()
+    except HTTPException:
+        detected = []
+
+    camera_id = next(iter(runtime), "legacy")
+    camera = detected[0] if detected else {}
+    source = str(camera.get("num", 0))
+    return [{
+        "id": camera_id,
+        "enabled": True,
+        "label": camera.get("model", "Legacy camera"),
+        "backend": "auto",
+        "source": source,
+        "rotation": 0,
+        "inference_backend": "auto",
+        "roi_config": "rois.json",
+        "port": 8080,
+        "traffic_db": "foot_traffic.db",
+        "swap_rb": False,
+        "model_variant": "v10_320",
+        "capture_preset": "auto",
+        "require_person_for_trigger": True,
+        "roi_crop_inference": False,
+    }]
+
+
 async def refresh_cameras_from_pi(db: Session, device: Device) -> bool:
     """Pi의 `camera_config.json`을 읽어 서버 캐시를 맞춘다. 성공하면 True.
 
@@ -167,7 +230,7 @@ async def refresh_cameras_from_pi(db: Session, device: Device) -> bool:
     서버에는 카메라를 만드는 API가 없고, 만들 수도 없다(원본이 Pi다).
     """
     try:
-        profiles = await PiClient(device.ip).get_cameras()
+        profiles = await _camera_profiles_from_pi(device)
     except HTTPException as exc:
         logger.info("카메라 스냅샷 갱신 실패 (%s): %s", device.id, exc.detail)
         return False
@@ -183,6 +246,9 @@ async def refresh_cameras_from_pi(db: Session, device: Device) -> bool:
         if camera is None:
             camera = Camera(id=cam_id, device_id=device.id, port=profile.get("port", 8080))
             db.add(camera)
+        # Pi capture is intentionally capped for thermal stability. Keep the
+        # dashboard cache aligned with the device-side service default.
+        camera.fps = PI_CAPTURE_FPS
         camera.port = profile.get("port", camera.port)
         camera.capture_preset = profile.get("capture_preset", camera.capture_preset)
         camera.model_variant = profile.get("model_variant", camera.model_variant)
@@ -218,8 +284,8 @@ async def get_cameras(device_id: str, db: Session = Depends(get_db),
             "port": cam.port,
             "capture_preset": cam.capture_preset,
             # Pi에 대응 필드가 없어 서버가 보관만 한다 (명세 §4).
-            "fps": cam.fps,
-            "fps_applied": False,
+            "fps": PI_CAPTURE_FPS,
+            "fps_applied": True,
             "model_variant": cam.model_variant,
             "rotation": cam.rotation,
             "require_person": cam.require_person,
@@ -263,6 +329,10 @@ async def update_camera(
 
     # 1) 읽고 2) 백엔드가 아는 필드만 덮고 3) 목록 전체를 되돌려준다.
     pi_profiles = await client.get_cameras()
+    if not pi_profiles and camera_id == "legacy":
+        # A legacy single-camera process has no camera_config.json profile.
+        # Materialize one before applying the requested setting change.
+        pi_profiles = [_legacy_camera_profile(camera)]
     try:
         merged = merge_camera_profiles(pi_profiles, camera_id, updates)
     except KeyError:
@@ -417,31 +487,16 @@ async def proxy_mjpeg_stream(
     device = _get_device(db, device_id)
     camera = _get_camera(db, device_id, camera_id)
 
-    if _STREAM_SLOTS.locked():
-        raise HTTPException(status_code=503,
-                            detail={"error": "STREAM_CAPACITY_FULL",
-                                    "message": "동시 스트림 5개를 초과했습니다"})
-
     target = f"http://{device.ip}:{camera.port}/stream.mjpg"
-    # boundary는 기기 응답에서 받아 그대로 쓴다 — 'frame'으로 하드코딩하면 Pi가
-    # 다른 값을 쓸 때 브라우저가 프레임을 못 자른다.
-    content_type = "multipart/x-mixed-replace; boundary=frame"
+    channel, queue = await stream_fanout.subscribe(target)
 
     async def generator():
-        async with _STREAM_SLOTS:
-            client = httpx.AsyncClient(follow_redirects=False)
-            try:
-                async with client.stream("GET", target, timeout=None) as response:
-                    if response.status_code != 200:
-                        logger.warning("스트림 응답 %s: %s", response.status_code, target)
-                        return
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-            except asyncio.CancelledError:
-                raise                      # 클라이언트가 끊은 것 — 정상 종료 경로다
-            except httpx.HTTPError as exc:
-                logger.info("스트림 중단 (%s): %s", target, exc)
-            finally:
-                await client.aclose()
+        try:
+            while True:
+                yield await queue.get()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            await stream_fanout.unsubscribe(channel, queue)
 
-    return StreamingResponse(generator(), media_type=content_type)
+    return StreamingResponse(generator(), media_type=STREAM_CONTENT_TYPE)

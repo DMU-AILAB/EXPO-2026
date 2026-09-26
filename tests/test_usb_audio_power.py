@@ -82,3 +82,31 @@ def test_audio_player_keeps_playing_when_usb_power_on_fails(monkeypatch):
 
     assert finished.wait(1.0)
     assert events == ["off", "on", ("play", "announcement.mp3")]
+
+
+def test_audio_player_keeps_speaker_on_between_announcements(monkeypatch):
+    events = []
+    finished = threading.Event()
+
+    class AlwaysOnPower:
+        settle_seconds = 0.0
+        always_on = True
+
+        def power_on(self):
+            events.append("on")
+            return True
+
+        def power_off(self):
+            events.append("off")
+            return True
+
+    def fake_play(path):
+        events.append(("play", path))
+
+    monkeypatch.setattr(at, "_CLI_PLAYER", None)
+    player = at.AudioPlayer(usb_power=AlwaysOnPower())
+    monkeypatch.setattr(player, "_play_pygame", staticmethod(fake_play))
+    player.play("announcement.mp3", on_done=finished.set)
+
+    assert finished.wait(1.0)
+    assert events == ["on", ("play", "announcement.mp3")]

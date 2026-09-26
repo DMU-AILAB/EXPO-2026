@@ -42,6 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `replay_engine.py` | 저장된 영상을 **배포와 같은 경로**로 재생하며 주석 프레임을 만든다 — roi_editor의 "검증" 탭이 MJPEG로 띄운다. 오디오는 재생하지 않고 발사 시점만 기록 |
 | `device_identity.py` | 서버가 발급한 `device_id`·`api_key`·`server_url` 보관. **값의 주인은 서버** — 등록 시 `POST /api/identity`로 심긴다. `rois.json`과 같은 Pi 로컬 런타임 파일(rsync·git 대상 아님) |
 | `event_logger.py` | Pi → 서버 아웃바운드 2종 — `EventSender`(감지 이벤트 outbox, 실패해도 보관) · `HeartbeatSender`(살아있음+상태, 실패하면 **버리고** 다음 주기에 최신값). 탐지 루프는 sqlite 한 줄만 쓰고 전송은 `roi_editor`의 스레드가 맡는다. `urllib`만 써서 Pi 의존성을 늘리지 않는다 |
+| `dashboard/backend/` + `dashboard/frontend/` | PC에서 실행하는 중앙 관리자 대시보드 — 여러 Pi 등록, 이벤트·하트비트 집계, Pi API 중계, 스트림 프록시, 개별 재시작·재부팅 |
 | `device_status.py` | `/proc`·`/sys`만으로 읽는 가동시간·CPU온도·부하·메모리 + **CPU 사용률**(두 시점 차이). psutil 미사용 |
 | `device_metrics.py` | 탐지 루프의 추론 시간·프레임 시간·스트리밍 여부를 sqlite로 `roi_editor`에 넘긴다 — 하트비트가 쓰는 값이 탐지 프로세스에만 있기 때문 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
@@ -79,7 +80,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 device/     Pi에서 실행되는 런타임 24개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
-dashboard/  미구현 React 대시보드(frontend) + 디자인 자료(mockups · demo)
+dashboard/  PC 중앙 관리자 대시보드(backend + frontend) + 디자인 자료(mockups · demo)
 configs/ deploy/ tests/ docs/ datasets/ runs/ weights/
 ```
 
@@ -622,9 +623,8 @@ Pi 로컬에서 `roi_editor` 웹 UI로 생성/수정하는 런타임 설정 파�
 |------|-----------|---------|------|-----------|
 | 전원(종료) 버튼 | GPIO4 | 7번 (GND: 9번) | 버튼 양단을 GPIO4–GND에 연결 | 커널 기능, 코드 없음 |
 | Wi-Fi 전환 버튼 | GPIO17 | 11번 (GND: 9번) | 버튼 양단을 GPIO17–GND, 내부 풀업 사용(외부 저항 불필요) | `gpio_controls.py` |
-| Wi-Fi 모드 상태 LED | GPIO24 | 18번 (GND: 아무 GND 핀) | GPIO24 → 저항(220~330Ω) → LED → GND | `gpio_controls.py` |
+| Pi 통합 상태 LED | GPIO27 | 13번 (GND: 아무 GND 핀) | GPIO27 → 저항(220~330Ω) → LED → GND | `gpio_controls.py` |
 | Wi-Fi 전환 부저 | GPIO25 | 22번 (GND: 아무 GND 핀) | GPIO25 → 부저(+), 부저(-) → GND (액티브 부저 가정) | `gpio_controls.py` |
-| 동작 확인 LED | GPIO27 | 13번 (GND: 아무 GND 핀) | GPIO27 → 저항(220~330Ω) → LED → GND | `camera_live_pi.py --status-led 27` |
 | 냉각팬 | GPIO22 | 15번 | GPIO22 → 트랜지스터/MOSFET 베이스·게이트(1kΩ 저항) → 팬(+: 5V, 플라이백 다이오드 필수) | `fan_controller.py` |
 
 **전원 버튼**은 라즈베리파이 OS 공식 기능이라 코드가 필요 없습니다. `/boot/config.txt`(Bookworm 이후는 `/boot/firmware/config.txt`)에
@@ -643,8 +643,10 @@ Makefile로 자동화하지 않고 수동으로 적용하는 것을 권장합니
 (홈 Wi-Fi `204_WIFI`와 자체 핫스팟 `VisionGuide-AP`가 wlan0 하나를 두고 경합, 항상 한쪽만 활성화됨) 만든
 기능입니다. 버튼을 누르면 `gpio_controls.py`가 로컬에서 `nmcli connection up`으로 두 프로파일을 번갈아
 전환합니다 — SSH 등 원격에서 같은 작업을 하면 전환 도중 그 연결 자체가 끊길 위험이 있지만, 이 방식은 Pi
-로컬에서 D-Bus로 NetworkManager를 직접 호출하므로 그런 위험이 없습니다. 상태 LED(GPIO24)가 켜지면
-핫스팟, 꺼지면 홈 Wi-Fi 모드이며, 부저(GPIO25)가 전환 시 1회(홈 Wi-Fi)/2회(핫스팟)/3회(실패)로 소리를 냅니다.
+로컬에서 D-Bus로 NetworkManager를 직접 호출하므로 그런 위험이 없습니다. GPIO27의 통합 상태 LED는
+홈 Wi-Fi 정상 시 상시 점등, AP(페어링) 모드 시 2회 점멸 반복, 모드 전환 직후 3초는
+전환된 모드의 패턴, 카메라/서비스 오류 시 3회 점멸 패턴을 반복합니다. 부저(GPIO25)는
+전환 시 1회(홈 Wi-Fi)/2회(핫스팟)/3회(실패)로 소리를 냅니다.
 이전에 있던 "SW 재시작 버튼"(5초 홀드로 `visionguide-device` 재시작) 기능은 이 버튼에서 제거되었습니다 —
 물리 버튼으로 SW를 재시작할 방법이 다시 필요하면 별도 GPIO 핀에 추가해야 합니다.
 
@@ -654,9 +656,10 @@ GPIO에 직접 연결할 수 없어 트랜지스터/MOSFET 스위치로 on/off�
 종료해도 팬이 같이 꺼진다. 팬을 5V/GND에 직결하면 보드 대기전력 때문에 종료해도 안 꺼지므로 반드시 이 GPIO
 스위칭 방식을 거쳐야 한다.
 
-**동작 확인 LED**는 `camera_live_pi.py`의 탐지 루프가 프레임을 처리할 때마다 토글되는 하트비트입니다. 정상 동작 중엔
-빠르게 깜빡이고, 루프가 멈추면(예: 추론 행/크래시) LED도 같이 멈추므로 모니터 없이도 "탐지 SW가 살아있는지"를
-눈으로 확인할 수 있습니다.
+**Pi 통합 상태 LED**는 GPIO27(물리 13번)에서 `gpio_controls.py`가 단독으로 소유합니다. 카메라 탐지 루프의
+`device_metrics`, `visionguide-device` 서비스, NetworkManager 연결 상태를 함께 확인하므로
+LED 하나로 정상 동작·AP·전환 중·오류를 구분할 수 있습니다. 기존 GPIO24 Wi-Fi 모드 LED는
+사용하지 않습니다.
 
 `make install-service` 한 번으로 세 systemd 유닛(`visionguide-device`, `visionguide-roi-editor`, `visionguide-controls`)이
 모두 설치/활성화됩니다.

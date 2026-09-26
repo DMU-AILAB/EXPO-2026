@@ -145,6 +145,16 @@ _EDGETPU_LIB = {
     "Windows": "edgetpu.dll",
 }
 
+# Thermal protection for the Pi. This also applies to the legacy profile
+# used when the runtime camera_config.json has not been created yet.
+DEFAULT_MAX_FPS = 10.0
+_MAX_FPS = DEFAULT_MAX_FPS
+
+
+def camera_display_name(camera_id: str) -> str:
+    """Return the user-facing name while keeping API/storage ids stable."""
+    return "cam0" if camera_id == "legacy" else camera_id
+
 
 def _model_paths(weights_dir: str) -> dict[str, Path]:
     """카메라 프로필의 model_variant(camera_config.MODEL_VARIANTS)가 가리키는 weights
@@ -445,12 +455,15 @@ class _Picamera2Source:
         time.sleep(2.0)  # 카메라 센서 워밍업 + AF 컨트롤 수용 대기
         try:
             from libcamera import controls as lc
-            self._cam.set_controls({
+            controls = {
                 "AfMode": lc.AfModeEnum.Continuous,
                 "AfSpeed": lc.AfSpeedEnum.Fast,
                 "AfRange": lc.AfRangeEnum.Full,
-            })
-            print("[INFO] 오토포커스(Continuous) 활성화됨")
+            }
+            if _MAX_FPS > 0:
+                controls["FrameRate"] = _MAX_FPS
+            self._cam.set_controls(controls)
+            print(f"[INFO] 오토포커스(Continuous) 활성화됨, FPS 제한={_MAX_FPS:g}")
         except Exception as e:
             print(f"[WARN] 포커스 설정 실패: {e}")
 
@@ -510,6 +523,11 @@ class _OpenCVSource:
         if not self._cap.isOpened():
             raise CameraNotFoundError(f"카메라/영상을 열 수 없습니다: {source}")
         _apply_capture_preset(self._cap, capture_preset, tag=tag)
+        if _MAX_FPS > 0:
+            self._cap.set(cv2.CAP_PROP_FPS, _MAX_FPS)
+            actual_fps = self._cap.get(cv2.CAP_PROP_FPS)
+            prefix = f"[{tag}] " if tag else ""
+            print(f"{prefix}capture FPS setting: {_MAX_FPS:g} (driver={actual_fps:.1f})")
 
     def read(self) -> tuple[bool, np.ndarray]:
         return self._cap.read()
@@ -1218,6 +1236,8 @@ def _parse_args() -> argparse.Namespace:
                    help="MJPEG 서버 모드로 실행 (모니터 없이 네트워크 스트리밍)")
     p.add_argument("--port",     type=int, default=8080,
                    help="MJPEG 서버 포트 (기본값: 8080, --headless 시 사용, --camera-config 미지정 시에만 사용)")
+    p.add_argument("--max-fps", type=float, default=DEFAULT_MAX_FPS, metavar="FPS",
+                   help=f"Pi capture/inference maximum FPS (default: {DEFAULT_MAX_FPS:g}; 0 disables)")
     p.add_argument("--roi-config", default=None, metavar="PATH",
                    help="ROI 설정 JSON 경로 (없으면 ROI/오디오 기능 비활성, --camera-config 미지정 시에만 사용)")
     p.add_argument("--camera-config", default=None, metavar="PATH",
@@ -1359,6 +1379,7 @@ class CameraPipeline:
     def _run(self) -> None:
         profile = self.profile
         tag = profile.id
+        display_tag = camera_display_name(tag)
 
         # 아래 setup 단계 중 어디서든 실패해도 finally에서 "이미 만들어진 것만" 정리할 수
         # 있도록 전부 None으로 시작한다 — 예전엔 backend/camera/mjpeg 생성이 이 try/finally
@@ -1449,7 +1470,18 @@ class CameraPipeline:
             last_roi_check = time.time()
 
             prev_t = time.time()
+            next_frame_at = time.monotonic()
             while not (self._local_stop.is_set() or self.shared.stop_event.is_set()):
+                if _MAX_FPS > 0:
+                    now_mono = time.monotonic()
+                    if now_mono < next_frame_at:
+                        self._local_stop.wait(next_frame_at - now_mono)
+                        if self._local_stop.is_set() or self.shared.stop_event.is_set():
+                            break
+                    next_frame_at = max(
+                        next_frame_at + (1.0 / _MAX_FPS),
+                        time.monotonic(),
+                    )
                 ok, frame = camera.read()
                 if not ok:
                     print(f"[INFO][{tag}] 영상 종료 또는 카메라 연결 끊김")
@@ -1641,7 +1673,7 @@ class CameraPipeline:
                                           CLASS_NAMES[CANE_CLASS_ID], r.name)
                     _draw_rois(frame, roi_manager, dispatcher, now)
 
-                cv2.putText(frame, f"[{tag}] FPS: {fps:.1f}", (10, 30),
+                cv2.putText(frame, f"[{display_tag}] FPS: {fps:.1f}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
 
                 # 하트비트용 런타임 지표 보고 — 프레임마다가 아니라 몇 초에 한 번.
@@ -1721,7 +1753,13 @@ def _reconcile_pipelines(pipelines: dict[str, CameraPipeline], new_profiles: lis
 # ── 메인 (슈퍼바이저) ──────────────────────────────────────────────
 
 def main() -> None:
+    global _MAX_FPS
     args = _parse_args()
+    if args.max_fps < 0:
+        raise SystemExit("--max-fps must be >= 0")
+    _MAX_FPS = args.max_fps
+    print(f"[INFO] capture/inference FPS limit: {_MAX_FPS:g}" if _MAX_FPS > 0
+          else "[INFO] capture/inference FPS limit: disabled")
     base_conf: float | dict[str, float] = (
         args.conf if args.conf_person is None
         else {"white_cane": args.conf, "person": args.conf_person}

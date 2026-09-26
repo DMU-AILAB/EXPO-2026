@@ -1,5 +1,4 @@
 import logging
-import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
@@ -8,6 +7,7 @@ import json
 from ..database import SessionLocal
 from ..models.schedule import ScheduledReboot
 from ..models.device import Device
+from .pi_client import PiClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +22,20 @@ async def execute_reboot(device_id: str):
             logger.warning(f"Reboot job cancelled: device {device_id} not found.")
             return
 
-        ip = device.ip
-        logger.info(f"Executing scheduled reboot for {device_id} at {ip}")
-        
-        # 짧은 타임아웃 적용 (Offline 상태 기기로 인한 스레드 점유 방지)
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            await client.post(f"http://{ip}:5000/reboot")
-            
-    except (httpx.RequestError, httpx.RemoteProtocolError, httpx.ReadTimeout) as e:
-        # Step 3 방어: 스케줄 미스(기기 오프라인 등) 시 예외를 삼키고 다음 주기 대기
-        logger.warning(f"Scheduled reboot failed for {device_id} ({e}). Skipping to next cycle.")
+        logger.info(f"Executing scheduled reboot for {device_id} at {device.ip}")
+        if not device.control_key:
+            logger.warning("Scheduled reboot skipped for %s: device is not provisioned", device_id)
+            return
+
+        # Pi의 실제 제어 계약을 사용한다. 예전 /reboot 경로는 존재하지 않아
+        # 예약 재부팅만 조용히 실패하고 있었다.
+        await PiClient(device.ip, timeout=3.0).post_control(
+            "/api/system/reboot", device.control_key, params={"confirm": "true"},
+        )
+
     except Exception as e:
-        logger.error(f"Unexpected error during scheduled reboot for {device_id}: {e}")
+        # 스케줄 미스(기기 오프라인 등)는 다음 예약을 막지 않는다.
+        logger.warning(f"Scheduled reboot failed for {device_id} ({e}). Skipping to next cycle.")
     finally:
         db.close()
 
