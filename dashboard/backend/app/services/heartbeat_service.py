@@ -135,7 +135,11 @@ async def bulk_flush_heartbeats():
             device = db.query(Device).filter(Device.id == device_id).first()
             if device is None:
                 continue                       # 삭제된 기기의 잔여 하트비트
-            device.status = data.get("status") or "online"
+            # The health sweep runs before this flush and may have changed the
+            # device to warning because its heartbeat has no usable camera.
+            # Keep that warning until the next sweep clears the condition.
+            if device.status != "warning":
+                device.status = data.get("status") or "online"
             device.last_seen = data.get("updated_at")
 
         db.commit()

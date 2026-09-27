@@ -35,7 +35,7 @@ expo/
 │   ├── roi_editor/      Pi 로컬 웹 UI (:5000) — 실제 운영 대시보드
 │   ├── simulator/       PC Streamlit 시뮬레이터
 │   └── label_tool/      라벨 보완 툴
-├── dashboard/         미구현 React 대시보드 + 디자인 자료
+├── dashboard/         PC 중앙 관리자 대시보드(backend + frontend) + 디자인 자료
 │   ├── frontend/        (구 visionguide-frontend)
 │   ├── mockups/         (구 dash — Stitch 목업)
 │   └── demo/            (구 EXPO-Dash-demo — 디자인 토큰 출처)
@@ -179,11 +179,13 @@ datasets/
 | 디렉터리 | 정체 | 상태 | 접속 |
 |---|---|---|---|
 | **`apps/roi_editor/`** | Pi 로컬 FastAPI + 정적 HTML | **구현·배포됨** | `http://<pi>:5000` |
-| `dashboard/frontend/` | React + Vite 관리자 대시보드 | **미구현·미배포** | 로컬 `npm run dev` |
+| `dashboard/backend/` | FastAPI 중앙 백엔드 | **구현됨·PC 실행** | `uvicorn app.main:app --port 8000 --workers 1` |
+| `dashboard/frontend/` | React + Vite 관리자 대시보드 | **구현됨·PC 실행** | 로컬 `npm run dev` |
 | `dashboard/mockups/` | Stitch 생성 디자인 목업(html+png) | 참고 자료 | — |
 | `dashboard/demo/` | 디자인 토큰 출처 (roi_editor가 채용) | 참고 자료 | — |
 
-**기기에서 보이는 화면은 `apps/roi_editor/`뿐이다.** `dashboard/frontend/`를 고쳐도
+**기기에서 직접 실행되는 API는 `apps/roi_editor/`이고, 관리 화면은 PC의 `dashboard/frontend/`다.**
+`dashboard/frontend/`를 고쳐도
 Pi에는 아무 영향이 없다 — 배포 경로 자체가 없다.
 
 `dashboard/frontend/public/streams/*.jpg` 6장이 **29.8 MB**를 차지한다

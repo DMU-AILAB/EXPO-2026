@@ -288,7 +288,7 @@ make sync-roi-editor    ROI 에디터 파일만 재전송
 make deps               카메라 앱 의존성 설치
 make deps-roi-editor    ROI 에디터 의존성 설치 (fastapi, uvicorn)
 make run-headless       Pi에서 카메라 앱 + MJPEG 스트리밍 시작 (포트 8080)
-make run-roi-editor     Pi에서 ROI 웹 에디터 시작 (포트 5000)
+make run-roi-editor     Pi에서 ROI API/호환 웹 에디터 시작 (포트 5000, PC 대시보드가 주 화면)
 make run                Pi에서 디스플레이 모드 실행 (모니터 연결 시)
 make setup-pi-python310 Pi에 Python 3.10 설치 (최초 1회)
 make ping               Pi 연결 및 환경 확인

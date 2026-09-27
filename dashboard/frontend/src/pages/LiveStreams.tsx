@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import { Maximize2, Camera, Unlink, AlertTriangle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Maximize2, Minimize2, Camera, Unlink, AlertTriangle } from 'lucide-react'
 
 import * as api from '../api'
-import { streamUrl } from '../components/StreamThumbnail'
+import { useMjpegStream } from '../hooks/useMjpegStream'
 import { useApi } from '../hooks/useApi'
+import { cameraDisplayName } from '../utils/cameraLabel'
 import type { Device, CameraBrief } from '../types'
 
 interface StreamItem {
@@ -12,23 +13,43 @@ interface StreamItem {
 }
 
 /**
- * ⚠ 백엔드 MJPEG 프록시는 **동시 5개**로 제한된다(명세 §14). 4×4 레이아웃으로
- * 16칸을 한꺼번에 열면 6번째부터 503이 난다 — 화면에서 미리 알려준다.
+ * 백엔드는 카메라별 Pi 연결 하나를 여러 브라우저 카드에 공유한다.
  */
-const PROXY_LIMIT = 5
-
 const LAYOUTS = [
-  { label: '1×1', cols: 1 },
-  { label: '2×2', cols: 2 },
-  { label: '3×3', cols: 3 },
-  { label: '4×4', cols: 4 },
+  { label: '1열', cols: 1 },
+  { label: '2열', cols: 2 },
+  { label: '3열', cols: 3 },
+  { label: '4열', cols: 4 },
 ] as const
 
 function StreamCell({ item }: { item: StreamItem }) {
   const { device, camera } = item
-  const [failed, setFailed] = useState(false)
-  const isOffline = device.status === 'offline' || !camera.is_streaming
+  const stream = useMjpegStream(device.id, camera.id)
+  const cellRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const isOffline = device.status === 'offline'
   const hasAlert = false
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === cellRef.current)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    if (!cellRef.current) return
+    try {
+      if (document.fullscreenElement === cellRef.current) {
+        await document.exitFullscreen()
+      } else {
+        await cellRef.current.requestFullscreen()
+      }
+    } catch {
+      // Browsers can reject fullscreen when the gesture is no longer active.
+    }
+  }
 
   if (isOffline) {
     return (
@@ -44,27 +65,28 @@ function StreamCell({ item }: { item: StreamItem }) {
     )
   }
 
-  if (failed) {
+  if (stream.failed) {
     return (
       <div className="relative bg-black/90 rounded-xl overflow-hidden border border-slate-800 flex flex-col items-center justify-center aspect-video">
         <Camera className="w-5 h-5 text-slate-500 mb-1.5" />
-        <span className="text-[11px] font-semibold text-slate-400">스트림을 불러오지 못했습니다</span>
-        <span className="text-[10px] text-slate-600 mt-0.5">동시 연결 {PROXY_LIMIT}개 제한일 수 있습니다</span>
+        <span className="text-[11px] font-semibold text-slate-400">스트림 연결을 재시도하는 중입니다</span>
+        <span className="text-[10px] text-slate-600 mt-0.5">카메라 연결이 회복되면 자동으로 다시 표시됩니다</span>
       </div>
     )
   }
 
   return (
-    <div className={`relative rounded-xl overflow-hidden group aspect-video transition-all duration-500 ${
+    <div ref={cellRef} className={`stream-cell relative rounded-xl overflow-hidden group aspect-video transition-all duration-500 ${
       hasAlert
         ? 'border border-amber-500/60 shadow-[0_0_16px_rgba(245,158,11,0.18)]'
         : 'border border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.16)]'
     }`}>
       {/* 실사 배경 이미지 */}
       <img
-        src={streamUrl(device.id, camera.id)}
+        src={stream.src}
         alt=""
-        onError={() => setFailed(true)}
+        onError={stream.onError}
+        onLoad={stream.onLoad}
         className="absolute inset-0 w-full h-full object-cover bg-slate-900"
         draggable={false}
       />
@@ -72,7 +94,7 @@ function StreamCell({ item }: { item: StreamItem }) {
       {/* 상단 그라데이션 바 */}
       <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
         style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.70), transparent)' }}>
-        <span className="text-[10.5px] font-bold text-white">{device.name} · {camera.id}</span>
+        <span className="text-[10.5px] font-bold text-white">{device.name} · {cameraDisplayName(camera.id)}</span>
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
           <span className="text-[10px] font-bold text-white/90 tracking-wider">LIVE</span>
@@ -80,11 +102,15 @@ function StreamCell({ item }: { item: StreamItem }) {
       </div>
 
       {/* 중앙 카메라 아이콘 */}
-      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center text-white group-hover:bg-[#2c4be0] transition-colors">
-          <Camera className="w-4 h-4" />
-        </div>
-      </div>
+      <button
+        type="button"
+        onClick={() => void toggleFullscreen()}
+        aria-label={isFullscreen ? '전체화면 닫기' : '카메라 전체화면'}
+        title={isFullscreen ? '전체화면 닫기' : '카메라 전체화면'}
+        className="absolute bottom-2.5 right-2.5 z-10 w-8 h-8 rounded-lg bg-black/55 backdrop-blur-sm border border-white/25 text-white flex items-center justify-center hover:bg-[#2c4be0] transition-colors"
+      >
+        {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+      </button>
 
       {/* 경고 바 */}
       {hasAlert && (
@@ -96,7 +122,6 @@ function StreamCell({ item }: { item: StreamItem }) {
       )}
 
       {/* 호버 테두리 */}
-      <div className="absolute inset-0 rounded-xl border-2 border-[#2c4be0] opacity-0 group-hover:opacity-70 transition-opacity pointer-events-none" />
     </div>
   )
 }
@@ -149,13 +174,6 @@ export default function LiveStreams() {
           </button>
         </div>
       </div>
-
-      {activeCount > PROXY_LIMIT && (
-        <div className="mb-4 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200/70 text-xs font-semibold text-amber-800">
-          스트림 {activeCount}개가 활성인데 프록시 동시 연결은 {PROXY_LIMIT}개까지입니다 —
-          일부 칸은 열리지 않습니다.
-        </div>
-      )}
 
       {/* Stream grid */}
       <div

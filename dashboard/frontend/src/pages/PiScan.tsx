@@ -65,11 +65,14 @@ export default function PiScan() {
     try {
       // id는 Pi가 이미 아는 것이 있으면 그것을, 없으면 별칭이나 IP에서 만든다.
       const id = d.device_id || alias || `pi-${d.ip.replace(/\./g, '-')}`
-      const res = await api.createDevice({ id, name: alias || id, ip: d.ip })
+      const res = await api.createDevice({
+        id, name: alias || id, ip: d.ip,
+      })
       setIssued((prev) => [...prev, {
         id: res.id, apiKey: res.api_key,
         provisioned: res.provisioned, error: res.provision_error,
       }])
+      // 잘못된 토큰이나 일시적인 연결 실패라면 같은 토큰으로 재시도할 수 있게 둔다.
     } catch (e) {
       const msg = e instanceof ApiError && e.code === 'DEVICE_ALREADY_EXISTS'
         ? '이미 등록된 디바이스입니다'

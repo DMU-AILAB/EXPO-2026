@@ -239,6 +239,7 @@ class UsbAudioPower:
         settle_seconds: float = 1.0,
         command: str = "uhubctl",
         use_sudo: bool = True,
+        always_on: bool = False,
     ) -> None:
         if not location.strip():
             raise ValueError("USB audio hub location must not be empty")
@@ -248,6 +249,7 @@ class UsbAudioPower:
         self.settle_seconds = settle_seconds
         self.command = command
         self.use_sudo = use_sudo
+        self.always_on = always_on
 
     @classmethod
     def from_environment(cls) -> "UsbAudioPower | None":
@@ -267,7 +269,11 @@ class UsbAudioPower:
             settle_seconds = 0.3
 
         try:
-            return cls(location=location, settle_seconds=settle_seconds)
+            always_on = os.environ.get("VISIONGUIDE_USB_AUDIO_ALWAYS_ON", "0").lower() in {
+                "1", "true", "yes", "on",
+            }
+            return cls(location=location, settle_seconds=settle_seconds,
+                       always_on=always_on)
         except ValueError as exc:
             print(f"[WARN] USB 오디오 전원 제어 비활성화: {exc}")
             return None
@@ -325,8 +331,12 @@ class AudioPlayer:
         self._playing = False
         self._usb_power = usb_power if usb_power is not None else UsbAudioPower.from_environment()
         if self._usb_power is not None:
-            # Leave the speaker unpowered until an announcement is actually queued.
-            self._usb_power.power_off()
+            if getattr(self._usb_power, "always_on", False):
+                if self._usb_power.power_on() and self._usb_power.settle_seconds:
+                    time.sleep(self._usb_power.settle_seconds)
+            else:
+                # Leave the speaker unpowered until an announcement is queued.
+                self._usb_power.power_off()
         threading.Thread(target=self._worker, daemon=True).start()
 
     @property
@@ -354,11 +364,11 @@ class AudioPlayer:
                 self._playing = True
             usb_powered = False
             try:
-                if self._usb_power is not None:
+                if self._usb_power is not None and not getattr(self._usb_power, "always_on", False):
                     usb_powered = self._usb_power.power_on()
                     if usb_powered and self._usb_power.settle_seconds:
                         time.sleep(self._usb_power.settle_seconds)
-                if _CLI_PLAYER:
+                if _CLI_PLAYER or (path.lower().endswith(".wav") and (shutil.which("aplay") or shutil.which("ffplay"))):
                     self._play_subprocess(path)
                 else:
                     self._play_pygame(path)
@@ -376,7 +386,14 @@ class AudioPlayer:
                         print(f"[WARN] AudioPlayer on_done 콜백 오류: {exc}")
 
     def _play_subprocess(self, path: str) -> None:
-        if _CLI_PLAYER == "mpg123":
+        if path.lower().endswith(".wav") and shutil.which("aplay"):
+            cmd = ["aplay", "-q"]
+            if _ALSA_DEVICE:
+                cmd.extend(["-D", _ALSA_DEVICE])
+            cmd.append(path)
+        elif path.lower().endswith(".wav") and shutil.which("ffplay"):
+            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path]
+        elif _CLI_PLAYER == "mpg123":
             # -o alsa를 명시하지 않으면 mpg123가 JACK 출력 모듈을 먼저 시도하다
             # "jack server is not running" 에러로 조용히 실패하는 경우가 있다
             # (systemd 시스템 서비스는 로그인 세션의 PipeWire/JACK에 붙을 수 없음).

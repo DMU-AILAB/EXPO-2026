@@ -4,15 +4,17 @@ import hashlib
 import json
 import logging
 import secrets
+import time
 from typing import Optional
 from ..database import get_db
 from ..config import settings
 from ..models import Device
+from ..models.camera import Camera
 from ..models.event import DetectionEvent
 from ..models.roi import Roi
-from ..schemas.device import DeviceCreate, DeviceUpdate
+from ..schemas.device import DeviceCreate, DeviceUpdate, ProvisionDeviceRequest
 from ..deps import get_current_user
-from ..services.device_view import build_device_summary, build_status_payload
+from ..services.device_view import build_device_summary, build_status_payload, is_stale
 from ..services.pi_client import PiClient
 from ..services.heartbeat_service import get_buffered_cameras, get_buffered_status
 from ..utils.timeutil import kst_day_bounds_utc, utcnow
@@ -20,6 +22,18 @@ from ..utils.timeutil import kst_day_bounds_utc, utcnow
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
+
+# Camera configuration is relatively expensive to read from a Pi. Heartbeats
+# already provide live status, so the device list only refreshes this cache
+# periodically.
+_CAMERA_REFRESH_INTERVAL_SEC = 30.0
+_camera_refresh_at: dict[str, float] = {}
+
+
+def _camera_refresh_due(device_id: str, now: float | None = None) -> bool:
+    now = time.monotonic() if now is None else now
+    last_refresh = _camera_refresh_at.get(device_id)
+    return last_refresh is None or now - last_refresh >= _CAMERA_REFRESH_INTERVAL_SEC
 
 @router.get("")
 async def get_devices(search: str = None, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
@@ -36,6 +50,17 @@ async def get_devices(search: str = None, db: Session = Depends(get_db), current
     data = []
     for d in devices:
         buffered = await get_buffered_status(d.id)
+        camera_rows = db.query(Camera).filter(Camera.device_id == d.id).all()
+        if (buffered and not is_stale(buffered.get("updated_at"))
+                and _camera_refresh_due(d.id)):
+            # Keep the device list in sync when a camera is connected after
+            # registration.  The camera detail endpoint already does this;
+            # doing it here makes the dashboard overview update as well. Do
+            # this at most once per interval so every list poll stays local.
+            from .cameras import refresh_cameras_from_pi
+            _camera_refresh_at[d.id] = time.monotonic()
+            await refresh_cameras_from_pi(db, d)
+            camera_rows = db.query(Camera).filter(Camera.device_id == d.id).all()
         runtime = await get_buffered_cameras(d.id)
         cameras = [
             {
@@ -43,7 +68,7 @@ async def get_devices(search: str = None, db: Session = Depends(get_db), current
                 "port": c.port,
                 "is_streaming": bool(runtime.get(c.id, {}).get("is_streaming", False)),
             }
-            for c in d.cameras
+            for c in camera_rows
         ]
         data.append(build_device_summary(
             db, d, buffered,
@@ -88,7 +113,13 @@ async def create_device(device_in: DeviceCreate, db: Session = Depends(get_db), 
 
     # 기기에 신원을 심는다. **이걸 하지 않으면 등록해도 Pi는 서버를 모른다** —
     # device_id·api_key·server_url이 전부 있어야 Pi가 전송을 시작한다.
-    provisioned, reason = await _provision_device(new_device, raw_api_key)
+    provisioned, reason = await _provision_device(
+        new_device, raw_api_key,
+    )
+    if provisioned:
+        # 이후 재시작·재부팅과 하트비트 제어에 같은 키가 필요하다.
+        # 초기 sync가 실패해도 신원 주입 결과는 보존해야 한다.
+        db.commit()
 
     # 카메라·ROI 스냅샷을 곧바로 끌어온다. 서버에는 카메라를 **만드는** API가 없으므로
     # (원본이 Pi다) 이 동기화를 건너뛰면 cameras 테이블이 영원히 비어 있고,
@@ -138,6 +169,7 @@ async def _provision_device(device: Device, raw_api_key: str) -> tuple[bool, Opt
             name=device.name or "",
             location=device.location or "",
             registered_at=utcnow().isoformat(timespec="seconds") + "Z",
+            current_key=device.control_key or "",
         )
         # 기기가 받아들인 키만 보관한다 — 실패한 키를 저장하면 서버와 기기가 갈라진다.
         device.control_key = raw_api_key
@@ -149,7 +181,8 @@ async def _provision_device(device: Device, raw_api_key: str) -> tuple[bool, Opt
 
 @router.post("/{device_id}/provision", status_code=200)
 async def provision_device(device_id: str, db: Session = Depends(get_db),
-                           current_user = Depends(get_current_user)):
+                           current_user = Depends(get_current_user),
+                           payload: ProvisionDeviceRequest | None = None):
     """신원 재주입 — 기기가 꺼져 있어 등록 시 실패했거나, 키를 교체할 때 쓴다.
 
     **새 api_key를 발급한다.** 기존 키는 해시만 보관하므로 평문을 복원할 수 없어,
@@ -191,7 +224,7 @@ async def get_device(device_id: str, db: Session = Depends(get_db), current_user
         live = runtime.get(c.id, {})
         cameras_data.append({
             "id": c.id, "port": c.port, "capture_preset": c.capture_preset,
-            "fps": c.fps, "fps_applied": False,       # Pi에 대응 필드 없음 (명세 §4)
+            "fps": 10, "fps_applied": True,
             "model_variant": c.model_variant, "rotation": c.rotation,
             "require_person": c.require_person, "is_active": c.is_active,
             "roi_count": db.query(Roi).filter(Roi.device_id == device_id,
@@ -257,6 +290,7 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
     
     db.delete(device)
     db.commit()
+    _camera_refresh_at.pop(device_id, None)
     return
 
 from ..deps import get_device_by_api_key

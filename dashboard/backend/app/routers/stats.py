@@ -20,12 +20,12 @@ class GranularityEnum(str, Enum):
     daily = "daily"
 
 @router.get("/summary", response_model=StatsSummaryResponse)
-def get_summary(
+async def get_summary(
     date: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    data = stats_service.get_summary_stats(db, date)
+    data = await stats_service.get_summary_stats(db, date)
     return {"data": data, "ok": True}
 
 @router.get("/devices", response_model=DeviceStatsResponse)

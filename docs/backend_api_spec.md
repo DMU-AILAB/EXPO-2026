@@ -1,10 +1,10 @@
 # VisionGuide 백엔드 기능 명세서 (visionguide-backend)
 
 > **작성 목적**: 관리자 대시보드 프론트엔드(`dashboard/frontend/`)가 필요로 하는 모든 백엔드 기능을 구체적으로 기술한다.  
-> **구현 대상**: 담당 백엔드 개발자가 이 문서를 기준으로 FastAPI 서버를 독립적으로 구현한다.  
+> **구현 상태**: `dashboard/backend/`에 FastAPI 서버가 구현되어 있고, `dashboard/frontend/`가 이 API를 호출한다.
 > **분석 근거**: `dashboard/frontend/src/` 전체 코드 분석 (타입 정의, 목 데이터, UI 흐름)
-> — 현재 이 프론트엔드는 목 데이터만 사용하며 API 호출이 없다. 아래 스키마 중 Pi 런타임
-> (`device/`, `apps/roi_editor/`)과 맞닿는 부분은 실제 코드 기준으로 교정돼 있다.
+> — 아래 스키마 중 Pi 런타임(`device/`, `apps/roi_editor/`)과 맞닿는 부분은 실제 코드
+> 기준으로 교정돼 있다. 운영 전 설정과 보안 키는 `.env`에서 지정해야 한다.
 
 ---
 
@@ -44,7 +44,7 @@
 | `Camera.fps` | **서버 보관만** (§4대로) | Pi의 `CameraProfile`에 대응 필드가 없다. 응답에 `fps_applied: false`를 함께 내려 UI가 "미적용"으로 표시한다. Pi 4의 병목은 프레임레이트가 아니라 추론이라 `capture_preset`·`model_variant`가 더 직접적인 손잡이다 |
 | 오디오 길이 제한 | **10초 유지** | 안내 음성은 짧아야 한다. 근거가 약하면 `MAX_DURATION_SECONDS` 한 곳만 고치면 된다 |
 | `config_etag` 초기값 | **빈 문자열 금지** (UUID로 생성) | `''`이면 클라이언트가 If-Match에 보낼 값이 없어 **첫 ROI 저장부터 400**이 난다 |
-| 기기 제어 인증 | Pi의 `POST /api/service/restart`·`/api/system/reboot`만 **`X-Device-Key` 필수** | 포트 5000의 나머지 라우트는 무인증이지만(§13 참고), 재부팅은 서비스를 끊는다. 서버는 이 키를 되돌릴 수 있어야 하므로 `devices.control_key`에 **평문**으로 보관한다 — 방향이 반대라서 생기는 비대칭이다(`api_key_hash`는 검증만 하면 되므로 해시) |
+| 기기 제어 인증 | Pi의 identity 재주입·`POST /api/service/restart`·`/api/system/reboot`에 **`X-Device-Key` 필요** | 포트 5000의 검색·일반 설정 라우트는 LAN 호환성을 위해 무인증으로 남긴다. 미등록 Pi의 identity bootstrap은 네트워크 검색 후 바로 허용하고, 등록 후 재주입과 제어 요청은 기존 키를 요구한다. 제어 키는 서버가 Pi를 호출할 때 필요하므로 `devices.control_key`에 **평문**으로 보관한다 — 방향이 반대라서 생기는 비대칭이다(`api_key_hash`는 검증만 하면 되므로 해시) |
 
 ### 1.4 전역 응답 형식
 
@@ -1162,6 +1162,26 @@ ScheduledReboot {
 
 ## 13. 디바이스 ↔ 서버 동기화
 
+### 기기 최초 등록과 신원 주입
+
+Pi가 네트워크에 연결되면 대시보드가 `POST /api/devices`를 호출해 다음 본문을 Pi의
+`POST /api/identity`로 전달한다.
+
+```json
+{
+  "device_id": "pi-01",
+  "api_key": "vg_<issued-key>",
+  "server_url": "http://192.168.0.50:8000",
+  "name": "현관 Pi",
+  "location": "1층 현관",
+  "registered_at": "2026-09-26T12:00:00Z"
+}
+```
+
+미등록 Pi는 검색 후 identity를 저장한다. 이미 등록된 Pi를 재주입할 때는 기존
+`X-Device-Key` 헤더를 사용한다. 백엔드는
+Pi가 수락한 키를 `control_key`로 보관해 이후 제어 요청에 `X-Device-Key`로 사용한다.
+
 ### 13.0 설정 소유권 — **Pi가 원본, 서버 DB는 캐시**
 
 `camera_config.json`과 `rois.json`의 최종 권한은 **Pi에 있다.** 두 파일은 rsync 배포 대상이
@@ -1175,12 +1195,11 @@ mtime을 폴링해 재시작 없이 반영한다(ROI 2초, 카메라 프로필�
 만들어져 있어, 서버가 원본이 되면 그 흐름이 무력화된다.
 
 > [!WARNING]
-> **포트 5000에는 인증이 전혀 없다.** `apps/roi_editor/server.py`에 미들웨어·의존성·CORS가
-> 하나도 없어, 같은 네트워크에 있으면 누구나 ROI·카메라 설정을 바꾸고
-> `POST /api/identity`로 신원까지 덮어쓸 수 있다. 현장 설정용 로컬 도구라는 전제에서
-> 만들어진 것이며, 예외는 2026-09-23에 추가한 제어 엔드포인트 두 개뿐이다
-> (`X-Device-Key` 필수 — §10). 망을 신뢰할 수 없는 환경에 배치한다면 이 전제부터 다시
-> 봐야 한다.
+> **포트 5000은 LAN 중심의 설정 API다.** 일반 설정·조회 라우트는 기존 호환성을 위해
+> 같은 네트워크에서 접근할 수 있다. `POST /api/identity`는 미등록 상태에서 허용되고,
+> 등록 후 재설정에는 기존 `X-Device-Key`를 요구한다.
+> `/api/service/restart`와 `/api/system/reboot` 같은 제어 라우트도 `X-Device-Key`가
+> 필수다(§10). 신뢰할 수 없는 망에서는 Pi API를 직접 노출하지 말고 VPN이나 방화벽을 사용한다.
 
 **따라서 백엔드는 설정의 저장소가 아니라 중계자다.**
 
@@ -1305,7 +1324,8 @@ Pi의 MJPEG 스트림을 백엔드가 프록시. 직접 접근 불가한 네트�
 **Response**: `multipart/x-mixed-replace; boundary=frame` 스트리밍
 
 **비고**:
-- 동시 연결 수 **5개** 초과 시 신규 연결 거부 (503 반환)
+- 같은 카메라를 보는 브라우저는 Pi에 대한 **하나의 업스트림 연결을 공유**한다.
+- 업스트림이 끊기면 백엔드가 자동 재연결하고, 느린 브라우저에는 최신 프레임만 전달한다.
 - 프론트엔드의 `window.open(http://${ip}:${port}/stream.mjpg)` 방식은 Pi에 직접 접근하므로, 방화벽 환경에서는 이 프록시 API 사용
 - 경로의 `{camera_id}`는 **문자열**이다 (`/api/devices/cam-entrance-01/cameras/dev-cam0/stream`)
 - Pi 측 스트림 포트에는 `/stream.mjpg` 외에 녹화 제어 라우트(`/recording/*`)도 함께 붙어 있다 — 대시보드에서 녹화를 다루려면 별도 절이 필요하다
@@ -1450,7 +1470,6 @@ CREATE TABLE device_status_cache (
 | 423 | ACCOUNT_LOCKED | 계정 잠금 |
 | 429 | RATE_LIMIT_EXCEEDED | ingest 분당 600건 초과 |
 | 500 | INTERNAL_ERROR | 서버 내부 오류 |
-| 503 | STREAM_CAPACITY_FULL | MJPEG 동시 스트림 5개 초과 |
 
 ---
 

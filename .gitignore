@@ -19,6 +19,8 @@ recordings/
 camera_config.json
 rois.json
 rois.*.json
+device_identity.json
+device_pairing_token
 
 # ★ 기기 신원 — **api_key가 평문으로 들어 있다.** roi_editor를 로컬에서 띄우고
 # 기기를 등록하면 identity_path = default_path(_ROOT) 규칙에 따라 **저장소 루트에**
@@ -69,6 +71,11 @@ datasets/staging/
 !.env.example
 *.env
 rf_config.json
+
+# Local dashboard runtime logs
+dashboard/backend/*.log
+dashboard/frontend/*.log
+dashboard/backend/data/
 
 # Python
 __pycache__/

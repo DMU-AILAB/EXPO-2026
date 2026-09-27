@@ -65,12 +65,14 @@ class PiClient:
 
     async def _request(self, method: str, path: str, *, params: dict | None = None,
                        json: Any = None, files: Any = None,
+                       headers: dict[str, str] | None = None,
                        timeout: Any = None) -> httpx.Response:
         url = f"{self.base}{path}"
         try:
             async with httpx.AsyncClient(follow_redirects=False) as client:
                 res = await client.request(
                     method, url, params=params, json=json, files=files,
+                    headers=headers,
                     timeout=timeout if timeout is not None else self.timeout,
                 )
         except httpx.ConnectError as exc:
@@ -123,7 +125,7 @@ class PiClient:
 
     async def post_identity(self, *, device_id: str, api_key: str, server_url: str,
                             name: str = "", location: str = "",
-                            registered_at: str = "") -> dict:
+                            registered_at: str = "", current_key: str = "") -> dict:
         """서버가 발급한 신원을 기기에 심는다.
 
         **`server_url`이 비면 Pi는 아무것도 전송하지 않는다** — `is_usable()`이
@@ -141,7 +143,8 @@ class PiClient:
             "device_id": device_id, "api_key": api_key, "server_url": server_url,
             "name": name, "location": location, "registered_at": registered_at,
         }
-        res = await self._request("POST", "/api/identity", json=payload)
+        headers = {"X-Device-Key": current_key} if current_key else None
+        res = await self._request("POST", "/api/identity", json=payload, headers=headers)
         return res.json()
 
     # ------------------------------------------------------------------ 제어
@@ -187,6 +190,11 @@ class PiClient:
 
     async def get_cameras(self) -> list[dict]:
         data = await self._get_json("/api/cameras")
+        return data.get("cameras", []) if isinstance(data, dict) else []
+
+    async def scan_cameras(self) -> list[dict]:
+        """Return cameras detected by libcamera, including legacy-mode cameras."""
+        data = await self._get_json("/api/cameras/scan")
         return data.get("cameras", []) if isinstance(data, dict) else []
 
     async def put_cameras(self, cameras: list[dict]) -> dict:

@@ -16,9 +16,8 @@
 | 전원(종료) 버튼 — PoE 있음 | GPIO4 | 7 | 9 | `dtoverlay=gpio-shutdown,gpio_pin=4` |
 | 전원(종료) 버튼 — PoE 없음 | GPIO3 | 5 | 6 | `dtoverlay=gpio-shutdown` 기본값 |
 | Wi-Fi 전환 버튼 | GPIO17 | 11 | 9 | 내부 풀업 사용 — 외부 저항 불필요 |
-| Wi-Fi 모드 상태 LED | GPIO24 | 18 | 아무 GND 핀 | 저항 필수 (220~330Ω), 켜짐=핫스팟/꺼짐=홈Wi-Fi |
+| Pi 통합 상태 LED | GPIO27 | 13 | 아무 GND 핀 | 저항 필수 (220~330Ω), 패턴으로 정상/AP/전환/오류 표시 |
 | Wi-Fi 전환 부저 | GPIO25 | 22 | 아무 GND 핀 | 액티브 부저 가정 (신호만 주면 소리남) |
-| 동작 확인 LED | GPIO27 | 13 | 아무 GND 핀 | 저항 필수 (220~330Ω) |
 | 냉각팬 (스위칭 신호) | GPIO22 | 15 | — (아래 참고) | 트랜지스터/MOSFET 통해서만 연결, 전원은 USB 5V |
 
 라즈베리파이 4 GND 핀은 6, 9, 14, 20, 25, 30, 34, 39번이다. PoE 어댑터를 사용하면 1~6번이
@@ -64,7 +63,7 @@ PoE HAT가 없고 GPIO3을 I2C 등 다른 기능으로 사용하지 않는다면
 - 짧게 누르면 안전 종료한다. GPIO4 방식은 완전히 halt된 상태에서 같은 버튼으로 깨우는 GPIO3의 기본 wake 동작을 제공하지 않는다.
 - 보드 자체 대기전력은 남아있는 상태(완전 차단 아님) — 필요하면 물리 전원 스위치를 병행.
 
-## 2. Wi-Fi 전환 버튼 — GPIO17 (물리 11번) + 상태 LED — GPIO24 (물리 18번) + 부저 — GPIO25 (물리 22번)
+## 2. Wi-Fi 전환 버튼 — GPIO17 (물리 11번) + 통합 상태 LED — GPIO27 (물리 13번) + 부저 — GPIO25 (물리 22번)
 
 이 Pi의 무선 칩은 홈 Wi-Fi(`204_WIFI`)와 자체 핫스팟(`VisionGuide-AP`)을 동시에 켤 수 없는 것으로
 실측 확인되어(둘 다 wlan0 하나를 두고 경합), 버튼으로 두 모드를 전환하는 방식을 택했다.
@@ -74,7 +73,7 @@ PoE HAT가 없고 GPIO3을 I2C 등 다른 기능으로 사용하지 않는다면
    한쪽 ──── GPIO17 (물리 핀 11)
    다른쪽 ── GND (물리 핀 9)
 
-GPIO24 (물리 핀 18) ──[저항 220~330Ω]── LED(+) ── LED(-) ── GND (아무 GND 핀)
+GPIO27 (물리 핀 13) ──[저항 220~330Ω]── LED(+) ── LED(-) ── GND (아무 GND 핀)
 
 GPIO25 (물리 핀 22) ──── 부저(+)
                         부저(-) ──── GND (아무 GND 핀)
@@ -83,20 +82,21 @@ GPIO25 (물리 핀 22) ──── 부저(+)
 - 내부 풀업 사용(`gpio_controls.py`에서 `pull_up=True`) — 버튼 쪽은 외부 저항 불필요.
 - 누르면 `nmcli connection up`으로 홈 Wi-Fi ↔ 핫스팟 전환. Pi 로컬에서 D-Bus로 직접 호출하므로
   SSH 등 원격 작업과 달리 전환 도중 연결이 끊길 위험이 없음.
-- 상태 LED: 켜짐 = 핫스팟 모드, 꺼짐 = 홈 Wi-Fi 모드 (상시 표시, 전환 성공 시에만 갱신).
+- 통합 상태 LED는 `visionguide-controls`가 단독으로 구동한다. 패턴은 다음과 같다.
+  - 홈 Wi-Fi + 카메라 정상: 1회 짧은 점멸 반복
+  - AP(페어링) 모드: 2회 짧은 점멸을 계속 반복
+  - Wi-Fi 전환 직후 3초: 전환된 모드의 패턴을 반복
+  - 카메라 파이프라인 중지 또는 서비스 오류: 3회 점멸 반복
 - 부저: 전환 시 1회 = 홈 Wi-Fi, 2회 = 핫스팟, 3회(빠르게) = 전환 실패.
 - 부저는 액티브 부저 모듈(신호선에 GPIO만 연결하면 소리남) 가정 — 패시브 피에조라 소리가 안 나면
   `TonalBuzzer`로 교체 필요.
 
-## 3. 동작 확인 LED — GPIO27 (물리 13번)
+## 3. 단일 상태 LED 사용
 
-```
-GPIO27 (물리 핀 13) ──[저항 220~330Ω]── LED(+, 긴 다리/애노드)
-LED(-, 짧은 다리/캐소드) ──────────────── GND (아무 GND 핀)
-```
-
-- 저항 없이 직결 금지 — LED/GPIO 손상 위험.
-- 평소 고정 점등, 탐지 루프가 3초(기본값) 이상 멈추면 깜빡임으로 전환.
+기존 GPIO24(물리 18번)의 Wi-Fi 상태 LED는 분리하고, GPIO27(물리 13번)의 LED 하나만
+사용한다. GPIO27 LED는 버튼 서비스가 카메라 지표(`device_metrics`)와
+`visionguide-device` 상태, Wi-Fi 연결 상태를 함께 확인해 패턴을 표시한다.
+저항 없이 GPIO에 LED를 직결하지 않는다.
 
 ## 4. 냉각팬 — 5V 직접 연결 또는 GPIO22 스위칭
 
@@ -217,7 +217,7 @@ AS4432-SMD V4 제품 사양은 동작 대역을 `425~525MHz`로 명시하고, �
 
 | AS4432-SMD 패드 | 신호 | Raspberry Pi BCM | 물리 핀 | 연결 목적 |
 |---:|---|---:|---:|---|
-| 1 | GND | — | 9 | 공통 접지 |
+| 1 | GND | — | 30 | 공통 접지 — 버튼·LED·팬 GND와 다른 물리 핀 |
 | 2 | SDN | — | 25 | GND에 연결해 모듈을 항상 활성화 |
 | 3 | NIRQ | 연결 안 함 | — | 현재 direct-mode 드라이버에서 사용하지 않음 |
 | 4 | NSEL/CS | GPIO8 / SPI0_CE0 | 24 | SPI 칩 선택, active-low |
@@ -225,13 +225,13 @@ AS4432-SMD V4 제품 사양은 동작 대역을 `425~525MHz`로 명시하고, �
 | 6 | SDI/MOSI | GPIO10 / SPI0_MOSI | 19 | Pi → 모듈 SPI 데이터 |
 | 7 | SDO/MISO | GPIO9 / SPI0_MISO | 21 | 모듈 → Pi SPI 데이터 |
 | 8 | VCC | 3.3V | 17 | 모듈 전원 |
-| 9 | GPIO2 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
+| 9 | GPIO2 | GPIO23 | 16 | 직접 복조된 RX DATA 출력 |
 | 10 | GPIO1 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
-| 11 | GPIO0 | GPIO23 | 16 | 직접 복조된 RX DATA 입력 |
-| 12 | GND | — | 25 | 공통 접지 |
+| 11 | GPIO0 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
+| 12 | GND | 연결 안 함 | — | 패드 1 GND가 공통 접지 |
 
 ```text
-AS4432-SMD pad 1 GND   ───────── Pi GND  (physical 9)
+AS4432-SMD pad 1 GND   ───────── Pi GND  (physical 30, 버튼·LED·팬 GND와 분리)
 AS4432-SMD pad 2 SDN  ───────── GND     (physical 25, active-low)
 AS4432-SMD pad 3 NIRQ ───────── 연결 안 함
 AS4432-SMD pad 4 NSEL ───────── Pi GPIO8  / physical 24 (SPI0 CE0)
@@ -239,14 +239,14 @@ AS4432-SMD pad 5 SCLK ───────── Pi GPIO11 / physical 23
 AS4432-SMD pad 6 SDI  ───────── Pi GPIO10 / physical 19
 AS4432-SMD pad 7 SDO  ───────── Pi GPIO9  / physical 21
 AS4432-SMD pad 8 VCC  ───────── Pi 3.3V  (physical 17)
-AS4432-SMD pad 9 GPIO2 ──────── 연결 안 함
+AS4432-SMD pad 9 GPIO2 ──────── Pi GPIO23 / physical 16 (RX DATA)
 AS4432-SMD pad 10 GPIO1 ────── 연결 안 함
-AS4432-SMD pad 11 GPIO0 ────── Pi GPIO23 / physical 16 (RX DATA)
-AS4432-SMD pad 12 GND ──────── Pi GND  (physical 25)
+AS4432-SMD pad 11 GPIO0 ────── 연결 안 함
+AS4432-SMD pad 12 GND ──────── 연결 안 함 (pad 1 GND 사용)
 
 ```
 
-`GPIO0`은 카메라 ROI와 연결되는 신호가 아니다. SI4432 direct RX 모드에서
+`GPIO2`는 카메라 ROI와 연결되는 신호가 아니다. SI4432 direct RX 모드에서
 모듈이 출력하는 디지털 데이터 펄스를 GPIO23으로 읽으며, RF 트리거는 전역
 음성 이벤트로 처리된다. 기존 배선의 GPIO4, GPIO17, GPIO22, GPIO24, GPIO25,
 GPIO27과 충돌하지 않는다.
@@ -259,8 +259,11 @@ GPIO27과 충돌하지 않는다.
   `100nF + 10uF` 디커플링을 배치하고, 전원 공급원은 RF 모듈의 순간 전류를
   감당할 수 있어야 한다. Pi의 3.3V 레일을 사용할 때 다른 장치 부하를 함께
   확인한다.
-- SDN을 부유 상태로 두지 말고 GND로 고정한다. NIRQ, GPIO1, GPIO2는 현재
-  프로그램에서 사용하지 않으므로 연결하지 않는다.
+- SDN을 부유 상태로 두지 말고 물리 25번 GND로 고정한다. GPIO0과 GPIO1은 현재
+  프로그램에서 사용하지 않으므로 연결하지 않는다. GPIO2는 RX DATA 출력으로
+  GPIO23에 연결한다. 패드 12 GND는 패드 1 GND가 연결되어 있으면 생략할 수 있다.
+  패드 1 GND는 물리 30번을 사용해 버튼, LED, 팬이 사용하는 물리 GND 핀과 겹치지 않게 한다.
+  물리 30번과 25번을 포함한 Pi의 GND 핀은 전기적으로 공통이다.
 - 안테나는 금속물과 케이스에서 떨어뜨리고 외부로 세운다. 433MHz용 스프링
   안테나를 358.5MHz에서 그대로 사용하지 말고, 목표 주파수에 맞는 안테나와
   50Ω RF 매칭을 사용한다.
@@ -286,10 +289,10 @@ python device/camera_live_pi.py --headless --port 8080 --rf-config rf_config.jso
 스피커는 USB-A를 전원으로만 사용하고, 음성 신호는 Pi의 3.5mm 오디오 잭으로 출력한다. 음성 재생 순서는 다음과 같다.
 
 ```text
-USB 2.0 전원 ON → 0.3초 안정화 → 음성 재생 → 재생 프로세스 종료 즉시 → USB 2.0 전원 OFF
+서비스 시작 시 USB 2.0 전원 ON → 0.3초 안정화 → 이후 음성 재생
 ```
 
-감지나 음성 재생 요청이 없을 때는 서비스 시작 시 USB 전원을 OFF로 초기화하고 계속 OFF 상태를 유지한다.
+감지나 음성 재생 요청이 없어도 스피커 전원은 계속 ON 상태를 유지한다.
 
 현재 Pi 서비스는 320×320 `v4_320` 모델의 CPU용 `best_int8.tflite`를 사용한다. `best_int8_edgetpu.tflite`는 Coral TPU 전용 컴파일 파일이므로 TPU를 사용하지 않는 구성에서는 선택하지 않는다.
 
@@ -300,6 +303,7 @@ Pi 4 본체 USB 2.0 포트는 USB 3.0 허브와 전원 그룹을 공유하므로
 ```ini
 VISIONGUIDE_USB_AUDIO_HUB=1-1
 VISIONGUIDE_USB_AUDIO_SETTLE=0.3
+VISIONGUIDE_USB_AUDIO_ALWAYS_ON=1
 ```
 
 `sudo uhubctl`로 실제 USB 2.0 허브 위치와 전원 전환 지원 여부를 먼저 확인한다. 전원 제어가 실패해도 음성 재생은 중단하지 않고 경고 로그를 남긴다.

@@ -58,6 +58,10 @@ def effective_status(device: Device, buffered: Optional[dict]) -> str:
     동안 "꺼진 기기"로 보인다. 저장은 여전히 배치로 하되 **응답은 지금 아는 것**을
     말한다.
     """
+    if device.status == "offline" and (not buffered or is_stale(buffered.get("updated_at"))):
+        return "offline"
+    if device.status == "warning":
+        return "warning"
     if buffered and not is_stale(buffered.get("updated_at")):
         return buffered.get("status") or "online"
     return device.status

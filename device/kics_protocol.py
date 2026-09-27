@@ -46,12 +46,12 @@ def decode_pulse_train(
     durations_us: list[float] | tuple[float, ...],
     *,
     tolerance: float = PULSE_TOLERANCE,
-    expected_address: int = KICS_COMMON_ADDRESS,
+    expected_address: int | None = KICS_COMMON_ADDRESS,
     valid_data_codes: frozenset[int] = KICS_VALID_DATA_CODES,
 ) -> KicsPacket | None:
     """Decode one frame, allowing leading/trailing GPIO edge noise."""
 
-    if not 0 <= expected_address < 64:
+    if expected_address is not None and not 0 <= expected_address < 64:
         raise ValueError("expected_address must be a 6-bit value")
     if not 0 < tolerance < 1:
         raise ValueError("tolerance must be between 0 and 1")
@@ -84,7 +84,9 @@ def decode_pulse_train(
         for bit in bits[6:]:
             data = (data << 1) | bit
 
-        if address != expected_address or data not in valid_data_codes:
+        if expected_address is not None and address != expected_address:
+            continue
+        if data not in valid_data_codes:
             continue
         kind = "location" if data == KICS_LOCATION_CODE else "signal"
         return KicsPacket(address=address, data=data, kind=kind)
@@ -99,7 +101,7 @@ class KicsPulseDecoder:
         *,
         tolerance: float = PULSE_TOLERANCE,
         timeout_us: float = 25_000.0,
-        expected_address: int = KICS_COMMON_ADDRESS,
+        expected_address: int | None = KICS_COMMON_ADDRESS,
         valid_data_codes: frozenset[int] = KICS_VALID_DATA_CODES,
     ) -> None:
         self.tolerance = tolerance

@@ -10,6 +10,7 @@ from .routers import auth, devices, cameras, rois, events, ws, stats, audio, sch
 from .services.heartbeat_service import bulk_flush_heartbeats
 from .services.monitor_service import broadcast_camera_alerts, sweep_offline_devices
 from .services.foot_traffic_puller import PULL_INTERVAL_SEC, pull_once
+from .services.stream_fanout import stream_fanout
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,9 @@ async def lifespan(app: FastAPI):
     async def _flush_and_sweep():
         # 순서에 의미가 있다: 버퍼를 DB에 내린 뒤에 생사를 판정해야 방금 도착한
         # 하트비트가 반영된 last_seen을 본다.
-        await bulk_flush_heartbeats()
         await sweep_offline_devices()
         await broadcast_camera_alerts()
+        await bulk_flush_heartbeats()
 
     tasks = [
         asyncio.create_task(_loop("heartbeat-flush", 30, _flush_and_sweep)),
@@ -55,6 +56,8 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+
+    await stream_fanout.close()
 
     # 고아 데이터 증발 방어 — 마지막 강제 플러시
     await bulk_flush_heartbeats()

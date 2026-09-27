@@ -25,6 +25,22 @@ def test_usb_audio_power_runs_sudo_uhubctl(monkeypatch):
     ]
 
 
+def test_wav_playback_selects_headphones_alsa_device(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(at, "_ALSA_DEVICE", "plughw:Headphones,0")
+    monkeypatch.setattr(at.shutil, "which", lambda name: "/usr/bin/aplay" if name == "aplay" else None)
+    monkeypatch.setattr(at.subprocess, "run", fake_run)
+
+    at.AudioPlayer._play_subprocess(None, "/tmp/announcement.wav")
+
+    assert calls == [["aplay", "-q", "-D", "plughw:Headphones,0", "/tmp/announcement.wav"]]
+
+
 def test_audio_player_powers_speaker_on_for_playback_and_off_after(monkeypatch):
     events = []
     finished = threading.Event()
@@ -82,3 +98,31 @@ def test_audio_player_keeps_playing_when_usb_power_on_fails(monkeypatch):
 
     assert finished.wait(1.0)
     assert events == ["off", "on", ("play", "announcement.mp3")]
+
+
+def test_audio_player_keeps_speaker_on_between_announcements(monkeypatch):
+    events = []
+    finished = threading.Event()
+
+    class AlwaysOnPower:
+        settle_seconds = 0.0
+        always_on = True
+
+        def power_on(self):
+            events.append("on")
+            return True
+
+        def power_off(self):
+            events.append("off")
+            return True
+
+    def fake_play(path):
+        events.append(("play", path))
+
+    monkeypatch.setattr(at, "_CLI_PLAYER", None)
+    player = at.AudioPlayer(usb_power=AlwaysOnPower())
+    monkeypatch.setattr(player, "_play_pygame", staticmethod(fake_play))
+    player.play("announcement.mp3", on_done=finished.set)
+
+    assert finished.wait(1.0)
+    assert events == ["on", ("play", "announcement.mp3")]

@@ -28,6 +28,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(srv, "audio_dir", tmp_path / "audio")
     monkeypatch.setattr(srv, "traffic_db_path", tmp_path / "foot_traffic.db")
     monkeypatch.setattr(srv, "camera_config_path", tmp_path / "camera_config.json")
+    monkeypatch.setattr(srv, "identity_path", tmp_path / "device_identity.json")
     return TestClient(srv.app)
 
 
@@ -35,6 +36,24 @@ def test_get_rois_empty_by_default(client):
     res = client.get("/api/rois")
     assert res.status_code == 200
     assert res.json() == {"rois": []}
+
+
+def test_pairing_page_is_available_in_api_only_mode(client, monkeypatch):
+    monkeypatch.setattr(srv, "api_only", True)
+
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 307
+    assert root.headers["location"] == "/pairing"
+
+    page = client.get("/pairing")
+    assert page.status_code == 200
+    assert "VisionGuide Wi-Fi" in page.text
+
+
+def test_captive_portal_redirects_to_pairing_page(client):
+    response = client.get("/generate_204", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://192.168.4.1:5000/pairing"
 
 
 def test_post_rois_valid_polygon_succeeds(client):
@@ -158,6 +177,39 @@ def test_get_device_status_returns_expected_keys(client):
     assert res.status_code == 200
     body = res.json()
     assert set(body) == {"uptime_seconds", "cpu_temp_c", "load_avg", "mem_used_mb", "mem_total_mb"}
+
+
+def test_identity_bootstrap_does_not_require_pairing_token(client):
+    payload = {
+        "device_id": "pi-01",
+        "api_key": "vg_secret",
+        "server_url": "http://pc:8000",
+    }
+
+    registered = client.post("/api/identity", json=payload)
+    assert registered.status_code == 200
+    assert registered.json()["usable"] is True
+
+    overwritten = client.post("/api/identity", json={**payload, "device_id": "pi-02"})
+    assert overwritten.status_code == 401
+    assert client.get("/api/identity").json()["device_id"] == "pi-01"
+
+
+def test_identity_reprovision_and_delete_require_current_device_key(client, tmp_path):
+    initial = {
+        "device_id": "pi-01",
+        "api_key": "old-key",
+        "server_url": "http://pc:8000",
+    }
+    assert client.post("/api/identity", json=initial).status_code == 200
+
+    replacement = {**initial, "device_id": "pi-02", "api_key": "new-key"}
+    assert client.post("/api/identity", json=replacement).status_code == 401
+    response = client.post("/api/identity", json=replacement,
+                           headers={"X-Device-Key": "old-key"})
+    assert response.status_code == 200
+    assert client.delete("/api/identity").status_code == 401
+    assert client.delete("/api/identity", headers={"X-Device-Key": "new-key"}).json()["removed"] is True
 
 
 def test_camera_scoped_rois_are_isolated(client):
