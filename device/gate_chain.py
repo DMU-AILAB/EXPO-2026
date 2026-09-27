@@ -46,6 +46,10 @@ __all__ = [
     "GateChain",
 ]
 
+# 마스크 적중을 '트랙당 1회'로 판정하기 위해 기억할 track_id 개수 상한.
+# 넘으면 작은 id 절반을 버린다 — 그 트랙들은 이미 소멸해 다시 나타나지 않는다.
+_MASK_REPORT_MEMORY = 4096
+
 # 지팡이 트랙이 이만큼 연속으로 거의 안 움직이면(SimpleTracker.static_frames)
 # 배경 오탐지(케이블/문틀 경계선 등)로 간주해 ROI 트리거 대상에서 제외한다.
 # 실측 FPS(~8~9)에서 대략 3초 정도에 해당 — 사람이 잠시 멈춰 서서 지팡이를
@@ -92,7 +96,14 @@ class GateChain:
                  entity_tracker: EntityTracker | None = None,
                  use_entity: bool = True,
                  static_suppress_frames: int = STATIC_CANE_SUPPRESS_FRAMES,
-                 moved_min_diag_ratio: float = MOVED_MIN_DIAG_RATIO) -> None:
+                 moved_min_diag_ratio: float = MOVED_MIN_DIAG_RATIO,
+                 static_mask=None,
+                 on_mask_drop=None) -> None:
+        # `static_mask`(device/static_mask.StaticMask)는 **현장에서 학습한 고정 구조물**
+        # 목록이다. None이면 이 게이트가 통째로 비활성이고 동작이 종전과 완전히 같다 —
+        # 기존 기기에는 마스크 파일이 없으므로 이것이 기본 경로다.
+        # `on_mask_drop(track)`은 마스크로 걸러낸 트랙을 **트랙당 1회** 알리는 훅이다
+        # (호출부가 sqlite에 기록한다). 없으면 아무것도 하지 않는다.
         self.require_person = require_person
         self.tracker = tracker if tracker is not None else SimpleTracker()
         # `use_entity=False`는 평가에서 엔티티 레이어의 A/B 기준선을 뽑기 위한 것이다.
@@ -100,6 +111,14 @@ class GateChain:
                                else EntityTracker()) if use_entity else None
         self.static_suppress_frames = static_suppress_frames
         self.moved_min_diag_ratio = moved_min_diag_ratio
+        self.static_mask = static_mask
+        self.on_mask_drop = on_mask_drop
+        # 트랙당 1회만 알리기 위한 기억. **상한을 둔다** — 이 프로젝트는 누적
+        # 컬렉션을 반드시 정리한다(`simple_tracker._graves`는 revive_sec로 만료,
+        # `pedestrian_entity._by_person`·`audio_trigger`는 del). track_id는
+        # `SimpleTracker._next_id`로 단조 증가하므로, 넘치면 **작은 id부터** 버리면
+        # 된다 — 오래된 트랙은 이미 사라져 다시 보고될 일이 없다.
+        self._mask_reported: set[int] = set()
 
     def step(self, dets: list[dict], frame_shape: tuple[int, int],
              now: float) -> GateResult:
@@ -118,11 +137,55 @@ class GateChain:
         cane = [t for t in all_cane
                 if t.get("static_frames", 0) < self.static_suppress_frames]
 
+        # 1-B. 구조물 마스크 — 현장에서 학습한 고정물이면 **움직임을 증명할 때까지** 막는다.
+        #
+        # 정지 억제(1)는 `static_frames`가 24가 될 때까지 약 2초가 걸리는데 디바운스는
+        # 0.5초라, 그 사이에 이미 음성이 나간다. 움직임 게이트(2)가 그 공백을 메우는
+        # 우회책이었고, 마스크는 **사전 지식으로 첫 프레임부터** 막는 직접 해법이다.
+        #
+        # ★ `max_disp`를 함께 보는 것이 핵심이다. 마스크는 "이 자리·이 크기는 고정물로
+        # 확인됐다"는 사전확률일 뿐이라, **실제로 움직인 트랙은 되살린다.** 기둥 앞을
+        # 지나가는 사람이나 지팡이 사용자가 그 덕에 살아난다. 마스크가 최종 판정이면
+        # 그 자리는 영구 사각지대가 된다.
+        moved_min = ((w ** 2 + h ** 2) ** 0.5) * self.moved_min_diag_ratio
+        if self.static_mask is not None and len(self.static_mask):
+            def _masked(trk) -> bool:
+                if trk.get("max_disp", 0.0) >= moved_min:
+                    return False                    # 움직였다 → 마스크 무효
+                return self.static_mask.matches(trk, w, h)
+
+            kept = []
+            for trk in cane:
+                if not _masked(trk):
+                    kept.append(trk)
+                    continue
+                # 트랙당 1회만 기록한다 — 매 프레임 sqlite에 쓰면 탐지 루프가 막힌다
+                # (`fp_hotspots.log_suppressed`와 같은 계약).
+                tid = trk.get("track_id")
+                if self.on_mask_drop is not None and tid not in self._mask_reported:
+                    if len(self._mask_reported) >= _MASK_REPORT_MEMORY:
+                        keep = sorted(self._mask_reported)[_MASK_REPORT_MEMORY // 2:]
+                        self._mask_reported = set(keep)
+                    self._mask_reported.add(tid)
+                    self.on_mask_drop(trk)
+            cane = kept
+            # 사람 트랙에도 적용한다 — 광고판 인물사진 같은 가짜 사람이 사람 동반
+            # 게이트를 대신 통과시켜 근처 지팡이 오탐을 트리거로 만드는 경로가 있다.
+            # 단 **기본값은 지팡이 클래스만 켜는 것**이고(운영자가 목록에서 선택),
+            # 사람 마스크를 켜지 않았다면 여기서 걸리는 것이 없다.
+            dropped_person = {t["track_id"] for t in person_tracks if _masked(t)}
+            if dropped_person:
+                person_tracks = [t for t in person_tracks
+                                 if t["track_id"] not in dropped_person]
+                # `tracks`에서도 빼야 associate_canes가 가짜 사람을 짝으로 쓰지 않는다.
+                # 지팡이 쪽은 위 `cane` 목록이 이미 걸렀으므로 여기서 건드리지 않는다 —
+                # 엔티티 갱신은 `tracks` 전체를 보되 래치 입력은 `cane`만 쓰기 때문이다.
+                tracks = [t for t in tracks if t["track_id"] not in dropped_person]
+
         # 2. 움직임 게이트 — 정지 억제에는 약 2초의 공백이 있다(새 트랙은
         #    static_frames가 0에서 시작). "정지가 증명되기 전까지 통과"를 "움직임이
         #    증명되기 전까지 억제"로 뒤집어 그 공백을 닫는다. 사람이 동반돼도
         #    면제하지 않는다 — 사람 발치의 기둥/난간이 정확히 그 유형이다.
-        moved_min = ((w ** 2 + h ** 2) ** 0.5) * self.moved_min_diag_ratio
         if cane:
             cane = [t for t in cane if t.get("max_disp", 0.0) >= moved_min]
 

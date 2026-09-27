@@ -69,8 +69,24 @@ _SUGGEST_PROMPT = (
 STATIC_DIR = Path(__file__).parent / "static"
 SPLITS = ["train", "val", "test"]
 
-datasets_dir: Path = Path(__file__).resolve().parents[2] / "datasets" / "v1"
+# ★ 기본 작업 대상은 datasets/v2 — 누수 없는 재분할본이고 `--relabel-person`이 적용된
+# 현행 학습 데이터다. v1은 누수된 옛 split이라 여기서 고쳐 봐야 학습에 반영되지 않는다.
+datasets_dir: Path = Path(__file__).resolve().parents[2] / "datasets" / "v2"
 reviewed_path: Path = Path(__file__).parent / "reviewed.json"
+
+# 어떤 이미지를 작업 대기열에 올릴지.
+#   cane_only     — 지팡이만 있고 사람 라벨이 없는 이미지 (이 툴의 원래 용도)
+#   all           — 라벨 파일이 있는 모든 이미지 (전수 검수)
+#   queue         — 외부 감사 결과(JSON)가 지목한 이미지만, 지정된 순서대로
+target_mode: str = "cane_only"
+
+# 새 이미지를 열 때 자동 검출을 미리 얹을지 (기존 라벨과 겹치는 것은 빼고)
+auto_suggest: bool = True
+queue_path: Path | None = None
+
+# ★ 기본적으로 train만 연다. val/test 라벨을 고치면 그때까지 측정한 모든 지표
+# (리포트 §13~§15)와 비교가 깨진다 — 잣대를 바꾸면 이전 결과와 나란히 놓을 수 없다.
+allowed_splits: list[str] = ["train"]
 
 app = FastAPI(title="VisionGuide Cane-Dataset Person Labeling Tool",
               docs_url=None, redoc_url=None, openapi_url=None)
@@ -142,20 +158,72 @@ def _save_reviewed() -> None:
         raise
 
 
+def _find_image(split: str, stem: str) -> str | None:
+    """라벨 stem에 대응하는 이미지 파일명. 확장자를 하드코딩하지 않는다.
+
+    현재 데이터셋은 전수 `.jpg`지만(형식 감사 확인), 나중에 다른 확장자가 섞이면
+    조용히 대기열에서 빠져 **검수했다고 착각하게 된다.**
+    """
+    idir = datasets_dir / split / "images"
+    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp"):
+        if (idir / (stem + ext)).exists():
+            return stem + ext
+    return None
+
+
 def _scan_targets() -> list[dict]:
-    """cane_only(class 0만 있고 class 1은 없는) 이미지 목록을 전체 split에서 스캔."""
+    """`target_mode`에 따라 작업 대기열을 만든다."""
+    if target_mode == "queue":
+        return _scan_from_queue()
+
     targets = []
     for split in SPLITS:
+        if split not in allowed_splits:
+            continue
         labels_dir = datasets_dir / split / "labels"
         if not labels_dir.exists():
             continue
         for label_file in sorted(labels_dir.glob("*.txt")):
-            boxes = _parse_label_file(label_file)
-            classes = {b[0] for b in boxes}
-            if 0 in classes and 1 not in classes:
-                image_file = label_file.stem + ".jpg"
-                if (datasets_dir / split / "images" / image_file).exists():
-                    targets.append({"split": split, "filename": image_file})
+            if target_mode == "cane_only":
+                classes = {b[0] for b in _parse_label_file(label_file)}
+                if not (0 in classes and 1 not in classes):
+                    continue
+            image_file = _find_image(split, label_file.stem)
+            if image_file:
+                targets.append({"split": split, "filename": image_file})
+    return targets
+
+
+def _scan_from_queue() -> list[dict]:
+    """감사 결과 JSON이 지목한 이미지만, **그 파일의 순서 그대로** 대기열에 올린다.
+
+    `person_audit.py` 같은 도구가 "여기에 라벨이 빠졌다"를 이미 계산해 두었다면,
+    그 우선순위(예: 누락 박스가 많은 순)를 사람이 그대로 따라가는 것이 가장 빠르다.
+    형식: [{"img": "<파일명>", "split": "train"}, ...]  (split 생략 시 allowed_splits[0])
+    """
+    if queue_path is None or not queue_path.exists():
+        return []
+    try:
+        rows = json.loads(queue_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    default_split = allowed_splits[0] if allowed_splits else "train"
+    targets, seen = [], set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        split = row.get("split", default_split)
+        name = row.get("img") or row.get("filename")
+        if not name or split not in allowed_splits:
+            continue
+        key = f"{split}/{name}"
+        if key in seen:
+            continue
+        stem = Path(name).stem
+        image_file = _find_image(split, stem)
+        if image_file and (datasets_dir / split / "labels" / f"{stem}.txt").exists():
+            seen.add(key)
+            targets.append({"split": split, "filename": image_file})
     return targets
 
 
@@ -163,17 +231,52 @@ def _key(split: str, filename: str) -> str:
     return f"{split}/{filename}"
 
 
+def _iou(a: list[float], b: list[float]) -> float:
+    """정규화 [cx, cy, w, h] 두 박스의 IoU."""
+    ax1, ay1, ax2, ay2 = a[0] - a[2] / 2, a[1] - a[3] / 2, a[0] + a[2] / 2, a[1] + a[3] / 2
+    bx1, by1, bx2, by2 = b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2
+    x1, y1 = max(ax1, bx1), max(ay1, by1)
+    x2, y2 = min(ax2, bx2), min(ay2, by2)
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    inter = (x2 - x1) * (y2 - y1)
+    return inter / (a[2] * a[3] + b[2] * b[3] - inter)
+
+
+# 이 값을 넘게 겹치면 "이미 라벨된 것"으로 보고 제안에서 뺀다. person_audit.py와 같은 기준.
+SUGGEST_DEDUP_IOU = 0.3
+
+
+def _new_suggestions(split: str, filename: str, existing: list[list[float]]) -> list[list[float]]:
+    """기존 사람 라벨과 겹치지 않는 자동 검출만 돌려준다.
+
+    **겹침 제거가 핵심이다.** 일부만 라벨된 이미지(사람 5명 중 3명만 라벨)에서
+    제안을 그대로 얹으면 이미 있는 3명 위에 박스가 중복으로 쌓인다. 빠진 사람만
+    주황색으로 떠야 사람이 무엇을 확인해야 하는지 한눈에 보인다.
+    """
+    try:
+        boxes = _call_local_yolo_suggest(_image_path(split, filename))
+    except Exception:
+        return []                       # 제안은 부가 기능 — 실패해도 작업을 막지 않는다
+    return [b for b in boxes if all(_iou(b, e) < SUGGEST_DEDUP_IOU for e in existing)]
+
+
 def _build_item(split: str, filename: str) -> dict:
     label_path = _label_path(split, filename)
     boxes = _parse_label_file(label_path)
     cane_boxes = [list(b[1:]) for b in boxes if b[0] == 0]
     person_boxes = [list(b[1:]) for b in boxes if b[0] == 1]
+    reviewed = _reviewed.get(_key(split, filename), False)
+    # 아직 검수 전인 이미지만 제안을 미리 얹는다 — 이미 사람이 확인한 이미지를 다시
+    # 열었을 때(이전 버튼) 지웠던 제안이 되살아나면 작업을 되돌리는 셈이 된다.
+    auto = [] if (reviewed or not auto_suggest) else _new_suggestions(split, filename, person_boxes)
     return {
         "split": split,
         "filename": filename,
         "cane_boxes": cane_boxes,
         "person_boxes": person_boxes,
-        "reviewed": _reviewed.get(_key(split, filename), False),
+        "auto_boxes": auto,
+        "reviewed": reviewed,
     }
 
 
@@ -321,21 +424,33 @@ async def suggest_person_boxes(index: int, provider: str = "local_yolo"):
 class SavePayload(BaseModel):
     split: str
     filename: str
-    person_boxes: list[list[float]]  # [[cx, cy, w, h], ...] 정규화 0~1
+    person_boxes: list[list[float]]              # [[cx, cy, w, h], ...] 정규화 0~1
+    # 지팡이 박스. **None이면 기존 class 0 라인을 그대로 보존**한다 — 지팡이를 편집하지
+    # 않는 클라이언트가 실수로 지워 버리는 일이 없도록 "미전달"과 "빈 목록"을 구분한다.
+    cane_boxes: list[list[float]] | None = None
 
 
 @app.post("/api/save")
 async def save_item(payload: SavePayload):
     _ensure_loaded()
+    # 잣대 보호 — val/test를 열지 않는 것이 기본이지만, 저장 경로에서도 한 번 더 막는다.
+    if payload.split not in allowed_splits:
+        raise HTTPException(status_code=403,
+                            detail=f"'{payload.split}' split은 편집이 허용되지 않았다 "
+                                   f"(허용: {allowed_splits}). val/test를 고치면 "
+                                   f"이전 평가 결과와 비교가 깨진다.")
     label_path = _label_path(payload.split, payload.filename)
     if not label_path.exists():
         raise HTTPException(status_code=404, detail="label file not found")
 
     existing = _parse_label_file(label_path)
-    kept_lines = [f"{c} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
-                  for c, cx, cy, w, h in existing if c != 1]
-    new_lines = [f"1 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}" for cx, cy, w, h in payload.person_boxes]
-    lines = kept_lines + new_lines
+    if payload.cane_boxes is None:
+        cane_lines = [f"{c} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
+                      for c, cx, cy, w, h in existing if c != 1]
+    else:
+        cane_lines = [f"0 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}" for cx, cy, w, h in payload.cane_boxes]
+    person_lines = [f"1 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}" for cx, cy, w, h in payload.person_boxes]
+    lines = cane_lines + person_lines
 
     fd, tmp = tempfile.mkstemp(dir=label_path.parent, suffix=".tmp")
     try:
@@ -360,13 +475,63 @@ async def save_item(payload: SavePayload):
 if __name__ == "__main__":
     import uvicorn
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--datasets-dir", default=str(Path(__file__).resolve().parents[2] / "datasets" / "v1"))
+    parser = argparse.ArgumentParser(
+        description="지팡이 데이터셋 라벨 보완/검수 툴",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""예시:
+  # 감사가 지목한 이미지만 (권장) — 누락이 많은 순서대로
+  python apps/label_tool/server.py --targets queue --queue missing.json
+
+  # 전수 검수
+  python apps/label_tool/server.py --targets all
+
+  # 원래 용도 (지팡이만 있고 사람 라벨이 없는 이미지)
+  python apps/label_tool/server.py --targets cane_only
+""")
+    parser.add_argument("--datasets-dir",
+                        default=str(Path(__file__).resolve().parents[2] / "datasets" / "v2"),
+                        help="작업할 데이터셋 루트 (기본: datasets/v2 — 현행 학습 데이터)")
+    parser.add_argument("--targets", choices=("cane_only", "all", "queue"), default="cane_only",
+                        help="대기열 구성 방식 (기본: cane_only)")
+    parser.add_argument("--queue", default=None,
+                        help="--targets queue에서 쓸 JSON: [{\"img\":..., \"split\":...}, ...]")
+    parser.add_argument("--splits", default="train",
+                        help="편집을 허용할 split, 쉼표 구분 (기본: train). "
+                             "**val/test를 열면 평가 잣대가 바뀌어 이전 결과와 비교가 깨진다**")
+    parser.add_argument("--no-auto-suggest", action="store_true",
+                        help="새 이미지에서 자동 검출을 미리 얹지 않는다")
+    parser.add_argument("--reviewed", default=None,
+                        help="검토 이력 파일 (기본: apps/label_tool/reviewed.json). "
+                             "대기열을 바꿔 작업할 때는 따로 두는 편이 헷갈리지 않는다")
     parser.add_argument("--port", type=int, default=5050)
     args = parser.parse_args()
 
+    target_mode = args.targets
+    auto_suggest = not args.no_auto_suggest
+    allowed_splits = [s.strip() for s in args.splits.split(",") if s.strip()]
+    if args.queue:
+        queue_path = Path(args.queue).expanduser().resolve()
+    if args.reviewed:
+        reviewed_path = Path(args.reviewed).expanduser().resolve()
+    if target_mode == "queue" and queue_path is None:
+        parser.error("--targets queue 를 쓰려면 --queue <json> 이 필요하다")
+
+    bad = [s for s in allowed_splits if s not in SPLITS]
+    if bad:
+        parser.error(f"알 수 없는 split: {bad} (가능: {SPLITS})")
+    if set(allowed_splits) - {"train"}:
+        print(f"[WARN] train 이외의 split을 편집 대상으로 열었다: {allowed_splits}\n"
+              f"       val/test 라벨을 고치면 리포트 §13~§15의 지표와 비교가 깨진다.")
+
     datasets_dir = Path(args.datasets_dir).resolve()
-    print(f"[Label Tool] datasets_dir: {datasets_dir}")
-    print(f"[Label Tool] reviewed_path: {reviewed_path}")
+    _ensure_loaded()
+    print(f"[Label Tool] datasets_dir : {datasets_dir}")
+    print(f"[Label Tool] 대기열 방식  : {target_mode}"
+          + (f"  ({queue_path})" if target_mode == "queue" else ""))
+    print(f"[Label Tool] 편집 허용    : {allowed_splits}")
+    print(f"[Label Tool] 자동 제안    : {'켜짐 (기존 라벨과 겹치는 것은 제외)' if auto_suggest else '꺼짐'}")
+    print(f"[Label Tool] 대상 이미지  : {len(_targets)}장")
+    print(f"[Label Tool] reviewed     : {reviewed_path}")
+    print(f"[Label Tool] → http://localhost:{args.port}")
 
     uvicorn.run(app, host="0.0.0.0", port=args.port)
