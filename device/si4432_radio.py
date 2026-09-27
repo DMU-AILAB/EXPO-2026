@@ -18,6 +18,7 @@ REG_GPIO2 = 0x0D
 REG_IO_PORT = 0x0E
 REG_IF_FILTER = 0x1C
 REG_AFC_OVERRIDE = 0x1D
+REG_AFC_LIMITER = 0x2A
 REG_RX_OVERSAMPLE = 0x20
 REG_RX_OFFSET_2 = 0x21
 REG_RX_OFFSET_1 = 0x22
@@ -40,26 +41,40 @@ OP_RX_FIFO_CLEAR = 0x02
 OP_SW_RESET = 0x80
 GPIO_RX_DATA = 0x14
 GPIO_RX_STATE = 0x15
+KICS_AFC_LIMITER = 0x01  # low-band AFC pull-in: +/-625 Hz
+MIN_FREQUENCY_MHZ = 240.0
+LOW_BAND_MAX_MHZ = 480.0
+MAX_FREQUENCY_MHZ = 930.0
 
 
 def frequency_registers(frequency_mhz: float) -> tuple[int, int, int]:
-    """Return (band, fc_high, fc_low) for the Si4432 low-band synthesizer."""
+    """Return (band, fc_high, fc_low) for the Si4432 synthesizer.
 
-    if not 240.0 <= frequency_mhz < 480.0:
-        raise ValueError("Si4432 low-band frequency must be in [240, 480) MHz")
-    fb = int(frequency_mhz // 10) - 24
-    fractional = (frequency_mhz / 10.0) - 24.0 - fb
+    The Si4432 uses a divide-by-two output path in high-band mode. The
+    returned band byte includes the ``hbsel`` bit required by register 0x75.
+    """
+
+    if not MIN_FREQUENCY_MHZ <= frequency_mhz <= MAX_FREQUENCY_MHZ:
+        raise ValueError(
+            f"Si4432 frequency must be in [{MIN_FREQUENCY_MHZ:g}, "
+            f"{MAX_FREQUENCY_MHZ:g}] MHz"
+        )
+
+    high_band = frequency_mhz >= LOW_BAND_MAX_MHZ
+    band_multiplier = 2.0 if high_band else 1.0
+    fb = int(frequency_mhz // (10.0 * band_multiplier)) - 24
+    fractional = (frequency_mhz / (10.0 * band_multiplier)) - 24.0 - fb
     fc = round(fractional * 64_000)
     if fc >= 64_000:
         fb += 1
         fc = 0
     if not 0 <= fb <= 23:
         raise ValueError("frequency is outside the supported band")
-    return fb, (fc >> 8) & 0xFF, fc & 0xFF
+    return (fb | (0x20 if high_band else 0x00)), (fc >> 8) & 0xFF, fc & 0xFF
 
 
 class Si4432Radio:
-    """SPI register driver configured for direct RX data on GPIO0.
+    """SPI register driver configured for direct RX data on GPIO2.
 
     The KICS standard's pulse timing is decoded by the host, so the chip is
     deliberately used in direct mode instead of the EZMAC packet handler.
@@ -110,7 +125,7 @@ class Si4432Radio:
             raise ValueError("deviation is outside the Si4432 register range")
 
         # Disable interrupt sources: the host reads direct demodulated data
-        # from GPIO0 and does not use the FIFO packet handler.
+        # from GPIO2 and does not use the FIFO packet handler.
         self.write_register(REG_INT_ENABLE_1, 0x00)
         self.write_register(REG_INT_ENABLE_2, 0x00)
         self.read_register(REG_INT_STATUS_1)
@@ -119,9 +134,11 @@ class Si4432Radio:
         self.write_register(REG_OP_MODE_2, OP_RX_FIFO_CLEAR)
         self.write_register(REG_OP_MODE_2, 0x00)
 
-        self.write_register(REG_GPIO0, GPIO_RX_DATA)
-        self.write_register(REG_GPIO1, GPIO_RX_STATE)
-        self.write_register(REG_GPIO2, 0x00)
+        # AS4432-SMD pad 9 (GPIO2) is wired to Pi BCM23 for RX DATA.
+        # GPIO0 (pad 11) and GPIO1 (pad 10) remain unconnected.
+        self.write_register(REG_GPIO0, 0x00)
+        self.write_register(REG_GPIO1, 0x00)
+        self.write_register(REG_GPIO2, GPIO_RX_DATA)
         self.write_register(REG_IO_PORT, 0x00)
 
         # KICS uses a 2.5 kHz peak FSK deviation with very slow pulse
@@ -129,6 +146,9 @@ class Si4432Radio:
         # error and the specified +/-500 Hz carrier tolerance.
         self.write_register(REG_IF_FILTER, 0x33)
         self.write_register(REG_AFC_OVERRIDE, 0x44)
+        # KICS specifies 358.5000 MHz +/-500 Hz. In low band each AFC
+        # limiter step is 625 Hz, so one step covers the complete tolerance.
+        self.write_register(REG_AFC_LIMITER, KICS_AFC_LIMITER)
 
         # FSK, direct mode via GPIO, MSB-first/no host-side Manchester.
         self.write_register(REG_MODULATION_1, 0x00)

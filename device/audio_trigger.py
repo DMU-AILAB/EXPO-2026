@@ -368,7 +368,7 @@ class AudioPlayer:
                     usb_powered = self._usb_power.power_on()
                     if usb_powered and self._usb_power.settle_seconds:
                         time.sleep(self._usb_power.settle_seconds)
-                if _CLI_PLAYER:
+                if _CLI_PLAYER or (path.lower().endswith(".wav") and (shutil.which("aplay") or shutil.which("ffplay"))):
                     self._play_subprocess(path)
                 else:
                     self._play_pygame(path)
@@ -386,7 +386,14 @@ class AudioPlayer:
                         print(f"[WARN] AudioPlayer on_done 콜백 오류: {exc}")
 
     def _play_subprocess(self, path: str) -> None:
-        if _CLI_PLAYER == "mpg123":
+        if path.lower().endswith(".wav") and shutil.which("aplay"):
+            cmd = ["aplay", "-q"]
+            if _ALSA_DEVICE:
+                cmd.extend(["-D", _ALSA_DEVICE])
+            cmd.append(path)
+        elif path.lower().endswith(".wav") and shutil.which("ffplay"):
+            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path]
+        elif _CLI_PLAYER == "mpg123":
             # -o alsa를 명시하지 않으면 mpg123가 JACK 출력 모듈을 먼저 시도하다
             # "jack server is not running" 에러로 조용히 실패하는 경우가 있다
             # (systemd 시스템 서비스는 로그인 세션의 PipeWire/JACK에 붙을 수 없음).

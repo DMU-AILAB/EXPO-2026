@@ -12,7 +12,7 @@ from typing import Callable
 
 from announcement_router import Announcement, AnnouncementRouter
 from kics_protocol import KICS_FREQUENCY_MHZ, KicsPacket, KicsPulseDecoder
-from si4432_radio import Si4432Radio
+from si4432_radio import MAX_FREQUENCY_MHZ, MIN_FREQUENCY_MHZ, Si4432Radio
 
 
 @dataclass
@@ -27,7 +27,7 @@ class RFConfig:
     data_pin: int = 23
     quiet_timeout_sec: float = 1.0
     pulse_tolerance: float = 0.15
-    expected_address: int = 0
+    expected_address: int | None = 0
     valid_data_codes: tuple[int, ...] = (0x20, 0x10)
     _extra: dict = field(default_factory=dict, repr=False)
 
@@ -55,8 +55,11 @@ def load_rf_config(path: str | Path | None) -> RFConfig:
         config = RFConfig(**values)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"invalid RF config fields: {path}") from exc
-    if config.frequency_mhz != KICS_FREQUENCY_MHZ:
-        raise ValueError("KICS RF frequency must remain 358.5000 MHz")
+    if not MIN_FREQUENCY_MHZ <= config.frequency_mhz <= MAX_FREQUENCY_MHZ:
+        raise ValueError(
+            f"RF frequency must be in [{MIN_FREQUENCY_MHZ:g}, "
+            f"{MAX_FREQUENCY_MHZ:g}] MHz"
+        )
     if config.quiet_timeout_sec <= 0:
         raise ValueError("quiet_timeout_sec must be positive")
     return config
@@ -71,7 +74,15 @@ class _DataPin:
         except ImportError as exc:
             raise RuntimeError("gpiozero is required for Si4432 data GPIO capture") from exc
         self.device = DigitalInputDevice(pin, pull_up=False)
-        self.device.when_changed = lambda _value: on_edge(time.monotonic_ns() / 1000.0)
+
+        # gpiozero exposes separate callbacks for the two edge directions.
+        # ``when_changed`` is not available on DigitalInputDevice in the
+        # Raspberry Pi gpiozero version used by the deployed image.
+        def edge_callback() -> None:
+            on_edge(time.monotonic_ns() / 1000.0)
+
+        self.device.when_activated = edge_callback
+        self.device.when_deactivated = edge_callback
 
     def close(self) -> None:
         self.device.close()
@@ -89,11 +100,13 @@ class RFAudioTrigger:
         *,
         radio_factory: Callable[..., Si4432Radio] = Si4432Radio,
         data_pin_factory: Callable[..., _DataPin] = _DataPin,
+        packet_callback: Callable[[KicsPacket], None] | None = None,
     ) -> None:
         self.config = config
         self.router = router
         self.radio_factory = radio_factory
         self.data_pin_factory = data_pin_factory
+        self.packet_callback = packet_callback
         self.radio: Si4432Radio | None = None
         self.data_pin = None
         self.decoder = KicsPulseDecoder(
@@ -107,6 +120,7 @@ class RFAudioTrigger:
         self._lock = threading.Lock()
         self._last_valid_packet = 0.0
         self._active = False
+        self.edge_count = 0
 
     def start(self) -> bool:
         if not self.config.enabled:
@@ -144,6 +158,7 @@ class RFAudioTrigger:
                 self.radio = None
 
     def _on_edge(self, timestamp_us: float) -> None:
+        self.edge_count += 1
         try:
             self._edges.put_nowait(float(timestamp_us))
         except queue.Full:
@@ -158,6 +173,11 @@ class RFAudioTrigger:
             self._active = True
 
         print(f"[TRIGGER][RF] KICS {packet.kind} -> audio={self.config.audio_file}")
+        if self.packet_callback is not None:
+            try:
+                self.packet_callback(packet)
+            except Exception as exc:
+                print(f"[WARN] RF packet callback failed: {exc}")
         self.router.submit(Announcement(
             source="rf",
             trigger_id=self.event_name,

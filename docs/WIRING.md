@@ -217,7 +217,7 @@ AS4432-SMD V4 제품 사양은 동작 대역을 `425~525MHz`로 명시하고, �
 
 | AS4432-SMD 패드 | 신호 | Raspberry Pi BCM | 물리 핀 | 연결 목적 |
 |---:|---|---:|---:|---|
-| 1 | GND | — | 9 | 공통 접지 |
+| 1 | GND | — | 30 | 공통 접지 — 버튼·LED·팬 GND와 다른 물리 핀 |
 | 2 | SDN | — | 25 | GND에 연결해 모듈을 항상 활성화 |
 | 3 | NIRQ | 연결 안 함 | — | 현재 direct-mode 드라이버에서 사용하지 않음 |
 | 4 | NSEL/CS | GPIO8 / SPI0_CE0 | 24 | SPI 칩 선택, active-low |
@@ -225,13 +225,13 @@ AS4432-SMD V4 제품 사양은 동작 대역을 `425~525MHz`로 명시하고, �
 | 6 | SDI/MOSI | GPIO10 / SPI0_MOSI | 19 | Pi → 모듈 SPI 데이터 |
 | 7 | SDO/MISO | GPIO9 / SPI0_MISO | 21 | 모듈 → Pi SPI 데이터 |
 | 8 | VCC | 3.3V | 17 | 모듈 전원 |
-| 9 | GPIO2 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
+| 9 | GPIO2 | GPIO23 | 16 | 직접 복조된 RX DATA 출력 |
 | 10 | GPIO1 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
-| 11 | GPIO0 | GPIO23 | 16 | 직접 복조된 RX DATA 입력 |
-| 12 | GND | — | 25 | 공통 접지 |
+| 11 | GPIO0 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
+| 12 | GND | 연결 안 함 | — | 패드 1 GND가 공통 접지 |
 
 ```text
-AS4432-SMD pad 1 GND   ───────── Pi GND  (physical 9)
+AS4432-SMD pad 1 GND   ───────── Pi GND  (physical 30, 버튼·LED·팬 GND와 분리)
 AS4432-SMD pad 2 SDN  ───────── GND     (physical 25, active-low)
 AS4432-SMD pad 3 NIRQ ───────── 연결 안 함
 AS4432-SMD pad 4 NSEL ───────── Pi GPIO8  / physical 24 (SPI0 CE0)
@@ -239,14 +239,14 @@ AS4432-SMD pad 5 SCLK ───────── Pi GPIO11 / physical 23
 AS4432-SMD pad 6 SDI  ───────── Pi GPIO10 / physical 19
 AS4432-SMD pad 7 SDO  ───────── Pi GPIO9  / physical 21
 AS4432-SMD pad 8 VCC  ───────── Pi 3.3V  (physical 17)
-AS4432-SMD pad 9 GPIO2 ──────── 연결 안 함
+AS4432-SMD pad 9 GPIO2 ──────── Pi GPIO23 / physical 16 (RX DATA)
 AS4432-SMD pad 10 GPIO1 ────── 연결 안 함
-AS4432-SMD pad 11 GPIO0 ────── Pi GPIO23 / physical 16 (RX DATA)
-AS4432-SMD pad 12 GND ──────── Pi GND  (physical 25)
+AS4432-SMD pad 11 GPIO0 ────── 연결 안 함
+AS4432-SMD pad 12 GND ──────── 연결 안 함 (pad 1 GND 사용)
 
 ```
 
-`GPIO0`은 카메라 ROI와 연결되는 신호가 아니다. SI4432 direct RX 모드에서
+`GPIO2`는 카메라 ROI와 연결되는 신호가 아니다. SI4432 direct RX 모드에서
 모듈이 출력하는 디지털 데이터 펄스를 GPIO23으로 읽으며, RF 트리거는 전역
 음성 이벤트로 처리된다. 기존 배선의 GPIO4, GPIO17, GPIO22, GPIO24, GPIO25,
 GPIO27과 충돌하지 않는다.
@@ -259,8 +259,11 @@ GPIO27과 충돌하지 않는다.
   `100nF + 10uF` 디커플링을 배치하고, 전원 공급원은 RF 모듈의 순간 전류를
   감당할 수 있어야 한다. Pi의 3.3V 레일을 사용할 때 다른 장치 부하를 함께
   확인한다.
-- SDN을 부유 상태로 두지 말고 GND로 고정한다. NIRQ, GPIO1, GPIO2는 현재
-  프로그램에서 사용하지 않으므로 연결하지 않는다.
+- SDN을 부유 상태로 두지 말고 물리 25번 GND로 고정한다. GPIO0과 GPIO1은 현재
+  프로그램에서 사용하지 않으므로 연결하지 않는다. GPIO2는 RX DATA 출력으로
+  GPIO23에 연결한다. 패드 12 GND는 패드 1 GND가 연결되어 있으면 생략할 수 있다.
+  패드 1 GND는 물리 30번을 사용해 버튼, LED, 팬이 사용하는 물리 GND 핀과 겹치지 않게 한다.
+  물리 30번과 25번을 포함한 Pi의 GND 핀은 전기적으로 공통이다.
 - 안테나는 금속물과 케이스에서 떨어뜨리고 외부로 세운다. 433MHz용 스프링
   안테나를 358.5MHz에서 그대로 사용하지 말고, 목표 주파수에 맞는 안테나와
   50Ω RF 매칭을 사용한다.

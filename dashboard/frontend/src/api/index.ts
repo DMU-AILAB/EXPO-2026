@@ -132,6 +132,13 @@ export const uploadAudio = (file: File, label?: string) => {
   return request<AudioFile>('/api/audio/upload', { method: 'POST', form })
 }
 
+export const generateTts = (body: {
+  text: string
+  label?: string
+  voice?: string
+  rate?: number
+}) => request<AudioFile>('/api/audio/tts', { method: 'POST', body })
+
 // ---------------------------------------------------------------- 예약 재부팅
 
 export const listSchedules = (deviceId: string) =>

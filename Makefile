@@ -36,6 +36,7 @@ DEPLOY_PY = \
 	device/kics_protocol.py \
 	device/si4432_radio.py \
 	device/rf_audio_trigger.py \
+	device/rf_test_mode.py \
 	device/gpio_controls.py \
 	device/fan_controller.py \
 	device/yolo_postprocess.py \

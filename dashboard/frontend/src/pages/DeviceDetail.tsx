@@ -15,7 +15,10 @@ import RoiCanvas from '../components/RoiCanvas'
 import { DAY_NAMES, formatDays, formatMemory, memoryPercent } from '../format'
 import { useApi } from '../hooks/useApi'
 import { cameraDisplayName } from '../utils/cameraLabel'
-import type { Camera as CameraType, DeviceDetail as DeviceDetailType, RecentEvent, Roi } from '../types'
+import type {
+  Camera as CameraType, DetectionParams, DeviceDetail as DeviceDetailType,
+  RecentEvent, Roi,
+} from '../types'
 
 const inputCls =
   'w-full border border-slate-200 rounded-xl px-3 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2c4be0] focus:ring-2 focus:ring-[#2c4be0]/10 transition'
@@ -234,6 +237,19 @@ function RoiTab({ device, reload }: Ctx) {
     }
   }
 
+  const generateTts = async (text: string, voice: string | undefined, rate: number) => {
+    setBusy(true); setError(null)
+    try {
+      const generated = await api.generateTts({ text, voice, rate })
+      setForm((current) => ({ ...current, audio_file: generated.filename }))
+      reloadAudio()
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const save = async () => {
     if (!activeCam) return
     if ((form.polygon ?? []).length < 3) {
@@ -401,6 +417,7 @@ function RoiTab({ device, reload }: Ctx) {
                   <RoiForm form={form} setForm={setForm} audioFiles={audioFiles ?? []}
                            onCancel={closeForm} onSave={() => void save()} busy={busy}
                            onUploadAudio={(file) => void uploadAudio(file)}
+                           onGenerateTts={(text, voice, rate) => void generateTts(text, voice, rate)}
                            submitLabel="저장" warnRename={roi.name !== form.name} />
                 )}
               </div>
@@ -414,6 +431,7 @@ function RoiTab({ device, reload }: Ctx) {
             <RoiForm form={form} setForm={setForm} audioFiles={audioFiles ?? []}
                      onCancel={closeForm} onSave={() => void save()} busy={busy}
                      onUploadAudio={(file) => void uploadAudio(file)}
+                     onGenerateTts={(text, voice, rate) => void generateTts(text, voice, rate)}
                      submitLabel="추가" warnRename={false} />
           </div>
         )}
@@ -422,7 +440,103 @@ function RoiTab({ device, reload }: Ctx) {
   )
 }
 
-function RoiForm({ form, setForm, audioFiles, onCancel, onSave, onUploadAudio,
+function TtsGenerator({ busy, onGenerate }: {
+  busy: boolean
+  onGenerate: (text: string, voice: string | undefined, rate: number) => void
+}) {
+  const [text, setText] = useState('')
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [voice, setVoice] = useState<SpeechSynthesisVoice | null>(null)
+  const [rate, setRate] = useState(0)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    const refreshVoices = () => {
+      const available = window.speechSynthesis.getVoices()
+        .sort((a, b) => Number(b.lang.toLowerCase().startsWith('ko')) - Number(a.lang.toLowerCase().startsWith('ko')))
+      setVoices(available)
+      setVoice((current) => current ?? available[0] ?? null)
+    }
+    refreshVoices()
+    window.speechSynthesis.addEventListener('voiceschanged', refreshVoices)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', refreshVoices)
+  }, [])
+
+  const preview = () => {
+    const value = text.trim()
+    if (!value || typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    const utterance = new SpeechSynthesisUtterance(value)
+    if (voice) utterance.voice = voice
+    utterance.rate = Math.max(0.5, Math.min(1.5, 1 + rate * 0.05))
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  }
+
+  return (
+    <div className="mt-3 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/70 to-white/80 p-3.5">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div>
+          <p className="text-xs font-bold text-slate-700">브라우저에서 음성 생성</p>
+          <p className="text-[10px] text-slate-400 mt-0.5">입력한 안내 문장을 PC의 Windows 음성으로 WAV 파일에 저장합니다.</p>
+        </div>
+        <span className="rounded-lg bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-700">로컬 TTS</span>
+      </div>
+      <textarea
+        rows={2}
+        maxLength={300}
+        className={`${inputCls} resize-none bg-white/90`}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="예: 안내 방송이 시작됩니다."
+      />
+      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_8rem] gap-2 mt-2">
+        <select
+          className={inputCls}
+          value={voice?.name ?? ''}
+          onChange={(e) => setVoice(voices.find((item) => item.name === e.target.value) ?? null)}
+        >
+          {voices.length === 0 && <option value="">브라우저 기본 음성</option>}
+          {voices.map((item) => <option key={`${item.name}-${item.lang}`} value={item.name}>{item.name} ({item.lang})</option>)}
+        </select>
+        <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/90 px-3 py-1.5">
+          <span className="text-[10px] font-semibold text-slate-500 shrink-0">속도</span>
+          <input
+            type="range"
+            min="-10"
+            max="10"
+            step="1"
+            value={rate}
+            onChange={(e) => setRate(Number(e.target.value))}
+            className="w-full accent-[#2c4be0]"
+            aria-label="음성 속도"
+          />
+          <span className="text-[10px] font-bold text-slate-600 tabular-nums">{rate > 0 ? '+' : ''}{rate}</span>
+        </label>
+      </div>
+      <div className="flex justify-end gap-2 mt-2">
+        <button
+          type="button"
+          onClick={preview}
+          disabled={!text.trim() || busy}
+          className="glass-btn px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50"
+        >
+          미리듣기
+        </button>
+        <button
+          type="button"
+          onClick={() => onGenerate(text.trim(), voice?.name, rate)}
+          disabled={!text.trim() || busy}
+          className="bg-[#2c4be0] text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/20 hover:bg-[#1d35b5] disabled:opacity-50 transition flex items-center gap-1.5"
+        >
+          {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+          음성 생성 및 선택
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RoiForm({ form, setForm, audioFiles, onCancel, onSave, onUploadAudio, onGenerateTts,
                    busy, submitLabel, warnRename }: {
   form: RoiForm
   setForm: React.Dispatch<React.SetStateAction<RoiForm>>
@@ -430,6 +544,7 @@ function RoiForm({ form, setForm, audioFiles, onCancel, onSave, onUploadAudio,
   onCancel: () => void
   onSave: () => void
   onUploadAudio: (file: File) => void
+  onGenerateTts: (text: string, voice: string | undefined, rate: number) => void
   busy: boolean
   submitLabel: string
   warnRename: boolean
@@ -479,7 +594,7 @@ function RoiForm({ form, setForm, audioFiles, onCancel, onSave, onUploadAudio,
             <Upload className="w-3.5 h-3.5" /> PC에서 업로드
             <input
               type="file"
-              accept=".mp3,audio/mpeg"
+              accept=".mp3,.wav,audio/mpeg,audio/wav"
               className="sr-only"
               disabled={busy}
               onChange={(e) => {
@@ -490,7 +605,8 @@ function RoiForm({ form, setForm, audioFiles, onCancel, onSave, onUploadAudio,
             />
           </label>
         </div>
-        <p className="mt-1 text-[10px] text-slate-400">MP3 · 최대 10MB · 10초 이하</p>
+        <p className="mt-1 text-[10px] text-slate-400">MP3/WAV · 최대 10MB · 10초 이하</p>
+        <TtsGenerator busy={busy} onGenerate={onGenerateTts} />
       </div>
       <div className="col-span-2">
         <label className={labelCls}>안내 텍스트</label>
@@ -525,6 +641,8 @@ function SettingsTab({ device, reload }: Ctx) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [thresholdSaved, setThresholdSaved] = useState(false)
+  const [thresholds, setThresholds] = useState({ person: 0.55, white_cane: 0.55 })
   const [deviceSaved, setDeviceSaved] = useState(false)
   const [deviceForm, setDeviceForm] = useState({
     name: device.name,
@@ -540,6 +658,19 @@ function SettingsTab({ device, reload }: Ctx) {
   // 카메라를 바꾸면 폼을 그 카메라의 값으로 되돌린다.
   useEffect(() => { setForm(camFormOf(cam)) }, [cam?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    let cancelled = false
+    if (!cam) return () => { cancelled = true }
+    void api.getDetectionParams(device.id, cam.id)
+      .then((params: DetectionParams) => {
+        if (!cancelled) setThresholds(params.conf)
+      })
+      .catch((e) => {
+        if (!cancelled) setError(describe(e))
+      })
+    return () => { cancelled = true }
+  }, [device.id, cam?.id])
+
   const schedulesRes = useApi(() => api.listSchedules(device.id), [device.id])
   const schedules = schedulesRes.data ?? []
   const [newDays, setNewDays] = useState<number[]>([])
@@ -552,6 +683,21 @@ function SettingsTab({ device, reload }: Ctx) {
       const { fps: _fps, ...cameraSettings } = form
       await api.updateCamera(device.id, cam.id, device.etag, cameraSettings)
       setSaved(true); setTimeout(() => setSaved(false), 2500)
+      reload()
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveThresholds = async () => {
+    if (!cam) return
+    setBusy(true); setError(null)
+    try {
+      await api.updateDetectionParams(device.id, cam.id, device.etag, { conf: thresholds })
+      setThresholdSaved(true)
+      setTimeout(() => setThresholdSaved(false), 2500)
       reload()
     } catch (e) {
       setError(describe(e))
@@ -756,6 +902,65 @@ function SettingsTab({ device, reload }: Ctx) {
                     className="bg-[#2c4be0] text-white px-5 py-2 rounded-xl text-xs font-semibold shadow-md shadow-[#2c4be0]/25 hover:bg-[#1d35b5] disabled:opacity-50 transition flex items-center gap-1.5">
                     {busy && <Loader2 className="w-3 h-3 animate-spin" />}저장
                   </button>
+                </div>
+
+                <div className="col-span-2 mt-1 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-slate-50/80 p-4">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800">감지 신뢰도 임계값</h3>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        이 디바이스에서 감지 결과로 인정할 최소 신뢰도를 설정합니다.
+                      </p>
+                    </div>
+                    {thresholdSaved && (
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 shrink-0">
+                        <CheckCircle className="w-3.5 h-3.5" /> 적용됨
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {([
+                      { key: 'person' as const, label: '사람', help: '사람으로 판단할 최소 확률' },
+                      { key: 'white_cane' as const, label: '지팡이', help: '흰지팡이로 판단할 최소 확률' },
+                    ]).map((item) => (
+                      <div key={item.key} className="rounded-xl bg-white/75 border border-white/80 px-3.5 py-3 shadow-sm">
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div>
+                            <p className="text-xs font-bold text-slate-700">{item.label}</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">{item.help}</p>
+                          </div>
+                          <span className="rounded-lg bg-[#2c4be0]/10 px-2 py-1 text-sm font-extrabold text-[#2c4be0] tabular-nums">
+                            {Math.round(thresholds[item.key] * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={thresholds[item.key]}
+                          onChange={(e) => setThresholds((current) => ({
+                            ...current, [item.key]: Number(e.target.value),
+                          }))}
+                          className="w-full accent-[#2c4be0]"
+                          aria-label={`${item.label} 신뢰도 임계값`}
+                        />
+                        <div className="flex justify-between mt-1 text-[9px] text-slate-400 tabular-nums">
+                          <span>0%</span><span>50%</span><span>100%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-end mt-3">
+                    <button
+                      onClick={() => void saveThresholds()}
+                      disabled={busy}
+                      className="bg-slate-800 text-white px-4 py-1.5 rounded-xl text-xs font-semibold hover:bg-slate-700 disabled:opacity-50 transition flex items-center gap-1.5"
+                    >
+                      {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+                      임계값 저장
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

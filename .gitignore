@@ -62,6 +62,7 @@ rf_config.json
 # Local dashboard runtime logs
 dashboard/backend/*.log
 dashboard/frontend/*.log
+dashboard/backend/data/
 
 # Python
 __pycache__/

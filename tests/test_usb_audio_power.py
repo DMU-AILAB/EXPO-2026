@@ -25,6 +25,22 @@ def test_usb_audio_power_runs_sudo_uhubctl(monkeypatch):
     ]
 
 
+def test_wav_playback_selects_headphones_alsa_device(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(at, "_ALSA_DEVICE", "plughw:Headphones,0")
+    monkeypatch.setattr(at.shutil, "which", lambda name: "/usr/bin/aplay" if name == "aplay" else None)
+    monkeypatch.setattr(at.subprocess, "run", fake_run)
+
+    at.AudioPlayer._play_subprocess(None, "/tmp/announcement.wav")
+
+    assert calls == [["aplay", "-q", "-D", "plughw:Headphones,0", "/tmp/announcement.wav"]]
+
+
 def test_audio_player_powers_speaker_on_for_playback_and_off_after(monkeypatch):
     events = []
     finished = threading.Event()
