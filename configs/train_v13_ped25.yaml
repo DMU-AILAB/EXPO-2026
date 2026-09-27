@@ -1,0 +1,44 @@
+# E2 — pedcctv 비율 스윕: keep=0.25 (docs/model_training_plan_v4.md §4)
+#
+# **가설**: pedcctv는 실외 거리 CCTV 보행자(횡단보도·인도, 부감 고정 카메라)로
+# 배포 프레이밍과 정확히 같은 장면인데 **지팡이 라벨이 0개**다. 모델이 "이 프레이밍에는
+# 지팡이가 없다"를 2,753번 배우고 배포 현장이 그 프레이밍이라, 배포 임계값에서만
+# 신뢰도가 눌리는 현상(conf 0.55에서 28.9% vs 0.25에서 75.8%)을 설명할 수 있다.
+# 전례: 같은 형태의 lkc 644장이 실영상 589 → 349(-41%)를 만들어 기각됐다(리포트 §4-2).
+#
+# **반론(그래서 전량 제거가 아니라 스윕이다)**: pedcctv는 배포 각도의 person 표현
+# 그 자체다. 사람 동반 게이트가 모든 트리거의 필수 조건이라 person recall 하락은
+# 곧 안내 실패다. 판정에 person recall과 오탐을 반드시 함께 넣을 것.
+#
+# **v10_nolkc와 데이터를 뺀 모든 것이 같다** — 증강(augB), seed, epoch, imgsz, batch.
+# 그래야 학습셋 구성 하나만 바뀐 A/B가 된다. 증강 축은 E1에서 닫혔다(리포트 §13-3).
+#
+# train 7945장 (pedcctv 727장). val/test는 v2와 동일 — 잣대를 바꾸면 비교가 불가능하다.
+
+task: detect
+mode: train
+
+model: yolov8n.pt
+data: datasets/data_v3_ped25.yaml
+
+epochs: 100
+patience: 30
+batch: 64
+imgsz: 320
+device: 0
+workers: 8
+seed: 0
+deterministic: true
+amp: true
+
+project: /home/ubuntu/expo/runs
+name: white_cane_v13_ped25
+
+# --- 증강: augB (v10_nolkc와 동일) ---
+degrees: 10.0
+scale: 0.7
+translate: 0.2
+multi_scale: 0.5
+hsv_v: 0.6
+close_mosaic: 20
+mixup: 0.1

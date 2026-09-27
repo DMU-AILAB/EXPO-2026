@@ -172,7 +172,7 @@ class ReplaySession:
 
     def _loop_frames(self, cap, backend) -> None:
         from camera_live_pi import (_draw_detections, _draw_gate_debug,
-                                    _draw_rois, _filter_excluded)
+                                    _filter_excluded)
 
         idx = 0
         self._wall0 = time.time()

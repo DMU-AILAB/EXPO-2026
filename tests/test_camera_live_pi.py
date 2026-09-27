@@ -319,3 +319,47 @@ def test_roi_crop_box_stays_inside_frame_when_roi_touches_edge():
     assert box is not None
     assert 0 <= box[0] < box[2] <= 1920, box
     assert 0 <= box[1] < box[3] <= 1080, box
+
+
+# ---------------------------------------------------------------------------
+# 구조물 수집(새벽 캘리브레이션) 라우팅 — 녹화와 같은 이유로 순수 함수로 뽑았다
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("method,path,expected", [
+    ("POST", "/calibrate/start", "start"),
+    ("POST", "/calibrate/start?seconds=600", "start"),
+    ("POST", "/calibrate/cancel", "cancel"),
+    ("GET", "/calibrate/status", "status"),
+    ("GET", "/calibrate/start", None),        # 시작은 POST만
+    ("POST", "/calibrate/status", None),
+    ("GET", "/stream.mjpg", None),            # 다른 경로를 삼키면 안 된다
+    ("GET", "/recording/status", None),
+])
+def test_route_calibrate_matches_known_routes(method, path, expected):
+    assert m._route_calibrate(method, path) == expected
+
+
+def test_수집_시작과_취소_상태전이():
+    srv = m.MJPEGServer(port=0)
+    assert srv.calibration_status()["running"] is False
+    assert srv.calibration_deadline() is None
+
+    assert srv.start_calibration(60)["ok"] is True
+    assert srv.calibration_status()["running"] is True
+    assert srv.calibration_deadline() is not None
+
+    # 중복 시작은 거절 — 수집 중에 또 시작하면 앞의 결과가 조용히 사라진다
+    assert srv.start_calibration(60)["ok"] is False
+
+    assert srv.cancel_calibration()["ok"] is True
+    assert srv.calibration_status()["running"] is False
+    assert srv.cancel_calibration()["ok"] is False      # 이미 취소됨
+
+
+def test_수집_완료_결과가_남는다():
+    srv = m.MJPEGServer(port=0)
+    srv.start_calibration(60)
+    srv.calibration_tick()
+    srv.finish_calibration({"candidates": 3, "frames": 120})
+    st = srv.calibration_status()
+    assert st["running"] is False
+    assert st["result"] == {"candidates": 3, "frames": 120}

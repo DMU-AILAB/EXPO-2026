@@ -294,8 +294,12 @@ make setup-pi-python310 Pi에 Python 3.10 설치 (최초 1회)
 make ping               Pi 연결 및 환경 확인
 make help               전체 도움말 출력
 
-기본값: PI=192.168.0.89  USER=ailab
-IP 변경: make <target> PI=<새IP>
+기본값: PI=192.168.0.89  PI_USER=ailab
+IP 변경:   make <target> PI=<새IP>
+계정 변경: make <target> PI_USER=<계정>
+
+  ※ 예전에는 `USER`였으나 **셸 환경변수와 겹쳐 동작하지 않았다** — `?=`가 이미
+    정의된 `USER`를 덮어쓰지 못해 로컬 계정명으로 ssh를 시도하다 실패했다.
 ```
 
 ---
