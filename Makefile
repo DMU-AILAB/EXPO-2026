@@ -16,8 +16,12 @@
 # =============================================================================
 
 PI      ?= 192.168.0.89
-USER    ?= ailab
-DEST     = $(USER)@$(PI):~/visionguide
+# ★ PI_USER — 예전엔 USER였는데 **동작하지 않았다.** `USER`는 셸 환경변수라 이미
+# 정의돼 있어 `?=`가 덮어쓰지 못하고, 로컬 계정명(예: ubuntu)으로 ssh를 시도해
+# `Permission denied`로 실패했다. 문서의 `make sync PI=<ip>`가 대부분 환경에서
+# 그대로는 안 되던 원인이다. 환경변수와 겹치지 않는 이름으로 분리한다.
+PI_USER ?= ailab
+DEST     = $(PI_USER)@$(PI):~/visionguide
 
 # Pi Python 경로: pyenv 3.10 우선, 없으면 시스템 python3
 # pyenv 설치 후 make deploy PI_PYTHON=~/.pyenv/versions/3.10.14/bin/python 으로 덮어쓰기 가능
@@ -51,7 +55,8 @@ DEPLOY_PY = \
 	device/foot_traffic_counter.py \
 	device/camera_config.py \
 	device/detection_events.py \
-	device/fp_hotspots.py
+	device/fp_hotspots.py \
+	device/static_mask.py
 
 # Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.
 # 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.
@@ -90,7 +95,7 @@ help:
 	@echo "      make deploy PI=\"192.168.0.101 192.168.0.102 192.168.0.103\""
 	@echo "    한 대가 실패해도 나머지는 계속하고, 마지막에 실패한 기기를 모아 보여줍니다."
 	@echo ""
-	@echo "  현재 기본값: PI=$(PI)  USER=$(USER)  PI_PYTHON=$(PI_PYTHON)"
+	@echo "  현재 기본값: PI=$(PI)  PI_USER=$(PI_USER)  PI_PYTHON=$(PI_PYTHON)"
 	@echo ""
 	@echo "  pyenv Python 3.10 사용 시:"
 	@echo "    make deploy PI_PYTHON=~/.pyenv/versions/3.10.14/bin/python PI_PIP=~/.pyenv/versions/3.10.14/bin/pip"
@@ -116,7 +121,7 @@ $(MULTI_TARGETS):
 	@fail=""; ok=0; \
 	for h in $(PI); do \
 		echo ""; echo "──────────── [$$h] $@ ────────────"; \
-		if $(MAKE) --no-print-directory $@ PI=$$h USER=$(USER) \
+		if $(MAKE) --no-print-directory $@ PI=$$h PI_USER=$(PI_USER) \
 			PI_PYTHON=$(PI_PYTHON) PI_PIP=$(PI_PIP); then \
 			ok=$$((ok+1)); \
 		else \
@@ -139,7 +144,7 @@ deploy: sync sync-roi-editor deps deps-roi-editor
 ## Pi로 카메라 앱 파일만 전송
 sync:
 	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
-	ssh $(USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
+	ssh $(PI_USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
 	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
 	rsync -avz --progress configs/examples/rf_config_example.json $(DEST)/
 	@# 모델 파일은 **파일별로** 따로 전송한다. 한 rsync에 두 파일을 함께 넘기면
@@ -160,26 +165,26 @@ sync:
 ## import하므로, 최초 배포는 이 타겟만 단독 실행하지 말고 반드시 make deploy로 함께 배포할 것.
 sync-roi-editor:
 	@echo "[SYNC] ROI 에디터 파일 전송..."
-	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/roi_editor/static"
+	ssh $(PI_USER)@$(PI) "mkdir -p ~/visionguide/roi_editor/static"
 	rsync -avz --progress apps/roi_editor/ $(DEST)/roi_editor/
 	rsync -avz --progress apps/simulator/roi_manager.py $(DEST)/simulator/
-	ssh $(USER)@$(PI) "mkdir -p ~/visionguide/simulator && touch ~/visionguide/simulator/__init__.py"
+	ssh $(PI_USER)@$(PI) "mkdir -p ~/visionguide/simulator && touch ~/visionguide/simulator/__init__.py"
 
 ## Pi에 카메라 앱 의존성 설치
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
-	ssh $(USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 uhubctl || true"
-	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio"
+	ssh $(PI_USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 uhubctl || true"
+	ssh $(PI_USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio"
 
 ## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
 deps-roi-editor:
 	@echo "[DEPS] ROI 에디터 의존성 설치..."
-	ssh $(USER)@$(PI) "$(PI_PIP) install --break-system-packages -q 'fastapi>=0.100.0' 'uvicorn[standard]>=0.20.0' python-multipart"
+	ssh $(PI_USER)@$(PI) "$(PI_PIP) install --break-system-packages -q 'fastapi>=0.100.0' 'uvicorn[standard]>=0.20.0' python-multipart"
 
 ## Python 3.9 EdgeTPU 전용 패키지 설치 (Python 3.9 빌드 후 실행)
 install-edgetpu-py39:
 	@echo "[PY39] Python 3.9 EdgeTPU 의존성 설치..."
-	ssh $(USER)@$(PI) "~/.python39/bin/pip3 install -q \
+	ssh $(PI_USER)@$(PI) "~/.python39/bin/pip3 install -q \
 		'https://github.com/google-coral/pycoral/releases/download/v2.0.0/tflite_runtime-2.5.0.post1-cp39-cp39-linux_aarch64.whl' \
 		'numpy<2' \
 		opencv-python-headless"
@@ -188,52 +193,52 @@ install-edgetpu-py39:
 ## Pi Python 3.10 환경 일회성 설치 (pyenv 이용)
 setup-pi-python310:
 	@echo "[SETUP] Pi에 Python 3.10 설치 (pyenv)..."
-	ssh $(USER)@$(PI) "curl https://pyenv.run | bash || true"
-	ssh $(USER)@$(PI) "grep -q 'pyenv init' ~/.bashrc || echo 'export PYENV_ROOT=\"\$$HOME/.pyenv\"\nexport PATH=\"\$$PYENV_ROOT/bin:\$$PATH\"\neval \"\$$(pyenv init -)\"' >> ~/.bashrc"
-	ssh $(USER)@$(PI) "~/.pyenv/bin/pyenv install -s 3.10.14 && ~/.pyenv/bin/pyenv global 3.10.14"
+	ssh $(PI_USER)@$(PI) "curl https://pyenv.run | bash || true"
+	ssh $(PI_USER)@$(PI) "grep -q 'pyenv init' ~/.bashrc || echo 'export PYENV_ROOT=\"\$$HOME/.pyenv\"\nexport PATH=\"\$$PYENV_ROOT/bin:\$$PATH\"\neval \"\$$(pyenv init -)\"' >> ~/.bashrc"
+	ssh $(PI_USER)@$(PI) "~/.pyenv/bin/pyenv install -s 3.10.14 && ~/.pyenv/bin/pyenv global 3.10.14"
 	@echo "[완료] Python 3.10 설치 완료. 확인: make ping"
 
 ## Pi에서 headless MJPEG 스트리밍 시작 (모니터 없는 경우)
 run-headless:
 	@echo "[RUN] 스트리밍 주소: http://$(PI):8080/stream.mjpg"
-	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py --headless --port 8080"
+	ssh -t $(PI_USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py --headless --port 8080"
 
 ## Pi에서 ROI 웹 에디터 실행 (브라우저에서 http://PI:5000 접속)
 run-roi-editor:
 	@echo "[ROI Editor] 브라우저에서 http://$(PI):5000 으로 접속하세요"
 	@echo "[ROI Editor] camera_live_pi.py 를 먼저 실행해야 스트림이 표시됩니다 (make run-headless)"
-	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) roi_editor/server.py --rois ~/visionguide/rois.json"
+	ssh -t $(PI_USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) roi_editor/server.py --rois ~/visionguide/rois.json"
 
 ## Pi에서 디스플레이 모드 실행 (모니터 연결된 경우)
 run:
-	ssh -t $(USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py"
+	ssh -t $(PI_USER)@$(PI) "cd ~/visionguide && $(PI_PYTHON) camera_live_pi.py"
 
 ## systemd 등록 — 부팅 시 카메라 앱 + ROI 에디터 + GPIO 재시작버튼이 완전 자동/headless 로 구동됨
 ## 이후로는 최초 ROI/오디오 설정 시에만 http://<Pi-IP>:5000 접속이 필요하고,
 ## 탐지·음성 안내 자체는 네트워크 연결 없이 기기 단독으로 계속 동작한다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(USER)@$(PI):/tmp/
-	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
-	ssh $(USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(USER)/visionguide/deploy/"
-	ssh $(USER)@$(PI) "sed -i 's|__USER__|$(USER)|g' /tmp/visionguide-systemctl.sudoers && sudo install -m 440 /tmp/visionguide-systemctl.sudoers /etc/sudoers.d/visionguide-systemctl && sudo visudo -cf /etc/sudoers.d/visionguide-systemctl"
-	ssh $(USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap"
+	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(PI_USER)@$(PI):/tmp/
+	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
+	ssh $(PI_USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(PI_USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(PI_USER)/visionguide/deploy/"
+	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g' /tmp/visionguide-systemctl.sudoers && sudo install -m 440 /tmp/visionguide-systemctl.sudoers /etc/sudoers.d/visionguide-systemctl && sudo visudo -cf /etc/sudoers.d/visionguide-systemctl"
+	ssh $(PI_USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."
-	@echo "       확인: ssh $(USER)@$(PI) sudo systemctl status visionguide-device"
-	@echo "       ROI 에디터를 끄고 싶으면: ssh $(USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"
+	@echo "       확인: ssh $(PI_USER)@$(PI) sudo systemctl status visionguide-device"
+	@echo "       ROI 에디터를 끄고 싶으면: ssh $(PI_USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"
 
 ## Pi 연결 및 배포 환경 확인
 ping:
-	ssh $(USER)@$(PI) "$(PI_PYTHON) --version && ls ~/visionguide/ 2>/dev/null || echo '(아직 배포 전)'"
+	ssh $(PI_USER)@$(PI) "$(PI_PYTHON) --version && ls ~/visionguide/ 2>/dev/null || echo '(아직 배포 전)'"
 
 ## 서비스 재시작 (install-service가 넣는 visionguide-systemctl sudoers로 비밀번호 없이)
 ##
 ## **pkill로는 되살아나지 않는다** — 앱이 SIGTERM을 정상 종료(exit 0)로 처리하므로
 ## `Restart=on-failure`가 걸리지 않는다. 실기기 검증에서 실제로 걸린 지점이다.
 restart:
-	ssh $(USER)@$(PI) "sudo systemctl restart visionguide-device && sudo systemctl restart visionguide-roi-editor"
+	ssh $(PI_USER)@$(PI) "sudo systemctl restart visionguide-device && sudo systemctl restart visionguide-roi-editor"
 	@sleep 3
-	@ssh $(USER)@$(PI) "systemctl is-active visionguide-device visionguide-roi-editor | tr '\n' ' '; echo"
+	@ssh $(PI_USER)@$(PI) "systemctl is-active visionguide-device visionguide-roi-editor | tr '\n' ' '; echo"
 
 ## Pi 시계 동기 상태 확인
 ##
@@ -242,10 +247,10 @@ restart:
 ## 시간대별 통계가 엉킨다. 나중에 카메라 간 핸드오프를 넣으면 "몇 초 전에 저쪽에서
 ## 사라졌다"를 비교하게 되는데, 그때는 어긋남이 곧 오작동이 된다.
 check-time:
-	@pi_t=$$(ssh $(USER)@$(PI) "date -u +%s" 2>/dev/null); \
+	@pi_t=$$(ssh $(PI_USER)@$(PI) "date -u +%s" 2>/dev/null); \
 	if [ -z "$$pi_t" ]; then echo "[$(PI)] 접속 실패"; exit 1; fi; \
 	local_t=$$(date -u +%s); drift=$$((pi_t - local_t)); \
-	sync=$$(ssh $(USER)@$(PI) "timedatectl show -p NTPSynchronized --value" 2>/dev/null); \
+	sync=$$(ssh $(PI_USER)@$(PI) "timedatectl show -p NTPSynchronized --value" 2>/dev/null); \
 	printf "[%s] NTP동기=%s  PC와의 차이=%+ds\n" "$(PI)" "$${sync:-?}" "$$drift"; \
 	if [ "$$sync" != "yes" ]; then \
 		echo "  → 동기 안 됨. make setup-ntp PI=$(PI) 로 켜세요"; \
@@ -256,7 +261,7 @@ check-time:
 ## Pi에 NTP 시각 동기 활성화 (Raspberry Pi OS는 systemd-timesyncd 내장)
 setup-ntp:
 	@echo "[NTP] $(PI) 시각 동기 활성화..."
-	ssh $(USER)@$(PI) "sudo timedatectl set-ntp true && sudo systemctl enable --now systemd-timesyncd"
+	ssh $(PI_USER)@$(PI) "sudo timedatectl set-ntp true && sudo systemctl enable --now systemd-timesyncd"
 	@echo "  동기까지 수십 초 걸릴 수 있습니다. 확인: make check-time PI=$(PI)"
 
 endif

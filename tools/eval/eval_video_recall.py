@@ -143,6 +143,67 @@ def _roi_crop_box(roi_path: Path, w: int, h: int, margin: float = 0.10):
 # 임계값별로 재실행한다. 캐시를 남겨두면 게이트 파라미터 튜닝을 추론 없이
 # 반복할 수 있다.
 # --------------------------------------------------------------------------
+def _cascade_recheck(backend, view, dets, args):
+    """저신뢰 지팡이 후보를 크롭·확대해 **같은 모델로 재탐지**하고 conf를 갱신한다.
+
+    ## 왜 필요한가
+
+    배포 임계값(conf 0.55)에서 test1 탐지가 21.5%뿐인데 conf 0.25로 내리면 73.2%다 —
+    모델이 찾긴 하는데 확신이 없다. 그렇다고 임계값을 내리면 유사물 오탐이 같이
+    올라온다(실측: conf 0.55에서 2박스 → 0.10에서 21박스).
+
+    원인은 **픽셀 밀도**다. 짧은 변이 32px을 넘으면 재현율이 98%인데, 지팡이를
+    거의 수직으로 짚으면 박스가 얇아져 18px까지 떨어진다(실측). 그 후보만 잘라
+    확대하면 같은 모델이 같은 물체를 더 크게 본다.
+
+    ## 왜 오탐은 안 따라 올라오는가
+
+    확대는 **있는 것을 더 잘 보이게** 할 뿐 물체의 정체를 바꾸지 않는다. 정지
+    이미지 실측(3배 확대):
+
+        저신뢰(conf<0.55) 후보 중 0.55 이상으로 승격된 비율
+          진짜 지팡이 : 197건 중 106건 (53.8%)
+          유사물 오탐 :  44건 중   0건 ( 0.0%)
+
+    **단, 이미 고신뢰인 오탐은 이 방법으로 못 고친다** — 목발을 conf 0.80으로
+    부르는 실패는 판별 문제라 확대해도 그대로다. 그쪽은 학습으로 풀어야 한다.
+
+    ## 갱신 규칙
+
+    재탐지 conf가 원래보다 높을 때만 올린다(`max`). 내리지 않는 이유는 크롭으로
+    맥락(사람·지면)이 잘려 나가 정상 탐지의 conf가 떨어질 수 있어서다 — 이 단계의
+    목적은 **구제**이지 재심사가 아니다.
+    """
+    hi = args.cascade_max_conf
+    lo = args.cascade_min_conf
+    vh, vw = view.shape[:2]
+    n = 0
+    for d in dets:
+        if d.get("class") != CANE_CLASS_ID:
+            continue
+        if not (lo <= d["conf"] < hi):
+            continue                       # 이미 충분히 높거나, 너무 낮아 잡음이다
+        if n >= args.cascade_max_per_frame:
+            break
+        x1, y1, x2, y2 = d["bbox"]
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        half = max(x2 - x1, y2 - y1) * args.cascade_expand / 2
+        a, b = int(max(0, cx - half)), int(max(0, cy - half))
+        c, e = int(min(vw, cx + half)), int(min(vh, cy + half))
+        if c - a < 8 or e - b < 8:
+            continue
+        sub = view[b:e, a:c]
+        rd = backend.predict(_preprocess(sub, args.preprocess, args.imgsz))
+        sh, sw = sub.shape[:2]
+        if args.preprocess in ("squash", "letterbox"):
+            rd = _unmap(rd, args.preprocess, args.imgsz, sw, sh)
+        best = max((r["conf"] for r in rd if r.get("class") == CANE_CLASS_ID), default=0.0)
+        if best > d["conf"]:
+            d["conf"] = float(best)
+        n += 1
+    return dets
+
+
 def collect_detections(args, min_conf: float) -> tuple[list[list[dict]], tuple[int, int], float]:
     cap = cv2.VideoCapture(args.video)
     if not cap.isOpened():
@@ -183,6 +244,10 @@ def collect_detections(args, min_conf: float) -> tuple[list[list[dict]], tuple[i
         vh, vw = view.shape[:2]
         if args.preprocess in ("squash", "letterbox"):
             dets = _unmap(dets, args.preprocess, args.imgsz, vw, vh)
+        # ★ 캐스케이드는 반드시 _unmap 뒤에 온다 — 박스가 아직 모델 입력(320)
+        # 좌표계면 그 값으로 원본 프레임을 잘라 엉뚱한 구석을 재탐지하게 된다.
+        if args.cascade:
+            dets = _cascade_recheck(backend, view, dets, args)
         if crop:
             for d in dets:
                 x1, y1, x2, y2 = d["bbox"]
@@ -484,6 +549,17 @@ def main() -> None:
                    help="안내 1회의 오디오 길이 가정(초) — 쿨다운 기산점 계산에 쓴다")
     p.add_argument("--no-entity", action="store_true",
                    help="보행자 엔티티 레이어(pedestrian_entity)를 끄고 측정 — A/B 기준선")
+    p.add_argument("--cascade", action="store_true",
+                   help="저신뢰 지팡이 후보를 크롭·확대해 재탐지하고 conf를 끌어올린다 "
+                        "(임계값을 내리지 않고 재현율을 올리는 수단)")
+    p.add_argument("--cascade-expand", type=float, default=3.0,
+                   help="후보 박스 대비 크롭 배율 (작을수록 더 확대)")
+    p.add_argument("--cascade-min-conf", type=float, default=0.10,
+                   help="이 값 미만은 잡음으로 보고 재탐지하지 않는다")
+    p.add_argument("--cascade-max-conf", type=float, default=0.55,
+                   help="이 값 이상은 이미 충분하므로 재탐지하지 않는다")
+    p.add_argument("--cascade-max-per-frame", type=int, default=3,
+                   help="프레임당 재탐지 횟수 상한 (기기 비용 제한)")
     p.add_argument("--stride", type=int, default=1, help="N프레임마다 1장만 평가 (빠른 확인용)")
     p.add_argument("--gt", metavar="JSON", default="datasets/videos/video_gt.json",
                    help="정답 구간 파일. 영상 파일명을 키로 [[시작초, 끝초], ...]를 담는다. "
@@ -499,7 +575,28 @@ def main() -> None:
         frames, shape, fps = blob["frames"], tuple(blob["shape"]), blob["fps"]
         print(f"[INFO] 캐시 재사용: {cache} ({len(frames)}프레임)")
     else:
-        frames, shape, fps = collect_detections(args, thresholds[0])
+        # 캐스케이드는 **저신뢰 후보를 끌어올리는** 단계라, 추론이 그 후보를
+        # 내놓지 않으면 아무 일도 일어나지 않는다. 임계값 스윕의 하한이
+        # cascade_min_conf보다 높으면 강제로 내려서 후보를 확보한다.
+        floor = min(thresholds[0], args.cascade_min_conf) if args.cascade else thresholds[0]
+        if args.cascade:
+            # ★ 이 경고를 지우지 말 것. 캐스케이드는 **기기에 구현돼 있지 않고**,
+            # 현재 설계로는 넣을 수도 없다 — Pi 실측이 infer_ms 65.9 / loop_ms 69.4로
+            # 추론이 프레임 예산의 95%라, 매 프레임 재탐지를 1회만 더해도
+            # 13.3 → 약 7.4 FPS로 KPI(≥10)를 밑돈다. 게다가 후보가 생기는 순간은
+            # 지팡이 사용자가 나타난 바로 그때다.
+            #
+            # 그래서 여기서 나오는 수치는 **배포 성능이 아니다.** 근거 없이 인용되는
+            # 것을 막으려고 실행할 때마다 찍는다(리포트 §16).
+            print("[WARN] --cascade 는 **배포에 없는 구성**이다. 이 실행의 수치를 "
+                  "배포 성능으로 인용하지 말 것.")
+            print("       사유: Pi 추론이 프레임 예산의 95%(65.9/69.4ms)라 "
+                  "매 프레임 재탐지 시 13.3 → 약 7.4 FPS (KPI ≥10 미달). "
+                  "자세한 내용은 docs/model_evaluation_report_v3.md §16")
+        if args.cascade and floor < thresholds[0]:
+            print(f"[INFO] 캐스케이드: 추론 conf 하한을 {thresholds[0]:.2f} → {floor:.2f}로 내린다 "
+                  f"(재검 대상 확보용 — 게이트 판정 임계값은 그대로다)")
+        frames, shape, fps = collect_detections(args, floor)
         if cache:
             cache.write_text(json.dumps(
                 {"frames": frames, "shape": list(shape), "fps": fps}), encoding="utf-8")

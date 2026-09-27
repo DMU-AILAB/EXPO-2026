@@ -38,7 +38,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
 
@@ -63,7 +63,7 @@ import numpy as np
 from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
                            load_camera_config, validate_camera_config)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
-from simple_tracker import SimpleTracker
+import static_mask as _static_mask
 # 게이트 순서·상수·연관 로직의 단일 출처. 배포/평가/재생검증이 같은 것을 써야 한다.
 # 상수는 여기서 재수출한다 — `eval_video_recall.py`가 camera_live_pi에서 import해 왔다.
 from gate_chain import (  # noqa: F401  (재수출)
@@ -96,7 +96,7 @@ except ImportError as _e:
     print(f"[WARN] SI4432 RF features disabled (missing dependency): {_e}")
 
 try:
-    from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate, associate_canes
+    from cane_person_assoc import CANE_CLASS_ID, PERSON_CLASS_ID, associate
     from foot_traffic_counter import FootTrafficCounter
     _TRAFFIC_AVAILABLE = True
 except ImportError:
@@ -790,6 +790,22 @@ class ClipRecorder:
             print(f"[INFO] 녹화 보관 상한 초과 — 오래된 클립 삭제: {clip_id}")
 
 
+def _route_calibrate(method: str, path: str) -> str | None:
+    """구조물 수집 제어 요청을 action으로 매칭하는 순수 함수.
+
+    `roi_editor`는 별도 프로세스라 카메라 프레임에 접근할 수 없다 — 녹화 제어가
+    MJPEGServer의 같은 포트에 라우트를 두는 것과 똑같은 제약이고 그 전례를 따른다.
+    """
+    p = urlsplit(path).path
+    if method == "POST" and p == "/calibrate/start":
+        return "start"
+    if method == "POST" and p == "/calibrate/cancel":
+        return "cancel"
+    if method == "GET" and p == "/calibrate/status":
+        return "status"
+    return None
+
+
 def _route_recording(method: str, path: str) -> tuple[str, str] | None:
     """녹화 제어 HTTP 요청을 (action, clip_id) 튜플로 매칭하는 순수 함수 — 실제
     소켓 서버 없이 라우팅 로직만 단위테스트할 수 있도록 핸들러 클래스 밖으로 뽑았다.
@@ -826,7 +842,59 @@ class MJPEGServer:
         self._fps_samples: list[float] = []
         self._lock  = threading.Lock()
         self._httpd: ThreadingHTTPServer | None = None
+        # 구조물 수집(새벽 캘리브레이션) 상태. 탐지 루프가 매 프레임 확인하고
+        # 여기에 누적한다 — 서버는 시작/취소 신호와 진행 상황만 들고 있다.
+        self._calib: dict | None = None
+        self._calib_result: dict | None = None
         self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
+
+    # ── 구조물 수집 (새벽 캘리브레이션) ───────────────────────────
+    #
+    # 사람이 없는 시간에 돌리는 것이 전제다 — 그때 탐지되는 것은 정의상 전부 오탐이라
+    # 라벨링 없이 그 현장의 네거티브가 생긴다. 수집 결과는 **후보일 뿐이며**
+    # roi_editor에서 운영자가 확인해야 실제로 적용된다(`static_mask.py` 헤더 참고).
+    def start_calibration(self, seconds: float) -> dict:
+        with self._lock:
+            if self._calib is not None:
+                return {"ok": False, "error": "이미 수집 중입니다",
+                        **self._calib_public()}
+            self._calib = {"until": time.time() + seconds, "seconds": seconds,
+                           "frames": 0, "started": time.time()}
+            self._calib_result = None
+        return {"ok": True, "seconds": seconds}
+
+    def cancel_calibration(self) -> dict:
+        with self._lock:
+            was = self._calib is not None
+            self._calib = None
+        return {"ok": was, "error": None if was else "수집 중이 아닙니다"}
+
+    def calibration_status(self) -> dict:
+        with self._lock:
+            return self._calib_public()
+
+    def _calib_public(self) -> dict:
+        """락을 이미 잡은 상태에서 부른다."""
+        if self._calib is None:
+            return {"running": False, "result": self._calib_result}
+        left = max(0.0, self._calib["until"] - time.time())
+        return {"running": True, "remaining_sec": round(left, 1),
+                "frames": self._calib["frames"], "result": None}
+
+    def calibration_deadline(self) -> float | None:
+        """탐지 루프용 — 수집 중이면 종료 시각, 아니면 None."""
+        with self._lock:
+            return None if self._calib is None else self._calib["until"]
+
+    def calibration_tick(self) -> None:
+        with self._lock:
+            if self._calib is not None:
+                self._calib["frames"] += 1
+
+    def finish_calibration(self, result: dict) -> None:
+        with self._lock:
+            self._calib = None
+            self._calib_result = result
 
     def push(self, frame: np.ndarray, fps: float | None = None,
              raw: np.ndarray | None = None) -> None:
@@ -887,6 +955,22 @@ class MJPEGServer:
                 self.wfile.write(data)
 
             def _handle_recording_route(self, method: str) -> bool:
+                cal = _route_calibrate(method, self.path)
+                if cal is not None:
+                    if cal == "start":
+                        q = parse_qs(urlsplit(self.path).query)
+                        try:
+                            secs = float(q.get("seconds", ["300"])[0])
+                        except ValueError:
+                            secs = 300.0
+                        secs = max(10.0, min(1800.0, secs))
+                        self._write_json(200, srv.start_calibration(secs))
+                    elif cal == "cancel":
+                        self._write_json(200, srv.cancel_calibration())
+                    else:
+                        self._write_json(200, srv.calibration_status())
+                    return True
+
                 route = _route_recording(method, self.path)
                 if route is None:
                     return False
@@ -1400,7 +1484,33 @@ class CameraPipeline:
             # 트래커 + 엔티티 + 3중 게이트를 한 묶음으로 든다. 순서와 상수는
             # gate_chain.py에만 있다 — 평가(`eval_video_recall.py`)와 재생검증
             # (`replay_engine.py`)이 같은 것을 돌려야 하기 때문이다.
-            gates = GateChain(require_person=profile.require_person_for_trigger)
+            # 구조물 마스크 — 현장에서 학습한 고정물 목록. 파일이 없으면 빈 마스크라
+            # 게이트가 통째로 비활성이고 동작이 종전과 같다(기존 기기의 기본 경로).
+            mask_path = (Path(profile.roi_config).parent / "static_mask.json"
+                         if profile.roi_config
+                         else _static_mask.default_mask_path(_BASE))
+            static_mask_obj = _static_mask.load_mask_file(mask_path)
+            try:
+                mask_mtime = Path(mask_path).stat().st_mtime
+            except OSError:
+                mask_mtime = 0.0
+            if len(static_mask_obj):
+                print(f"[INFO][{tag}] 구조물 마스크 {len(static_mask_obj)}개 로드: {mask_path}")
+
+            def _on_mask_drop(trk, _db=profile.traffic_db):
+                """마스크가 트랙 하나를 걸러냈다 — 트랙당 1회만 불린다(GateChain 계약).
+
+                이 로그가 없으면 "안내가 조용해진 것이 오탐이 줄어서인지 사람을 못
+                봐서인지" 구분할 수 없다. 사각지대를 뒤늦게라도 발견하는 유일한 수단이다.
+                """
+                _static_mask.log_mask_hit(_db, trk.get("class", -1))
+
+            gates = GateChain(require_person=profile.require_person_for_trigger,
+                              static_mask=static_mask_obj,
+                              on_mask_drop=_on_mask_drop)
+            calib: "_static_mask.MaskCollector | None" = None
+            calib_dir = (Path(profile.recordings_dir) if getattr(profile, "recordings_dir", None)
+                         else _BASE / "recordings") / tag / "calib"
             # 정지 억제로 걸러낸 지팡이 트랙 id — 핫스팟은 트랙당 1회만 기록한다
             # (매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다).
             logged_static: set[int] = set()
@@ -1495,6 +1605,48 @@ class CameraPipeline:
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
                 dets = _filter_excluded(dets, roi_manager, frame)
 
+                # 구조물 수집(새벽 캘리브레이션) — **게이트 이전**에 모은다. 게이트가
+                # 걸러준 것도 마스크 후보가 되어야 하기 때문이다(정지 억제가 2초 뒤에야
+                # 걸리는 그 공백을 마스크로 앞당기는 것이 이 기능의 목적이다).
+                if mjpeg is not None:
+                    deadline = mjpeg.calibration_deadline()
+                    if deadline is not None:
+                        if calib is None:
+                            calib = _static_mask.MaskCollector()
+                            calib_dir.mkdir(parents=True, exist_ok=True)
+                            print(f"[INFO][{tag}] 구조물 수집 시작")
+                        fh_c, fw_c = frame.shape[:2]
+                        for ci in calib.add(dets, fw_c, fh_c):
+                            # 새 클러스터가 생긴 프레임에서만 썸네일 1장 — 운영자가
+                            # "이게 무엇인지" 눈으로 확인할 근거다.
+                            try:
+                                d = dets[min(ci, len(dets) - 1)]
+                                x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
+                                pad = 12
+                                crop = frame[max(0, y1 - pad):y2 + pad,
+                                             max(0, x1 - pad):x2 + pad]
+                                if crop.size:
+                                    name = f"c{ci:03d}.jpg"
+                                    cv2.imwrite(str(calib_dir / name), crop)
+                                    calib.set_thumb(ci, name)
+                            except Exception:          # noqa: BLE001
+                                pass                    # 썸네일은 부가 정보다
+                        mjpeg.calibration_tick()
+                        if time.time() >= deadline:
+                            rows = calib.finish()
+                            n = _static_mask.save_candidates(
+                                profile.traffic_db, rows,
+                                rotation=getattr(profile, "rotation", None),
+                                preset=getattr(profile, "capture_preset", None))
+                            mjpeg.finish_calibration(
+                                {"candidates": n, "frames": calib.frames})
+                            print(f"[INFO][{tag}] 구조물 수집 완료 — 후보 {n}개 "
+                                  f"({calib.frames}프레임)")
+                            calib = None
+                    elif calib is not None:
+                        print(f"[INFO][{tag}] 구조물 수집 취소됨")
+                        calib = None
+
                 # now를 게이트 **앞에서** 잡는다 — 재식별(무덤 보관 기간)과 래치가
                 # 초 단위라 이 값을 넘겨야 한다. fps 계산은 같은 값을 그대로 쓴다.
                 now    = time.time()
@@ -1564,6 +1716,18 @@ class CameraPipeline:
                     except OSError as exc:
                         print(f"[WARN][{tag}] ROI 설정 확인 실패: {exc}")
                         mtime = roi_mtime
+
+                    # 구조물 마스크도 같은 주기에 확인한다 — rois.json과 성격이 같은
+                    # Pi 로컬 런타임 파일이라 새 폴링 메커니즘을 만들 이유가 없다.
+                    try:
+                        mm = Path(mask_path).stat().st_mtime
+                    except OSError:
+                        mm = 0.0
+                    if mm != mask_mtime:
+                        mask_mtime = mm
+                        gates.static_mask = _static_mask.load_mask_file(mask_path)
+                        print(f"[INFO][{tag}] 구조물 마스크 재적용: "
+                              f"{len(gates.static_mask)}개")
 
                     if mtime is not None and mtime != roi_mtime:
                         roi_mtime = mtime

@@ -128,3 +128,96 @@ def test_static_suppression_precedes_the_movement_gate():
         g = chain.step([_det([300, 250, 320, 320])], SHAPE, i * DT)
     assert g.all_cane_tracks[0]["static_frames"] >= STATIC_CANE_SUPPRESS_FRAMES
     assert not g.cane_tracks
+
+
+# ---------------------------------------------------------------------------
+# 구조물 마스크 (2026-09-24 추가)
+# ---------------------------------------------------------------------------
+def _mask(*boxes_px, cls=0):
+    """픽셀 박스 → StaticMask (SHAPE 기준 정규화)."""
+    import static_mask
+    h, w = SHAPE
+    return static_mask.StaticMask(
+        [{"cls": cls, "bbox": [x1 / w, y1 / h, x2 / w, y2 / h]}
+         for (x1, y1, x2, y2) in boxes_px])
+
+
+def test_마스크를_안_주면_동작이_완전히_같다():
+    """**이것이 가장 중요한 계약이다.**
+
+    기존 기기에는 마스크 파일이 없다. `static_mask=None` 경로가 조금이라도 달라지면
+    리포트 §13~§15에서 6런·9관측으로 낸 지표가 전부 무효가 된다.
+    """
+    a = _walk(GateChain(), 12)
+    b = _walk(GateChain(static_mask=None), 12)
+    assert [t["track_id"] for t in a.cane_tracks] == [t["track_id"] for t in b.cane_tracks]
+    assert len(a.roi_targets) == len(b.roi_targets)
+
+
+def test_가만히_있는_구조물은_마스크로_막힌다():
+    """정지 억제(24프레임 ≈ 2초)를 기다리지 않고 **첫 프레임부터** 막아야 한다 —
+    디바운스가 0.5초라 그 공백에서 이미 음성이 나가는 것이 원래 결함이다."""
+    box = [300, 200, 320, 280]
+    chain = GateChain(static_mask=_mask(tuple(box)), require_person=False)
+    out = None
+    for i in range(6):                       # 정지 억제가 걸리기 한참 전
+        out = chain.step([_det(box)], SHAPE, i * DT)
+    assert out.cane_tracks == []
+
+
+def test_같은_자리라도_움직이면_마스크가_무효화된다():
+    """마스크는 사전확률이지 최종 판정이 아니다 — 움직인 트랙은 되살아나야 한다.
+
+    이게 없으면 마스크를 켠 자리가 **영구 사각지대**가 된다.
+    """
+    chain = GateChain(static_mask=_mask((100, 250, 120, 320)), require_person=False)
+    out = _walk(chain, 12, with_person=False)      # 마스크 자리에서 출발해 이동
+    assert out.cane_tracks, "움직였는데도 마스크에 막혔다 — 사각지대가 된다"
+
+
+def test_마스크는_다른_클래스를_건드리지_않는다():
+    """지팡이 마스크가 사람 탐지를 지우면 사람 동반 게이트가 막혀 안내가 사라진다."""
+    chain = GateChain(static_mask=_mask((100, 100, 200, 300), cls=0))
+    out = _walk(chain, 12)
+    assert any(t["class"] == 1 for t in out.tracks), "사람 트랙이 사라졌다"
+
+
+def test_마스크로_걸러낸_것은_트랙당_한_번만_보고된다():
+    """매 프레임 sqlite에 쓰면 탐지 루프가 I/O에 막힌다
+    (`fp_hotspots.log_suppressed`와 같은 계약)."""
+    box = [300, 200, 320, 280]
+    seen = []
+    chain = GateChain(static_mask=_mask(tuple(box)), require_person=False,
+                      on_mask_drop=lambda t: seen.append(t["track_id"]))
+    for i in range(20):
+        chain.step([_det(box)], SHAPE, i * DT)
+    assert len(seen) == 1, f"트랙 1개에 {len(seen)}번 보고됐다"
+
+
+def test_마스크_적중_기억에_상한이_있다():
+    """누적 컬렉션은 반드시 정리한다 — 이 프로젝트의 규율.
+
+    `_graves`(revive_sec 만료)·`_by_person`(del)·`audio_trigger`(del)와 같은 이유다.
+    track_id는 단조 증가하므로 넘치면 작은 id부터 버려도 안전하다(그 트랙은 이미 소멸).
+    """
+    import gate_chain as gc
+    chain = GateChain(static_mask=_mask((300, 200, 320, 280)), require_person=False,
+                      on_mask_drop=lambda t: None)
+    # 상한을 훌쩍 넘는 수의 서로 다른 트랙 id를 직접 밀어 넣는다
+    for i in range(gc._MASK_REPORT_MEMORY * 2):
+        if len(chain._mask_reported) >= gc._MASK_REPORT_MEMORY:
+            keep = sorted(chain._mask_reported)[gc._MASK_REPORT_MEMORY // 2:]
+            chain._mask_reported = set(keep)
+        chain._mask_reported.add(i)
+    assert len(chain._mask_reported) <= gc._MASK_REPORT_MEMORY
+
+
+def test_상한을_넘겨도_트랙당_한_번은_지켜진다():
+    """상한 때문에 같은 트랙이 두 번 보고되면 로그가 부풀어 사각지대 판단을 흐린다."""
+    box = [300, 200, 320, 280]
+    seen = []
+    chain = GateChain(static_mask=_mask(tuple(box)), require_person=False,
+                      on_mask_drop=lambda t: seen.append(t["track_id"]))
+    for i in range(200):                      # 한 트랙이 오래 살아남는 상황
+        chain.step([_det(box)], SHAPE, i * DT)
+    assert len(seen) == 1

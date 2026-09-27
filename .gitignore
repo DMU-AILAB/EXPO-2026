@@ -20,8 +20,21 @@ camera_config.json
 rois.json
 rois.*.json
 
+# ★ 기기 신원 — **api_key가 평문으로 들어 있다.** roi_editor를 로컬에서 띄우고
+# 기기를 등록하면 identity_path = default_path(_ROOT) 규칙에 따라 **저장소 루트에**
+# 생성된다(apps/roi_editor/server.py:75). 커밋되면 그대로 유출이다.
+device_identity.json
+
+# 현장에서 학습한 구조물 마스크 — rois.json과 같은 성격의 Pi 로컬 런타임 파일.
+# 현장마다 좌표가 다르므로 커밋하면 다른 기기에서 엉뚱한 자리를 가린다.
+static_mask.json
+
 # label_tool 진행상황 (작업자 로컬 상태 — 커밋 대상 아님)
+# ★ 슬래시가 든 패턴은 .gitignore 위치 기준으로 **앵커**된다 — 폴더를 apps/ 아래로
+# 옮긴 뒤에도 옛 경로만 적혀 있어 실제 파일(apps/label_tool/reviewed.json)이
+# 걸리지 않고 있었다. 두 경로를 모두 적는다.
 label_tool/reviewed.json
+apps/label_tool/reviewed.json
 
 # 로컬 절대경로가 박혀있는 임시 학습/캘리브레이션용 data.yaml — 사용자마다 경로가
 # 달라서 커밋하면 다른 PC/팀원 환경에서 깨짐 (datasets/data.yaml의 경로 문제와 동일 종류)
@@ -117,6 +130,24 @@ datasets/v2_night/
 datasets/v2_nolkc/
 datasets/data_v2_nolkc.yaml
 
+# make_stratum_variant.py 산출물 (층 비율 변형) — v2에서 하드링크로 재생성 가능.
+# **v2 계열은 이미 위에 있었는데 v3 계열만 빠져 있었다** — v3_ped50 하나가 457MB라
+# `git add -A` 한 번에 들어갈 수 있었다. data_v3_*.yaml도 절대경로를 담아
+# data_v2.yaml과 같은 이유로 커밋하지 않는다.
+datasets/v3_*/
+datasets/data_v3_*.yaml
+
+
+# 강제종료로 생긴 학습 잔재 — ultralytics가 같은 이름이 있으면 <name>-2, -3 …으로
+# 자동 증가시키는데, 중단된 시도가 1~2 epoch짜리 빈 껍데기로 남는다. 실제 산출물은
+# epoch이 가장 많이 쌓인 디렉터리 하나뿐이다(E3에서 base_s2 → base_s2-5가 그랬다).
+# 파일은 지우지 않고 커밋에서만 뺀다.
+runs/white_cane_v14_base_s2/
+runs/white_cane_v14_base_s2-2/
+runs/white_cane_v14_base_s2-3/
+runs/white_cane_v14_base_s2-4/
+# workers=8로 돌렸다가 정합성 때문에 폐기한 런(§15 서두) — 보존용이지 결과가 아니다
+runs/white_cane_v14_base_s1_workers8/
 
 # 학습/export 중간 산출물 — 배포에 쓰지 않고 best.pt에서 언제든 재생성된다
 # (docs/int8_320_quantization_report.md §5 참고). onnx는 12MB, best_saved_model은
