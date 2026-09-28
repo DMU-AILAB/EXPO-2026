@@ -46,6 +46,12 @@ class RFConfig:
     group_window_ms: float = 300.0
     group_turn_timeout_sec: float = 60.0
     group_device_id: str = ""
+    # BLE iBeacon — each device advertises so phones can detect proximity.
+    ble_enabled: bool = False
+    ble_uuid: str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    ble_major: int = 1
+    ble_minor: int = 1
+    ble_tx_power: int = -59
     _extra: dict = field(default_factory=dict, repr=False)
 
 

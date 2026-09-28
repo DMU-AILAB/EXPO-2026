@@ -2109,7 +2109,7 @@ def main() -> None:
                 new_pipeline.start()
                 pipelines[cam_id] = new_pipeline
 
-            stop_event.wait(2.0)
+            stop_event.wait(0.5)
     finally:
         for pipeline in pipelines.values():
             pipeline.stop()
