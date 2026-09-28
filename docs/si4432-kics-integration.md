@@ -135,3 +135,24 @@ The dashboard stores the selection as absolute Pi paths in `rf_config.json`
 watches the file's mtime and applies playlist changes without restarting.
 Changing radio fields (frequency, mode, threshold, SPI or pin) restarts only
 the receiver.
+
+### Group control (several guide devices in range)
+
+KICS KO-06.0046 3.3.2 (4)/(5) requires devices within range of each other to
+avoid overlapping sound and to play one after another by priority. With
+`group_enabled: true`, devices on the same LAN coordinate over UDP broadcast
+(`group_port`, default 47600). This is implemented in `device/rf_group.py`.
+
+1. A device that detects a press broadcasts `heard`.
+2. For `group_window_ms` (300 ms) each device collects the `heard`
+   messages from the other devices.
+3. Participants are ordered by `group_priority` (lower first; ties break by
+   device id). Each device plays after its predecessor broadcasts `done`.
+   If the predecessor stays silent for `group_turn_timeout_sec`, the device
+   plays anyway.
+4. Presses during a round are ignored.
+
+If broadcasts are lost, each device assumes it is alone and plays. The
+failure mode is an overlap, never a silent guide. Set the priority per device
+from the dashboard's **리모컨** tab (`PUT /api/rf/group` on the Pi API).
+Changing it restarts only the RF receiver.

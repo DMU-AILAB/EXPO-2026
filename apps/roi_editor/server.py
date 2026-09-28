@@ -27,7 +27,7 @@ from fastapi.responses import (
     FileResponse, HTMLResponse, RedirectResponse, StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from shapely.geometry import Polygon
 
 # roi_editor/server.py는 서브디렉토리에서 실행되는 스크립트라 sys.path[0]이 그
@@ -459,6 +459,25 @@ async def put_rf_audio(payload: RfAudioPayload):
     data["audio_files"] = files
     _save(data, rf_config_path)
     return {"ok": True, "audio_files": files}
+
+
+class RfGroupPayload(BaseModel):
+    group_enabled: bool
+    group_priority: int = Field(ge=0, le=9999)
+
+
+@app.put("/api/rf/group")
+async def put_rf_group(payload: RfGroupPayload):
+    """군집 제어 — 같은 누름을 들은 기기들이 우선순위(작을수록 먼저)대로 한 대씩 재생.
+
+    바뀌면 camera_live_pi.py가 RF 수신기를 다시 띄운다 (rf_group.py 참고).
+    """
+    data = _load_rf_config()
+    data["group_enabled"] = payload.group_enabled
+    data["group_priority"] = payload.group_priority
+    _save(data, rf_config_path)
+    return {"ok": True, "group_enabled": payload.group_enabled,
+            "group_priority": payload.group_priority}
 
 
 class RoisPayload(BaseModel):

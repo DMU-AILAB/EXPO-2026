@@ -258,6 +258,12 @@ class PiClient:
         res = await self._request("PUT", "/api/rf/audio", json={"audio_files": paths})
         return res.json()
 
+    async def put_rf_group(self, enabled: bool, priority: int) -> dict:
+        """군집 제어 on/off와 우선순위(작을수록 먼저 재생)."""
+        res = await self._request("PUT", "/api/rf/group",
+                                  json={"group_enabled": enabled, "group_priority": priority})
+        return res.json()
+
     # ------------------------------------------------------------------ 통계
 
     async def get_timeseries(self, camera_id: Optional[str] = None,

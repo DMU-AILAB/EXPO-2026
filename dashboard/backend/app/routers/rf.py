@@ -13,7 +13,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -78,3 +78,19 @@ async def update_rf_audio(device_id: str, body: RfAudioUpdate, db: Session = Dep
     result = await pi.put_rf_audio(paths)
     db.commit()
     return {"data": {"audio_files": result.get("audio_files", paths)}, "ok": True}
+
+
+class RfGroupUpdate(BaseModel):
+    group_enabled: bool
+    group_priority: int = Field(ge=0, le=9999)
+
+
+@router.put("/{device_id}/rf/group", response_model=dict)
+async def update_rf_group(device_id: str, body: RfGroupUpdate, db: Session = Depends(get_db),
+                          current_user=Depends(get_current_user)):
+    """같은 누름을 들은 기기들이 이 우선순위 순서(작을수록 먼저)로 한 대씩 재생한다."""
+    device = _get_device(db, device_id)
+    result = await PiClient(device.ip).put_rf_group(body.group_enabled, body.group_priority)
+    return {"data": {"group_enabled": result.get("group_enabled", body.group_enabled),
+                     "group_priority": result.get("group_priority", body.group_priority)},
+            "ok": True}

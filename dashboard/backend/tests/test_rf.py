@@ -98,3 +98,14 @@ def test_put_rf_audio_missing_library_file_is_404(client, auth, device, tmp_path
                      json={"items": [{"source": "library", "filename": "nope.mp3"}]})
     assert res.status_code == 404
     assert put.call_count == 0
+
+
+@respx.mock
+def test_put_rf_group_relays_to_pi(client, auth, device):
+    put = respx.put(f"{PI}/api/rf/group").mock(return_value=httpx.Response(
+        200, json={"ok": True, "group_enabled": True, "group_priority": 2}))
+    res = client.put(f"/api/devices/{device.id}/rf/group", headers=auth,
+                     json={"group_enabled": True, "group_priority": 2})
+    assert res.status_code == 200
+    assert json.loads(put.calls[0].request.content) == {"group_enabled": True, "group_priority": 2}
+    assert res.json()["data"] == {"group_enabled": True, "group_priority": 2}

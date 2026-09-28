@@ -362,3 +362,16 @@ def test_put_rf_audio_rejects_outside_and_missing_paths(client, tmp_path):
     missing = tmp_path / "audio" / "nope.mp3"
     assert client.put("/api/rf/audio", json={"audio_files": [str(missing)]}).status_code == 404
     assert not (tmp_path / "rf_config.json").exists()
+
+
+def test_put_rf_group_saves_priority_and_keeps_other_keys(client, tmp_path):
+    import json
+
+    (tmp_path / "rf_config.json").write_text(
+        json.dumps({"enabled": True, "audio_files": ["/x.mp3"]}), encoding="utf-8")
+    r = client.put("/api/rf/group", json={"group_enabled": True, "group_priority": 2})
+    assert r.status_code == 200
+    saved = json.loads((tmp_path / "rf_config.json").read_text(encoding="utf-8"))
+    assert saved == {"enabled": True, "audio_files": ["/x.mp3"],
+                     "group_enabled": True, "group_priority": 2}
+    assert client.put("/api/rf/group", json={"group_enabled": True, "group_priority": -1}).status_code == 422

@@ -12,6 +12,7 @@ from typing import Callable
 
 from announcement_router import Announcement, AnnouncementRouter
 from kics_protocol import KICS_FREQUENCY_MHZ, KicsPacket, KicsPulseDecoder
+from rf_group import GroupCoordinator, UdpGroupBus, default_device_id
 from si4432_radio import MAX_FREQUENCY_MHZ, MIN_FREQUENCY_MHZ, Si4432Radio
 
 
@@ -37,6 +38,14 @@ class RFConfig:
     rssi_threshold: int = 110
     min_burst_ms: float = 150.0
     rssi_poll_ms: float = 5.0
+    # Group control (rf_group.py): devices on one LAN that hear the same press
+    # play one after another by priority (lower first) instead of all at once.
+    group_enabled: bool = False
+    group_priority: int = 100
+    group_port: int = 47600
+    group_window_ms: float = 300.0
+    group_turn_timeout_sec: float = 60.0
+    group_device_id: str = ""
     _extra: dict = field(default_factory=dict, repr=False)
 
 
@@ -52,6 +61,8 @@ RADIO_FIELDS = (
     "enabled", "frequency_mhz", "spi_bus", "spi_device", "spi_speed_hz", "data_pin",
     "detection_mode", "rssi_threshold", "min_burst_ms", "rssi_poll_ms",
     "pulse_tolerance", "expected_address", "valid_data_codes",
+    "group_enabled", "group_priority", "group_port", "group_window_ms",
+    "group_turn_timeout_sec", "group_device_id",
 )
 
 
@@ -96,6 +107,10 @@ def load_rf_config(path: str | Path | None) -> RFConfig:
         raise ValueError("rssi_threshold must be in [1, 255]")
     if config.min_burst_ms <= 0 or config.rssi_poll_ms <= 0:
         raise ValueError("min_burst_ms and rssi_poll_ms must be positive")
+    if not 1 <= config.group_port <= 65535:
+        raise ValueError("group_port must be in [1, 65535]")
+    if config.group_window_ms <= 0 or config.group_turn_timeout_sec <= 0:
+        raise ValueError("group_window_ms and group_turn_timeout_sec must be positive")
     return config
 
 
@@ -165,6 +180,7 @@ class RFAudioTrigger:
         *,
         radio_factory: Callable[..., Si4432Radio] = Si4432Radio,
         data_pin_factory: Callable[..., _DataPin] = _DataPin,
+        group_bus_factory: Callable[..., UdpGroupBus] = UdpGroupBus,
         packet_callback: Callable[[KicsPacket], None] | None = None,
         trigger_callback: Callable[[str], None] | None = None,
     ) -> None:
@@ -172,6 +188,9 @@ class RFAudioTrigger:
         self.router = router
         self.radio_factory = radio_factory
         self.data_pin_factory = data_pin_factory
+        self.group_bus_factory = group_bus_factory
+        self.group: GroupCoordinator | None = None
+        self.group_bus: UdpGroupBus | None = None
         self.packet_callback = packet_callback
         self.trigger_callback = trigger_callback
         self.radio: Si4432Radio | None = None
@@ -214,6 +233,8 @@ class RFAudioTrigger:
             self.radio.configure_kics(self.config.frequency_mhz)
             if not self.rssi_mode:
                 self.data_pin = self.data_pin_factory(self.config.data_pin, self._on_edge)
+            if self.config.group_enabled:
+                self._start_group()
         except Exception:
             self.close()
             raise
@@ -228,11 +249,31 @@ class RFAudioTrigger:
             print(f"[RF] KICS receiver enabled at {self.config.frequency_mhz:.4f} MHz")
         return True
 
+    def _start_group(self) -> None:
+        device_id = self.config.group_device_id or default_device_id()
+        bus_ref: list[UdpGroupBus] = []
+        self.group = GroupCoordinator(
+            device_id, self.config.group_priority, lambda msg: bus_ref[0].send(msg),
+            window_s=self.config.group_window_ms / 1000.0,
+            turn_timeout_s=self.config.group_turn_timeout_sec,
+        )
+        self.group_bus = self.group_bus_factory(self.group, self.config.group_port)
+        bus_ref.append(self.group_bus)
+        self.group_bus.start()
+        print(f"[RF-GROUP] enabled id={device_id} priority={self.config.group_priority} "
+              f"udp={self.config.group_port}")
+
     def close(self) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
         self._thread = None
+        if self.group_bus is not None:
+            try:
+                self.group_bus.close()
+            finally:
+                self.group_bus = None
+                self.group = None
         if self.data_pin is not None:
             try:
                 self.data_pin.close()
@@ -285,11 +326,18 @@ class RFAudioTrigger:
             except Exception as exc:
                 print(f"[WARN] RF trigger callback failed: {exc}")
         files = self.config.playlist()
+        if self.group is not None:
+            # The coordinator decides when (and whether) this device plays.
+            self.group.local_press(lambda on_done: self._submit(files, event_class, on_done))
+            return
         with self._lock:
             if self._playing:
                 print("[RF] previous announcement still playing; press ignored")
                 return
             self._playing = bool(files)
+        self._submit(files, event_class, self._on_playlist_done)
+
+    def _submit(self, files: tuple[str, ...], event_class: str, on_done) -> None:
         self.router.submit(Announcement(
             source="rf",
             trigger_id=self.event_name,
@@ -297,7 +345,7 @@ class RFAudioTrigger:
             event_db=self.config.event_db,
             event_class=event_class,
             playlist=tuple(files[1:]),
-        ), on_done=self._on_playlist_done)
+        ), on_done=on_done)
 
     def _on_playlist_done(self) -> None:
         with self._lock:

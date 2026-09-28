@@ -1138,10 +1138,30 @@ function RfTab({ device }: Ctx) {
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
+  const [groupEnabled, setGroupEnabled] = useState(false)
+  const [groupPriority, setGroupPriority] = useState(100)
+  const [groupSaved, setGroupSaved] = useState(false)
+
   // 기기에 적용된 목록으로 초기화한다 (저장 후 다시 읽을 때도).
   useEffect(() => {
-    if (rf.data) setSelected(rf.data.audio_files.map((path) => ({ source: 'pi' as const, path })))
+    if (!rf.data) return
+    setSelected(rf.data.audio_files.map((path) => ({ source: 'pi' as const, path })))
+    setGroupEnabled(rf.data.config.group_enabled === true)
+    setGroupPriority(typeof rf.data.config.group_priority === 'number' ? rf.data.config.group_priority : 100)
   }, [rf.data])
+
+  const saveGroup = async () => {
+    setBusy(true); setError(null); setGroupSaved(false)
+    try {
+      await api.setRfGroup(device.id, groupEnabled, groupPriority)
+      setGroupSaved(true)
+      rf.reload()
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const labelOf = (item: RfAudioItem) => {
     if (item.source === 'pi') return baseName(item.path)
@@ -1290,6 +1310,39 @@ function RfTab({ device }: Ctx) {
         <p className="mt-3 text-[10px] text-slate-400">
           리모컨을 한 번 누르면 위 순서대로 이어서 재생합니다. 재생 중에 다시 누르면 무시합니다.
         </p>
+
+        <div className="mt-5 pt-4 border-t border-slate-200/70">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xs font-bold text-slate-700">군집 제어</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                같은 네트워크의 여러 유도기가 한 번의 누름을 함께 들으면, 우선순위 숫자가 작은 기기부터 한 대씩 차례로 재생합니다.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 shrink-0">
+              <input type="checkbox" className="accent-[#2c4be0]" checked={groupEnabled}
+                     onChange={(e) => { setGroupEnabled(e.target.checked); setGroupSaved(false) }} />
+              사용
+            </label>
+          </div>
+          <div className="flex items-end gap-3 mt-3">
+            <label className="flex-1 max-w-[10rem]">
+              <span className={labelCls}>우선순위 (작을수록 먼저)</span>
+              <input type="number" min={0} max={9999} className={inputCls} value={groupPriority}
+                     disabled={!groupEnabled}
+                     onChange={(e) => { setGroupPriority(Math.max(0, Math.min(9999, Number(e.target.value) || 0))); setGroupSaved(false) }} />
+            </label>
+            <button type="button" onClick={saveGroup} disabled={busy || rf.loading}
+                    className="glass-btn px-4 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50">
+              군집 설정 저장
+            </button>
+            {groupSaved && (
+              <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1 pb-1.5">
+                <CheckCircle className="w-3.5 h-3.5" />적용됨
+              </span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

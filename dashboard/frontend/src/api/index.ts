@@ -149,6 +149,12 @@ export const setRfAudio = (deviceId: string, items: RfAudioItem[]) =>
     method: 'PUT', body: { items },
   })
 
+/** 군집 제어 — 같은 누름을 들은 기기들이 priority 순(작을수록 먼저)으로 한 대씩 재생. */
+export const setRfGroup = (deviceId: string, groupEnabled: boolean, groupPriority: number) =>
+  request<{ group_enabled: boolean; group_priority: number }>(`/api/devices/${deviceId}/rf/group`, {
+    method: 'PUT', body: { group_enabled: groupEnabled, group_priority: groupPriority },
+  })
+
 // ---------------------------------------------------------------- 예약 재부팅
 
 export const listSchedules = (deviceId: string) =>

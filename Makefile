@@ -45,6 +45,7 @@ DEPLOY_PY = \
 	device/kics_protocol.py \
 	device/si4432_radio.py \
 	device/rf_audio_trigger.py \
+	device/rf_group.py \
 	device/rf_test_mode.py \
 	device/rf_monitor.py \
 	device/rf_led_test.py \
