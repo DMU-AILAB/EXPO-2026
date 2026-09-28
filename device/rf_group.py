@@ -57,13 +57,18 @@ class GroupCoordinator:
 
     def __init__(self, device_id: str, priority: int, send: Callable[[dict], None], *,
                  window_s: float = 0.3, turn_timeout_s: float = 60.0,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 default_play: PlayFn | None = None) -> None:
         self.device_id = device_id
         self.priority = priority
         self.send = send
         self.window_s = window_s
         self.turn_timeout_s = turn_timeout_s
         self.clock = clock
+        # When set, a device that did not detect the press locally still joins
+        # the round when it receives a peer's ``heard`` broadcast and plays
+        # using this function so all devices sound in order.
+        self.default_play = default_play
         self._round: _Round | None = None
         self._lock = threading.Lock()
 
@@ -102,6 +107,13 @@ class GroupCoordinator:
                     rnd = self._round = _Round(start=now)
                 if rnd.phase == "collect":
                     rnd.participants[sender] = int(msg.get("prio", 0))
+                    # If we did not detect the press locally but a peer did,
+                    # join the round with default_play so all devices sound in
+                    # priority order even when RSSI differs between units.
+                    if not rnd.joined and self.default_play is not None:
+                        rnd.participants[self.device_id] = self.priority
+                        rnd.joined = True
+                        rnd.play = self.default_play
             elif msg.get("type") == "done" and rnd is not None:
                 rnd.done.add(sender)
                 rnd.last_progress = now

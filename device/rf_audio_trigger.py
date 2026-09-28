@@ -262,6 +262,7 @@ class RFAudioTrigger:
             device_id, self.config.group_priority, lambda msg: bus_ref[0].send(msg),
             window_s=self.config.group_window_ms / 1000.0,
             turn_timeout_s=self.config.group_turn_timeout_sec,
+            default_play=self._group_play,
         )
         self.group_bus = self.group_bus_factory(self.group, self.config.group_port)
         bus_ref.append(self.group_bus)
@@ -352,6 +353,10 @@ class RFAudioTrigger:
             event_class=event_class,
             playlist=tuple(files[1:]),
         ), on_done=on_done)
+
+    def _group_play(self, on_done: Callable[[], None]) -> None:
+        """PlayFn used as default_play: called when a peer's heard triggers us."""
+        self._submit(self.config.playlist(), "rf_rssi", on_done)
 
     def _on_playlist_done(self) -> None:
         with self._lock:
