@@ -1,6 +1,6 @@
 # =============================================================================
 # VisionGuide — Pi 배포 자동화
-# 필요: rsync + ssh  (Git Bash 또는 WSL)
+# 필요: tar + ssh  (Git Bash · WSL · Linux 기본 제공 — rsync 불필요)
 #       Windows에서 make 미설치 시: scoop install make  /  choco install make
 #
 # 사용법:
@@ -22,6 +22,11 @@ PI      ?= 192.168.0.89
 # 그대로는 안 되던 원인이다. 환경변수와 겹치지 않는 이름으로 분리한다.
 PI_USER ?= ailab
 DEST     = $(PI_USER)@$(PI):~/visionguide
+# 파일 전송은 `tar | ssh tar -x`로 한다. rsync는 Windows Git Bash에 기본으로 없어서
+# `make sync`가 Windows에서 아예 돌지 않았다. tar는 Git Bash·WSL·Linux 모두에 있고,
+# 파일 수만큼 ssh를 열지 않으니 키가 없을 때 비밀번호 입력도 한 번으로 줄어든다.
+# -m: Pi 도착 시각을 mtime으로 쓴다 (PC와 Pi 시계가 어긋나도 "미래 파일" 경고 없음).
+REMOTE_UNTAR = ssh $(PI_USER)@$(PI) "mkdir -p ~/visionguide && tar -xmf - -C ~/visionguide"
 
 # Pi Python 경로: pyenv 3.10 우선, 없으면 시스템 python3
 # pyenv 설치 후 make deploy PI_PYTHON=~/.pyenv/versions/3.10.14/bin/python 으로 덮어쓰기 가능
@@ -41,6 +46,9 @@ DEPLOY_PY = \
 	device/si4432_radio.py \
 	device/rf_audio_trigger.py \
 	device/rf_test_mode.py \
+	device/rf_monitor.py \
+	device/rf_led_test.py \
+	device/rf_sweep.py \
 	device/gpio_controls.py \
 	device/fan_controller.py \
 	device/yolo_postprocess.py \
@@ -145,31 +153,29 @@ deploy: sync sync-roi-editor deps deps-roi-editor
 ## Pi로 카메라 앱 파일만 전송
 sync:
 	@echo "[SYNC] $(DEST) 으로 카메라 앱 파일 전송..."
-	ssh $(PI_USER)@$(PI) "$(foreach d,$(DEPLOY_MODEL_DIRS),mkdir -p ~/visionguide/$(d) &&) true"
-	rsync -avz --progress $(DEPLOY_PY) $(DEST)/
-	rsync -avz --progress configs/examples/rf_config_example.json $(DEST)/
-	@# 모델 파일은 **파일별로** 따로 전송한다. 한 rsync에 두 파일을 함께 넘기면
-	@# EdgeTPU 컴파일본이 없는 모델 디렉터리에서 rsync가 "No such file" 로 실패해
-	@# 배포 전체가 중단된다 — EdgeTPU 컴파일은 현재 범위 밖이라 v2 외에는 없다.
-	@# best_int8_edgetpu.tflite는 있으면 보내고 없으면 건너뛴다.
-	for d in $(DEPLOY_MODEL_DIRS); do \
-		rsync -avz --progress $$d/best_int8.tflite $(DEST)/$$d/; \
+	@# device/ 아래 소스를 Pi의 ~/visionguide/ 에 **평면으로** 풀어놓는다.
+	tar -C device -cf - $(notdir $(DEPLOY_PY)) | $(REMOTE_UNTAR)
+	tar -C configs/examples -cf - rf_config_example.json | $(REMOTE_UNTAR)
+	@# 모델은 있는 파일만 모아 보낸다. best_int8_edgetpu.tflite는 EdgeTPU 컴파일본이
+	@# 있는 디렉터리에만 있다 — 없는 파일을 목록에 넣으면 tar가 실패해 배포가 중단된다.
+	files=""; for d in $(DEPLOY_MODEL_DIRS); do \
+		files="$$files $$d/best_int8.tflite"; \
 		if [ -f $$d/best_int8_edgetpu.tflite ]; then \
-			rsync -avz --progress $$d/best_int8_edgetpu.tflite $(DEST)/$$d/; \
+			files="$$files $$d/best_int8_edgetpu.tflite"; \
 		else \
 			echo "[SKIP] $$d/best_int8_edgetpu.tflite 없음 (EdgeTPU 미컴파일 — CPU TFLite 경로로 동작)"; \
 		fi; \
-	done
+	done; \
+	tar -cf - $$files | $(REMOTE_UNTAR)
+	@echo "[SYNC] 완료 — 반영하려면: make restart PI=$(PI)"
 
 ## Pi로 ROI 에디터 파일만 전송
 ## 주의: roi_editor/server.py가 foot_traffic_counter.py(sync 타겟으로 배포됨)를
 ## import하므로, 최초 배포는 이 타겟만 단독 실행하지 말고 반드시 make deploy로 함께 배포할 것.
 sync-roi-editor:
 	@echo "[SYNC] ROI 에디터 파일 전송..."
-	ssh $(PI_USER)@$(PI) "mkdir -p ~/visionguide/roi_editor/static"
-	rsync -avz --progress apps/roi_editor/ $(DEST)/roi_editor/
-	rsync -avz --progress apps/simulator/roi_manager.py $(DEST)/simulator/
-	ssh $(PI_USER)@$(PI) "mkdir -p ~/visionguide/simulator && touch ~/visionguide/simulator/__init__.py"
+	tar -C apps --exclude=__pycache__ -cf - roi_editor simulator/roi_manager.py | $(REMOTE_UNTAR)
+	ssh $(PI_USER)@$(PI) "touch ~/visionguide/simulator/__init__.py"
 
 ## Pi에 카메라 앱 의존성 설치
 deps:
@@ -219,7 +225,7 @@ run:
 ## Wi-Fi 온보딩과 현장 유지보수를 위한 호환 경로로 남아 있다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	rsync -avz deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-network.sudoers deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(PI_USER)@$(PI):/tmp/
+	scp deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-network.sudoers deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(PI_USER)@$(PI):/tmp/
 	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
 	ssh $(PI_USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo install -m 440 /tmp/visionguide-network.sudoers /etc/sudoers.d/visionguide-network && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(PI_USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(PI_USER)/visionguide/deploy/"
 	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g' /tmp/visionguide-systemctl.sudoers && sudo install -m 440 /tmp/visionguide-systemctl.sudoers /etc/sudoers.d/visionguide-systemctl && sudo visudo -cf /etc/sudoers.d/visionguide-systemctl"
