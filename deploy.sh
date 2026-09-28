@@ -18,7 +18,7 @@
 set -euo pipefail
 
 PI="${1:-}"
-PI_PASS="${2:-12345678}"
+PI_PASS="${2:-${PI_PASS:-}}"   # 인자 > 환경변수 PI_PASS > 대화식 입력
 PI_USER="${PI_USER:-ailab}"
 
 # ── 대화식 IP 입력 ────────────────────────────────────────────────────────────
@@ -26,6 +26,12 @@ if [[ -z "$PI" ]]; then
     read -rp "Pi IP 주소를 입력하세요: " PI
 fi
 [[ -z "$PI" ]] && { echo "오류: IP가 없습니다."; exit 1; }
+
+# sudo 비밀번호 — sudoers 설치 전 Pi에서만 필요
+if [[ -z "$PI_PASS" ]]; then
+    read -rsp "Pi sudo 비밀번호 (sudoers 설치 후 생략 가능, Enter로 건너뜀): " PI_PASS
+    echo
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"

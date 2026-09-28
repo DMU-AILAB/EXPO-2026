@@ -24,7 +24,8 @@ PI_USER ?= ailab
 # Pi sudo 비밀번호 — sudoers가 설치되어 있으면 쓰이지 않는다.
 # visionguide-systemctl sudoers를 설치하면 restart가 비밀번호 없이 동작한다.
 # `make install-service`나 `./deploy.sh`가 sudoers를 자동 설치한다.
-PI_PASS ?= 12345678
+# 환경변수나 커맨드라인으로 전달:  make restart PI=... PI_PASS=mypassword
+PI_PASS ?=
 DEST     = $(PI_USER)@$(PI):~/visionguide
 # 파일 전송은 `tar | ssh tar -x`로 한다. rsync는 Windows Git Bash에 기본으로 없어서
 # `make sync`가 Windows에서 아예 돌지 않았다. tar는 Git Bash·WSL·Linux 모두에 있고,
