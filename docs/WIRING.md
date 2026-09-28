@@ -1,309 +1,271 @@
 # VisionGuide — Raspberry Pi 4 배선 가이드
 
-물리 버튼/LED/팬 GPIO와 AS4432-SMD RF 모듈 배선을 정리한 문서. 소프트웨어 설정은 `CLAUDE.md`의
-"물리 버튼 / LED (GPIO)" 절과 각 스크립트(`gpio_controls.py`, `fan_controller.py`,
-`camera_live_pi.py`) 상단 docstring 및 [`docs/si4432-kics-integration.md`](si4432-kics-integration.md)를 참고.
+물리 버튼·LED·팬·RF 모듈의 GPIO 배선을 정리한 문서.  
+소프트웨어 설정은 `gpio_controls.py`, `fan_controller.py`, `camera_live_pi.py` 상단 docstring과
+[`docs/si4432-kics-integration.md`](si4432-kics-integration.md)를 참고한다.
 
-> **PoE 어댑터 사용 여부**: 현재 장비처럼 PoE 어댑터가 40핀 헤더의 **물리 핀 1~6번(3.3V, 5V×2,
-> GND, GPIO2/3)을 점유**하면 아래의 PoE용 전원 버튼 배선을 사용한다. PoE 어댑터가 없다면 GPIO3(물리
-> 핀 5)의 기본 전원 버튼 배선을 사용할 수 있으며, 이 경우 GND 물리 핀 6도 사용 가능하다.
-> 기존 버튼·LED·팬 배선은 충돌을 피하기 위해 어느 경우에도 7번 이후의 지정 핀을 유지한다.
+---
 
-## 핀 배정 요약
+## Pi 4 40핀 헤더 레이아웃
 
-| 기능 | GPIO(BCM) | 물리 핀 번호 | GND 핀 | 비고 |
-|------|-----------|--------------|--------|------|
-| 전원(종료) 버튼 — PoE 있음 | GPIO4 | 7 | 9 | `dtoverlay=gpio-shutdown,gpio_pin=4` |
-| 전원(종료) 버튼 — PoE 없음 | GPIO3 | 5 | 6 | `dtoverlay=gpio-shutdown` 기본값 |
-| Wi-Fi 전환 버튼 | GPIO17 | 11 | 9 | 내부 풀업 사용 — 외부 저항 불필요 |
-| Pi 통합 상태 LED | GPIO27 | 13 | 아무 GND 핀 | 저항 필수 (220~330Ω), 패턴으로 정상/AP/전환/오류 표시 |
-| Wi-Fi 전환 부저 | GPIO25 | 22 | 아무 GND 핀 | 액티브 부저 가정 (신호만 주면 소리남) |
-| 냉각팬 (스위칭 신호) | GPIO22 | 15 | — (아래 참고) | 트랜지스터/MOSFET 통해서만 연결, 전원은 USB 5V |
+```
+       3.3V  [ 1] [ 2]  5V
+ GPIO2(SDA1) [ 3] [ 4]  5V
+ GPIO3(SCL1) [ 5] [ 6]  GND  ◀ 전원버튼 GND (PoE 없음)
+      GPIO4  [ 7] [ 8]  GPIO14
+        GND  [ 9] [10]  GPIO15  ◀ 핀 9: 전원버튼 GND (PoE 있음) + Wi-Fi 버튼 GND
+     GPIO17  [11] [12]  GPIO18
+     GPIO27  [13] [14]  GND  ◀ 핀 14: LED GND
+     GPIO22  [15] [16]  GPIO23
+      3.3V   [17] [18]  GPIO24
+GPIO10(MOSI) [19] [20]  GND  ◀ 핀 20: 부저 GND
+ GPIO9(MISO) [21] [22]  GPIO25
+GPIO11(SCLK) [23] [24]  GPIO8(CE0)
+        GND  [25] [26]  GPIO7(CE1)  ◀ 핀 25: RF SDN GND
+     ID_SDA  [27] [28]  ID_SCL
+      GPIO5  [29] [30]  GND  ◀ 핀 30: RF 모듈 GND
+      GPIO6  [31] [32]  GPIO12
+     GPIO13  [33] [34]  GND  ◀ 핀 34: 팬 트랜지스터 GND (PoE 없음)
+     GPIO19  [35] [36]  GPIO16
+     GPIO26  [37] [38]  GPIO20
+        GND  [39] [40]  GPIO21
+```
 
-라즈베리파이 4 GND 핀은 6, 9, 14, 20, 25, 30, 34, 39번이다. PoE 어댑터를 사용하면 1~6번이
-점유되므로 6번을 제외하고, PoE가 없으면 6번도 사용할 수 있다.
+> **PoE 어댑터 사용 시**: 물리 핀 1~6이 PoE HAT에 점유되어 핀 6 GND를 사용할 수 없다.  
+> 핀 6이 필요한 자리(전원 버튼)는 핀 9 GND로 대체하고, GPIO22 팬 회로와 5V 직결 팬의
+> GND는 USB-A 검은선으로 뽑는다.
+
+---
+
+## 핀 배정 전체 요약
+
+| 기능 | BCM | 물리(신호) | 물리(GND) | 비고 |
+|------|-----|-----------|-----------|------|
+| 전원 버튼 — PoE **없음** | GPIO3 | 5 | **6** | `dtoverlay=gpio-shutdown` |
+| 전원 버튼 — PoE **있음** | GPIO4 | 7 | **9** | `dtoverlay=gpio-shutdown,gpio_pin=4` |
+| Wi-Fi 전환 버튼 | GPIO17 | 11 | **9** | 내부 풀업, 핀 9 공유 |
+| 상태 LED | GPIO27 | 13 | **14** | 220~330 Ω 직렬 필수 |
+| 부저 | GPIO25 | 22 | **20** | 액티브 부저 모듈 |
+| 냉각팬 스위칭 | GPIO22 | 15 | **34** (PoE 없음) / **USB GND** (PoE 있음) | 트랜지스터/MOSFET 이미터·소스 |
+| RF 모듈 VCC | — | 17 (3.3V) | — | 3.3V 전용, 5V 금지 |
+| RF 모듈 GND (pad 1) | — | — | **30** | 모듈 공통 접지 |
+| RF 모듈 SDN (pad 2) | — | — | **25** | SDN → GND 고정 (항상 활성화) |
+| RF 모듈 NSEL/CS | GPIO8 / CE0 | 24 | — | SPI 칩 선택 |
+| RF 모듈 SCLK | GPIO11 / SCLK | 23 | — | SPI 클록 |
+| RF 모듈 MOSI | GPIO10 / MOSI | 19 | — | Pi → 모듈 |
+| RF 모듈 MISO | GPIO9 / MISO | 21 | — | 모듈 → Pi |
+| RF 모듈 GPIO2 (RX DATA) | GPIO23 | 16 | — | 직접 복조 데이터 출력 |
 
 ---
 
 ## 1. 전원(종료) 버튼
 
-### PoE 어댑터가 없는 경우 — GPIO3 (물리 5번, 기본 연결)
-
-PoE HAT가 없고 GPIO3을 I2C 등 다른 기능으로 사용하지 않는다면, Raspberry Pi의 기본
-`gpio-shutdown` 핀을 사용한다.
+### PoE 어댑터 없는 경우 — GPIO3 · 물리 5번
 
 ```
 [모멘터리 버튼]
-   한쪽 ──── GPIO3 (물리 핀 5)
-   다른쪽 ── GND   (물리 핀 6)
+  한쪽   ──── GPIO3  (물리 핀 5)
+  다른쪽 ────  GND   (물리 핀 6)
 ```
 
-- 외부 저항 불필요. `gpio-shutdown` 오버레이의 내부 풀업을 사용한다.
-- `/boot/config.txt` (Bookworm 이후는 `/boot/firmware/config.txt`)에 다음 한 줄을 추가한다.
+- 외부 저항 불필요. `gpio-shutdown` 오버레이의 내부 풀업 사용.
+- `/boot/firmware/config.txt` (Bookworm 이전은 `/boot/config.txt`)에 추가:
 
   ```ini
   dtoverlay=gpio-shutdown
   ```
 
-- 짧게 누르면 안전 종료하고, 종료된 상태에서 다시 누르면 GPIO3의 wake 기능으로 부팅할 수 있다.
-- 이 연결은 전원을 물리적으로 차단하는 스위치가 아니다. 종료 후에도 대기전력이 남는다.
-- GPIO3을 I2C SCL 등 다른 용도로 이미 사용한다면 버튼과 그 기능을 동시에 연결하지 않는다.
+- 짧게 누르면 안전 종료, 종료 상태에서 다시 누르면 wake(부팅).
 
-### PoE 어댑터가 있는 경우 — GPIO4 (물리 7번)
+### PoE 어댑터 있는 경우 — GPIO4 · 물리 7번
 
 ```
 [모멘터리 버튼]
-   한쪽 ──── GPIO4 (물리 핀 7)
-   다른쪽 ── GND (물리 핀 9)
+  한쪽   ──── GPIO4  (물리 핀 7)
+  다른쪽 ────  GND   (물리 핀 9)
 ```
 
-- 외부 저항 불필요 (커널이 풀업 처리).
-- 기본 GPIO(GPIO3, 물리 5번)는 PoE 어댑터가 점유해서 사용 불가 — `gpio_pin` 파라미터로 GPIO4 지정.
-- `/boot/config.txt` (Bookworm 이후는 `/boot/firmware/config.txt`)에 `dtoverlay=gpio-shutdown,gpio_pin=4` 한 줄 추가 후 재부팅.
-- 짧게 누르면 안전 종료한다. GPIO4 방식은 완전히 halt된 상태에서 같은 버튼으로 깨우는 GPIO3의 기본 wake 동작을 제공하지 않는다.
-- 보드 자체 대기전력은 남아있는 상태(완전 차단 아님) — 필요하면 물리 전원 스위치를 병행.
+- 외부 저항 불필요 (커널 풀업).
+- 물리 핀 5(GPIO3)와 6(GND)은 PoE HAT가 점유 → 사용 불가.
+- `/boot/firmware/config.txt`에 추가:
 
-## 2. Wi-Fi 전환 버튼 — GPIO17 (물리 11번) + 통합 상태 LED — GPIO27 (물리 13번) + 부저 — GPIO25 (물리 22번)
+  ```ini
+  dtoverlay=gpio-shutdown,gpio_pin=4
+  ```
 
-이 Pi의 무선 칩은 홈 Wi-Fi(`204_WIFI`)와 자체 핫스팟(`VisionGuide-AP`)을 동시에 켤 수 없는 것으로
-실측 확인되어(둘 다 wlan0 하나를 두고 경합), 버튼으로 두 모드를 전환하는 방식을 택했다.
+- GPIO4 방식은 완전 halt 후 같은 버튼으로 wake하는 GPIO3 기본 동작을 지원하지 않는다.
 
-```
-[모멘터리 버튼]
-   한쪽 ──── GPIO17 (물리 핀 11)
-   다른쪽 ── GND (물리 핀 9)
+---
 
-GPIO27 (물리 핀 13) ──[저항 220~330Ω]── LED(+) ── LED(-) ── GND (아무 GND 핀)
-
-GPIO25 (물리 핀 22) ──── 부저(+)
-                        부저(-) ──── GND (아무 GND 핀)
-```
-
-- 내부 풀업 사용(`gpio_controls.py`에서 `pull_up=True`) — 버튼 쪽은 외부 저항 불필요.
-- 누르면 `nmcli connection up`으로 홈 Wi-Fi ↔ 핫스팟 전환. Pi 로컬에서 D-Bus로 직접 호출하므로
-  SSH 등 원격 작업과 달리 전환 도중 연결이 끊길 위험이 없음.
-- 통합 상태 LED는 `visionguide-controls`가 단독으로 구동한다. 패턴은 다음과 같다.
-  - 홈 Wi-Fi + 카메라 정상: 1회 짧은 점멸 반복
-  - AP(페어링) 모드: 2회 짧은 점멸을 계속 반복
-  - Wi-Fi 전환 직후 3초: 전환된 모드의 패턴을 반복
-  - 카메라 파이프라인 중지 또는 서비스 오류: 3회 점멸 반복
-- 부저: 전환 시 1회 = 홈 Wi-Fi, 2회 = 핫스팟, 3회(빠르게) = 전환 실패.
-- 부저는 액티브 부저 모듈(신호선에 GPIO만 연결하면 소리남) 가정 — 패시브 피에조라 소리가 안 나면
-  `TonalBuzzer`로 교체 필요.
-
-## 3. 단일 상태 LED 사용
-
-기존 GPIO24(물리 18번)의 Wi-Fi 상태 LED는 분리하고, GPIO27(물리 13번)의 LED 하나만
-사용한다. GPIO27 LED는 버튼 서비스가 카메라 지표(`device_metrics`)와
-`visionguide-device` 상태, Wi-Fi 연결 상태를 함께 확인해 패턴을 표시한다.
-저항 없이 GPIO에 LED를 직결하지 않는다.
-
-## 4. 냉각팬 — 5V 직접 연결 또는 GPIO22 스위칭
-
-5V 2선(+/-) DC 팬을 **5V 전원 핀에 직접 연결하면 항상 켜진 상태**로 사용할 수
-있다. 소프트웨어로 켜고 끄려면 아래의 GPIO22 스위칭 방식을 선택한다. 팬 모터를
-GPIO 출력 핀에 직접 연결하는 것은 두 방식 모두 금지한다.
-
-### A. 5V 전원 핀에 직접 연결 — 항상 켜짐
-
-```text
-팬 (+) ───────── Pi 물리 핀 2 또는 4 (+5V)
-팬 (-) ───────── Pi 물리 핀 6 또는 9 (GND)
-```
-
-- 이 방식에는 GPIO22, 트랜지스터/MOSFET, 1kΩ 저항이 필요 없다.
-- 팬은 Pi에 5V가 공급되는 동안 계속 회전한다. `fan_controller.py`나
-  `visionguide-fan.service`로 팬을 끄거나 속도 조절할 수 없다.
-- PoE HAT가 장착된 현재 구성에서는 물리 핀 2/4가 가려져 있으므로 USB-A
-  포트의 `빨간선=+5V`, `검은선=GND`를 사용한다. PoE가 없을 때만 물리 핀
-  2/4를 사용한다.
-- 팬의 정격 전압이 5V인지 확인하고, 기동전류를 포함한 소비전류가 Pi의
-  5V 전원 공급 여유 안에 있는지 확인한다. 대형 팬이나 여러 팬은 외부
-  5V 전원을 사용한다.
-- 직접 연결 시에도 팬의 `-`와 Pi GND는 공통이어야 한다. 전원을 켜기 전에
-  VCC-GND 단락과 팬 극성을 확인한다.
-
-### B. GPIO22로 켜고 끄는 경우 — 선택 사항
-
-아래 방식은 팬을 소프트웨어로 제어해야 할 때만 사용한다. 팬 전원은 5V에서
-공급하고, NPN 트랜지스터 또는 팬 기동전류를 감당하는 로직레벨 N-MOSFET으로
-저측 스위칭한다.
-
-#### 5V를 꽂는 위치
-
-- **현재처럼 PoE 어댑터가 장착된 경우**: GPIO 헤더의 물리 핀 2/4가 PoE HAT에
-  가려져 있으므로, 여유 USB-A 포트에서 `빨간선=+5V`, `검은선=GND`를 탭한다.
-- **PoE 어댑터가 없는 경우**: GPIO 헤더의 물리 핀 **2 또는 4(+5V)**를 팬의
-  `+` 전원으로 사용한다. 팬 스위칭 회로의 GND는 물리 핀 **6, 9, 14, 20, 25,
-  30, 34, 39 중 하나**에 연결한다. 전원 버튼이 물리 핀 5–6을 사용 중이어도
-  물리 핀 6은 GND이므로 팬 회로와 공유할 수 있다.
-- 팬 전류가 크거나 외부 5V 어댑터를 사용할 때는 외부 전원 `+5V`를 팬에만
-  연결하고, 외부 전원 `GND`와 Pi GND만 공통으로 연결한다. 외부 5V와 Pi의
-  5V 핀을 서로 연결해 역전류를 만들지 않는다.
-
-5V 팬의 `+`는 위 5V 전원에 연결하고, `-`는 아래 트랜지스터/MOSFET의
-콜렉터/드레인으로 연결한다. 팬을 5V와 GND에 직접 연결하면 항상 회전하고
-`fan_controller.py`의 종료 시 OFF 제어가 동작하지 않는다. 직접 연결 방식은
-위의 A 항목을 따른다.
+## 2. Wi-Fi 전환 버튼 · 상태 LED · 부저
 
 ```
-                    +5V
-          (PoE 있음: USB-A 빨간선 / PoE 없음: 물리 핀 2 또는 4)
-                          │
-                        [팬 +]
-                          │
-                        [팬 -]
-                          │
-                     ┌────┴────┐
-                     │ 콜렉터/드레인 │
-GPIO22 ──[1kΩ 저항]── │ 베이스/게이트 │  (트랜지스터/MOSFET)
-                     │ 이미터/소스   │
-                     └────┬────┘
-                          │
-                         GND (PoE 있음: USB 검은선 / PoE 없음: 물리 핀 6/9 등)
+[모멘터리 버튼 — Wi-Fi 전환]
+  한쪽   ──── GPIO17 (물리 핀 11)
+  다른쪽 ────  GND   (물리 핀 9)       ← 전원버튼(PoE 있음)과 공유 가능
+
+[상태 LED]
+  GPIO27 (물리 핀 13) ──[220~330Ω]── LED(+) ── LED(-) ──  GND (물리 핀 14)
+
+[부저 — 액티브 부저]
+  GPIO25 (물리 핀 22) ──── 부저(+)
+                           부저(-) ──── GND (물리 핀 20)
+```
+
+- Wi-Fi 버튼: 내부 풀업(`pull_up=True`)으로 외부 저항 불필요.
+- LED: 저항 없이 GPIO에 직결 **금지** — 저항 없으면 GPIO 손상 위험.
+- 부저: 액티브 부저(신호만 넣으면 소리) 가정. 패시브 피에조는 `TonalBuzzer` 필요.
+
+**LED 패턴:**
+| 패턴 | 의미 |
+|------|------|
+| 1회 짧은 점멸 반복 | 홈 Wi-Fi 연결 + 카메라 정상 |
+| 2회 짧은 점멸 반복 | AP(핫스팟) 모드 |
+| 3회 점멸 반복 | 카메라 파이프라인 오류 |
+
+**부저 패턴:** 전환 후 1회 = 홈 Wi-Fi, 2회 = 핫스팟, 3회(빠르게) = 전환 실패.
+
+---
+
+## 3. 냉각팬
+
+### A. 5V 직결 — 항상 켜짐
+
+```
+팬(+) ──── 5V
+            PoE 있음: USB-A 빨간선
+            PoE 없음: 물리 핀 2 또는 4
+팬(-) ────  GND
+            PoE 있음: USB-A 검은선
+            PoE 없음: 물리 핀 6 또는 9
+```
+
+- `fan_controller.py` / `visionguide-fan.service` 제어 불가.
+- 사용 시 `sudo systemctl disable --now visionguide-fan`으로 GPIO22 서비스 비활성화 권장.
+
+### B. GPIO22 스위칭 — 소프트웨어 제어
+
+5V 전원으로 팬을 구동하고, GPIO22가 NPN 트랜지스터/N-MOSFET 저측을 스위칭한다.
+
+```
+              +5V
+    PoE 있음: USB-A 빨간선
+    PoE 없음: 물리 핀 2 또는 4
+                 │
+               [팬 +]
+                 │
+               [팬 -]
+                 │
+            ┌───┴──────────┐
+            │  콜렉터/드레인  │
+GPIO22 ─[1kΩ]─ 베이스/게이트  │  ← 물리 핀 15
+            │  이미터/소스   │
+            └───┬──────────┘
+                │
+               GND
+    PoE 있음: USB-A 검은선
+    PoE 없음: 물리 핀 34
 
 플라이백 다이오드 (1N4001 등, 필수):
-  캐소드(띠 있는 쪽) ── 팬(+) / +5V
-  애노드(띠 없는 쪽) ── 팬(-) / 트랜지스터 콜렉터·드레인
+  캐소드(띠) ──── 팬(+) / +5V 쪽
+  애노드      ──── 팬(-) / 콜렉터·드레인 쪽
 ```
 
-- 5V 팬이라면 반드시 5V에만 연결한다. 팬 라벨이 12V인 경우 5V에서 저속으로 동작할 수
-  있지만, 정상 성능은 보장되지 않는다.
-- GPIO 헤더의 5V 핀(2/4번)을 사용할 때는 PoE HAT가 없는지 확인한다. PoE HAT가
-  있으면 **여유 USB-A 포트에서 5V/GND를 탭**한다(USB 케이블의 빨간선/검은선 또는
-  USB 전원 브레이크아웃 사용).
-- 플라이백 다이오드 생략 시 팬 off 순간 역기전력으로 트랜지스터/GPIO 손상 위험 — 반드시 연결.
-- 2N2222/2N7000은 소형 팬의 측정된 기동전류가 부품 정격 안에 있을 때만 사용하고,
-  그보다 큰 팬은 정격 전류·발열 여유가 있는 로직레벨 MOSFET을 선택한다.
-- 이 B 방식에서는 부팅 시 자동 ON, `systemctl stop` 때 SIGTERM으로 OFF 된다.
-  A 방식의 직접 연결 팬은 Pi가 종료되어도 5V 레일이 살아 있으면 계속 켜져
-  있으므로, 완전히 끄려면 물리 전원 스위치나 별도 전원 차단 회로가 필요하다.
-- A 방식을 사용할 때는 선택적으로 `sudo systemctl disable --now visionguide-fan`을
-  실행해 GPIO22 팬 제어 서비스를 끈다. 서비스가 GPIO22를 토글해도 직접 연결된
-  팬의 전원에는 영향을 주지 않지만, 불필요한 GPIO 점유를 피할 수 있다.
+- 플라이백 다이오드 생략 시 팬 OFF 순간 역기전력으로 GPIO 손상 위험 — 반드시 연결.
+- 부팅 시 자동 ON, `systemctl stop` 시 SIGTERM → OFF.
 
 ---
 
-## 부품 체크리스트
+## 4. AS4432-SMD RF 모듈
 
-- 모멘터리 푸시버튼 × 2 (전원/Wi-Fi 전환)
-- LED × 2 (Wi-Fi 상태용, 동작확인용) + 저항 220~330Ω × 2
-- 액티브 부저 모듈 × 1
-- 선택(스위칭 방식): NPN 트랜지스터 또는 로직레벨 MOSFET × 1
-- 선택(스위칭 방식): 저항 1kΩ × 1 (트랜지스터 베이스/게이트용)
-- 선택(스위칭 방식): 플라이백 다이오드(1N4001/1N4148 등) × 1
-- 점퍼 와이어, 브레드보드 또는 만능기판
+### 연결표
 
----
+| AS4432-SMD 패드 | 신호 | BCM | 물리 핀 | 비고 |
+|---:|---|---|---|---|
+| 1 | GND | — | **30** | 모듈 공통 접지 |
+| 2 | SDN | — | **25** | GND에 연결 — 항상 활성화 |
+| 3 | NIRQ | 미연결 | — | direct-mode에서 미사용 |
+| 4 | NSEL/CS | GPIO8 / CE0 | 24 | SPI 칩 선택 |
+| 5 | SCLK | GPIO11 / SCLK | 23 | SPI 클록 |
+| 6 | SDI/MOSI | GPIO10 / MOSI | 19 | Pi → 모듈 |
+| 7 | SDO/MISO | GPIO9 / MISO | 21 | 모듈 → Pi |
+| 8 | VCC | 3.3V | **17** | 3.3V 전용 (5V 금지) |
+| 9 | GPIO2 | GPIO23 | 16 | RX DATA 출력 |
+| 10 | GPIO1 | 미연결 | — | 미사용 |
+| 11 | GPIO0 | 미연결 | — | 미사용 |
+| 12 | GND | 미연결 | — | pad 1 GND가 이미 연결됨 |
 
-## 5. AS4432-SMD RF 모듈 — Raspberry Pi SPI/GPIO
-
-### 먼저 확인할 점: 358.5000MHz 호환성
-
-현재 소프트웨어는 KICS `358.5000MHz`를 수신하도록 설정되어 있다. 그러나
-AS4432-SMD V4 제품 사양은 동작 대역을 `425~525MHz`로 명시하고, 기본 스프링
-안테나와 매칭 회로도 433MHz용이다. 따라서 아래 배선이 전기적으로 맞더라도
-이 모듈로 358.5000MHz가 수신된다고 보장할 수 없다. 실제 제품에서는
-358.5MHz용 매칭 네트워크/안테나가 적용된 모듈 또는 해당 대역용 Si4432 RF
-보드를 사용해야 한다. 칩 자체의 주파수 범위만 보고 모듈의 RF 성능을 판단하지
-말고, 공급업체에 358.5MHz 수신 가능 여부를 확인한 뒤 시험한다.
-
-아래 핀 번호는 사용자가 확인한 12-pad `SMD4432-SMD` 순서 기준이다.
-`GND → SDN → NIRQ → NSEL → SCLK → SDI → SDO → VCC → GPIO2 → GPIO1 → GPIO0 → GND`.
-14-pin Si4432 모듈의 핀맵과 혼동하지 말고, 실장 전 모듈 실크와 구매처
-데이터시트를 대조한다.
-
-### 권장 연결표
-
-| AS4432-SMD 패드 | 신호 | Raspberry Pi BCM | 물리 핀 | 연결 목적 |
-|---:|---|---:|---:|---|
-| 1 | GND | — | 30 | 공통 접지 — 버튼·LED·팬 GND와 다른 물리 핀 |
-| 2 | SDN | — | 25 | GND에 연결해 모듈을 항상 활성화 |
-| 3 | NIRQ | 연결 안 함 | — | 현재 direct-mode 드라이버에서 사용하지 않음 |
-| 4 | NSEL/CS | GPIO8 / SPI0_CE0 | 24 | SPI 칩 선택, active-low |
-| 5 | SCLK/SCK | GPIO11 / SPI0_SCLK | 23 | SPI 클록 |
-| 6 | SDI/MOSI | GPIO10 / SPI0_MOSI | 19 | Pi → 모듈 SPI 데이터 |
-| 7 | SDO/MISO | GPIO9 / SPI0_MISO | 21 | 모듈 → Pi SPI 데이터 |
-| 8 | VCC | 3.3V | 17 | 모듈 전원 |
-| 9 | GPIO2 | GPIO23 | 16 | 직접 복조된 RX DATA 출력 |
-| 10 | GPIO1 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
-| 11 | GPIO0 | 연결 안 함 | — | 현재 드라이버에서 사용하지 않음 |
-| 12 | GND | 연결 안 함 | — | 패드 1 GND가 공통 접지 |
-
-```text
-AS4432-SMD pad 1 GND   ───────── Pi GND  (physical 30, 버튼·LED·팬 GND와 분리)
-AS4432-SMD pad 2 SDN  ───────── GND     (physical 25, active-low)
-AS4432-SMD pad 3 NIRQ ───────── 연결 안 함
-AS4432-SMD pad 4 NSEL ───────── Pi GPIO8  / physical 24 (SPI0 CE0)
-AS4432-SMD pad 5 SCLK ───────── Pi GPIO11 / physical 23
-AS4432-SMD pad 6 SDI  ───────── Pi GPIO10 / physical 19
-AS4432-SMD pad 7 SDO  ───────── Pi GPIO9  / physical 21
-AS4432-SMD pad 8 VCC  ───────── Pi 3.3V  (physical 17)
-AS4432-SMD pad 9 GPIO2 ──────── Pi GPIO23 / physical 16 (RX DATA)
-AS4432-SMD pad 10 GPIO1 ────── 연결 안 함
-AS4432-SMD pad 11 GPIO0 ────── 연결 안 함
-AS4432-SMD pad 12 GND ──────── 연결 안 함 (pad 1 GND 사용)
+### 배선 다이어그램
 
 ```
-
-`GPIO2`는 카메라 ROI와 연결되는 신호가 아니다. SI4432 direct RX 모드에서
-모듈이 출력하는 디지털 데이터 펄스를 GPIO23으로 읽으며, RF 트리거는 전역
-음성 이벤트로 처리된다. 기존 배선의 GPIO4, GPIO17, GPIO22, GPIO24, GPIO25,
-GPIO27과 충돌하지 않는다.
+AS4432 pad  1 GND   ────  Pi GND   (물리 핀 30)
+AS4432 pad  2 SDN   ────  Pi GND   (물리 핀 25)  ← SDN=0 → 활성화
+AS4432 pad  3 NIRQ  ────  미연결
+AS4432 pad  4 NSEL  ────  Pi GPIO8  (물리 핀 24 / SPI0 CE0)
+AS4432 pad  5 SCLK  ────  Pi GPIO11 (물리 핀 23 / SPI0 SCLK)
+AS4432 pad  6 SDI   ────  Pi GPIO10 (물리 핀 19 / SPI0 MOSI)
+AS4432 pad  7 SDO   ────  Pi GPIO9  (물리 핀 21 / SPI0 MISO)
+AS4432 pad  8 VCC   ────  Pi 3.3V  (물리 핀 17)
+AS4432 pad  9 GPIO2 ────  Pi GPIO23 (물리 핀 16)  ← RX DATA
+AS4432 pad 10 GPIO1 ────  미연결
+AS4432 pad 11 GPIO0 ────  미연결
+AS4432 pad 12 GND   ────  미연결  (pad 1로 접지됨)
+```
 
 ### 전원·신호 안전 수칙
 
-- VCC는 반드시 3.3V로 연결한다. AS4432-SMD의 허용 전원은 1.8~3.6V이며,
-  5V를 VCC나 GPIO에 연결하면 모듈이 손상될 수 있다.
-- 모듈은 수신만 하더라도 전원 변동에 민감하다. VCC와 GND 가까이에
-  `100nF + 10uF` 디커플링을 배치하고, 전원 공급원은 RF 모듈의 순간 전류를
-  감당할 수 있어야 한다. Pi의 3.3V 레일을 사용할 때 다른 장치 부하를 함께
-  확인한다.
-- SDN을 부유 상태로 두지 말고 물리 25번 GND로 고정한다. GPIO0과 GPIO1은 현재
-  프로그램에서 사용하지 않으므로 연결하지 않는다. GPIO2는 RX DATA 출력으로
-  GPIO23에 연결한다. 패드 12 GND는 패드 1 GND가 연결되어 있으면 생략할 수 있다.
-  패드 1 GND는 물리 30번을 사용해 버튼, LED, 팬이 사용하는 물리 GND 핀과 겹치지 않게 한다.
-  물리 30번과 25번을 포함한 Pi의 GND 핀은 전기적으로 공통이다.
-- 안테나는 금속물과 케이스에서 떨어뜨리고 외부로 세운다. 433MHz용 스프링
-  안테나를 358.5MHz에서 그대로 사용하지 말고, 목표 주파수에 맞는 안테나와
-  50Ω RF 매칭을 사용한다.
-- 전원을 넣기 전 멀티미터로 VCC-GND 단락과 VCC 전압을 확인한다. SPI 신호에
-  5V 레벨 변환기를 연결하지 않는다.
+- **VCC는 반드시 3.3V.** AS4432-SMD 허용 전원 1.8~3.6V — 5V 연결 시 모듈 손상.
+- VCC/GND 근처에 `100nF + 10μF` 디커플링 캐패시터 배치.
+- SDN은 반드시 물리 핀 25 GND에 연결. 부유 상태로 두지 않는다.
+- 전원 인가 전 멀티미터로 VCC-GND 단락 확인.
+- SPI 신호에 5V 레벨 변환기를 연결하지 않는다.
 
-### Raspberry Pi에서 점검
+### 소프트웨어 초기 설정
 
 ```bash
-sudo raspi-config                 # Interface Options → SPI → Enable
-ls -l /dev/spidev0.0              # SPI0 CE0 장치 확인
+sudo raspi-config             # Interface Options → SPI → Enable
+ls -l /dev/spidev0.0          # SPI0 CE0 장치 확인
+
 cp rf_config_example.json rf_config.json
-# rf_config.json에서 enabled=true와 audio_file을 설정
-python device/camera_live_pi.py --headless --port 8080 --rf-config rf_config.json
+# rf_config.json: enabled=true, detection_mode="rssi", frequency_mhz=356.635
+python camera_live_pi.py --headless --port 8080
 ```
 
-시작 시 SPI 장치 ID가 읽히지 않으면 전원을 끄고 VCC/GND, MISO/MOSI,
-`nSEL(CE0)`, `SDN`을 먼저 점검한다. SPI가 정상이어도 358.5MHz 수신이 되지
-않으면 안테나/매칭 회로와 모듈의 주파수 사양이 목표 대역에 맞는지 확인한다.
+SPI 장치 ID가 읽히지 않으면 전원을 끄고 VCC·GND·MISO/MOSI·NSEL·SDN을 먼저 점검한다.
 
-## 6. USB 스피커 전원 제어
+---
 
-스피커는 USB-A를 전원으로만 사용하고, 음성 신호는 Pi의 3.5mm 오디오 잭으로 출력한다. 음성 재생 순서는 다음과 같다.
+## 5. USB 스피커 전원 제어
 
-```text
-서비스 시작 시 USB 2.0 전원 ON → 0.3초 안정화 → 이후 음성 재생
+스피커는 USB-A를 전원으로만 사용하고, 음성 신호는 Pi의 3.5mm 오디오 잭으로 출력한다.
+
+```
+서비스 시작 → USB 2.0 전원 ON → 0.3초 안정화 → 음성 재생
 ```
 
-감지나 음성 재생 요청이 없어도 스피커 전원은 계속 ON 상태를 유지한다.
+감지나 재생 요청이 없어도 스피커 전원은 ON 유지.
 
-현재 Pi 서비스는 320×320 `v4_320` 모델의 CPU용 `best_int8.tflite`를 사용한다. `best_int8_edgetpu.tflite`는 Coral TPU 전용 컴파일 파일이므로 TPU를 사용하지 않는 구성에서는 선택하지 않는다.
-
-Pi 4 본체 USB 2.0 포트는 USB 3.0 허브와 전원 그룹을 공유하므로 스피커 포트만 끄는 것이 아니라 USB 2.0/3.0 그룹 전체를 끈다. 현재 구성은 TPU를 사용하지 않으므로 이 방식을 적용한다.
-
-서비스는 `uhubctl`과 `/etc/sudoers.d/visionguide-uhubctl`을 설치하고 다음 환경변수를 사용한다.
-
+환경변수:
 ```ini
 VISIONGUIDE_USB_AUDIO_HUB=1-1
 VISIONGUIDE_USB_AUDIO_SETTLE=0.3
 VISIONGUIDE_USB_AUDIO_ALWAYS_ON=1
 ```
 
-`sudo uhubctl`로 실제 USB 2.0 허브 위치와 전원 전환 지원 여부를 먼저 확인한다. 전원 제어가 실패해도 음성 재생은 중단하지 않고 경고 로그를 남긴다.
+Pi 4 USB 2.0·3.0 포트는 전원 그룹을 공유하므로 `uhubctl`이 그룹 단위로 전원을 제어한다.  
+`sudo uhubctl`로 실제 허브 위치와 전원 전환 지원 여부를 먼저 확인한다.
+
+---
+
+## 부품 체크리스트
+
+| 부품 | 수량 | 비고 |
+|------|------|------|
+| 모멘터리 푸시버튼 | × 2 | 전원 버튼, Wi-Fi 전환 버튼 |
+| LED | × 1 | 상태 표시 (GPIO27) |
+| 저항 220~330 Ω | × 1 | LED 직렬 저항 (필수) |
+| 액티브 부저 모듈 | × 1 | GPIO25 |
+| NPN 트랜지스터 또는 로직레벨 N-MOSFET | × 1 | 팬 스위칭 시만 |
+| 저항 1 kΩ | × 1 | 트랜지스터 베이스/게이트 |
+| 플라이백 다이오드 (1N4001 등) | × 1 | 팬 스위칭 시 필수 |
+| 점퍼 와이어, 브레드보드 또는 만능기판 | — | |
