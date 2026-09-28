@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Maximize2, Minimize2, Camera, Unlink, AlertTriangle } from 'lucide-react'
 
 import * as api from '../api'
@@ -22,9 +22,15 @@ const LAYOUTS = [
   { label: '4열', cols: 4 },
 ] as const
 
-function StreamCell({ item }: { item: StreamItem }) {
+function StreamCell({ item, onActiveChange }: { item: StreamItem; onActiveChange: (key: string, active: boolean) => void }) {
   const { device, camera } = item
   const stream = useMjpegStream(device.id, camera.id)
+  const key = `${device.id}-${camera.id}`
+
+  useEffect(() => {
+    onActiveChange(key, !stream.failed)
+    return () => onActiveChange(key, false)
+  }, [key, stream.failed, onActiveChange])
   const cellRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const isOffline = device.status === 'offline' && stream.failed
@@ -131,6 +137,7 @@ function StreamCell({ item }: { item: StreamItem }) {
 
 export default function LiveStreams() {
   const [layout, setLayout] = useState<1 | 2 | 3 | 4>(2)
+  const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set())
 
   const { data, loading } = useApi(() => api.listDevices(), [], 15_000)
   const devices = data?.data ?? []
@@ -138,8 +145,16 @@ export default function LiveStreams() {
   const streams: StreamItem[] = devices.flatMap((device) =>
     device.cameras.map((camera) => ({ device, camera })))
 
-  const activeCount = streams.filter(
-    (s) => s.device.status !== 'offline' && s.camera.is_streaming).length
+  const handleActiveChange = useCallback((key: string, active: boolean) => {
+    setActiveKeys((prev) => {
+      const next = new Set(prev)
+      if (active) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }, [])
+
+  const activeCount = activeKeys.size
 
   return (
     <div className="max-w-[1720px] mx-auto px-8 py-7">
@@ -184,7 +199,7 @@ export default function LiveStreams() {
         style={{ gridTemplateColumns: `repeat(${layout}, minmax(0, 1fr))` }}
       >
         {streams.map((item, idx) => (
-          <StreamCell key={`${item.device.id}-${item.camera.id}-${idx}`} item={item} />
+          <StreamCell key={`${item.device.id}-${item.camera.id}-${idx}`} item={item} onActiveChange={handleActiveChange} />
         ))}
       </div>
 
