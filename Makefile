@@ -244,7 +244,7 @@ ping:
 ## **pkill로는 되살아나지 않는다** — 앱이 SIGTERM을 정상 종료(exit 0)로 처리하므로
 ## `Restart=on-failure`가 걸리지 않는다. 실기기 검증에서 실제로 걸린 지점이다.
 restart:
-	ssh $(PI_USER)@$(PI) "sudo systemctl restart visionguide-device && sudo systemctl restart visionguide-roi-editor"
+	ssh $(PI_USER)@$(PI) "amixer -c 2 sset 'PCM' 100% 2>/dev/null; sudo systemctl restart visionguide-device && sudo systemctl restart visionguide-roi-editor"
 	@sleep 3
 	@ssh $(PI_USER)@$(PI) "systemctl is-active visionguide-device visionguide-roi-editor | tr '\n' ' '; echo"
 

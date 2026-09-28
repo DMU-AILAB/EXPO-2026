@@ -88,6 +88,7 @@ app.include_router(audio.router)
 app.include_router(schedules.router)
 app.include_router(scan.router)
 app.include_router(rf.router)
+app.include_router(rf.group_router)
 
 @app.get("/")
 def read_root():

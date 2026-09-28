@@ -78,7 +78,9 @@ rf_config_path: Path = _DEFAULT_RF_CONFIG
 identity_path: Path = default_path(_ROOT)
 api_only = False
 STATIC_DIR = Path(__file__).parent / "static"
-_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+# 경로 조작 문자와 Windows 예약 문자만 제거한다 — 한글·한자 등 유니코드는 허용.
+# 이전 패턴 [^A-Za-z0-9._-]+ 은 한글을 전부 _로 치환해 파일명을 손상시켰다.
+_SAFE_NAME_RE = re.compile(r'[/\\:*?"<>|\x00-\x1f]+')
 _VALID_ZONE_TYPES = {"trigger", "exclude"}
 _AUDIO_SUFFIXES = {".mp3", ".wav"}
 

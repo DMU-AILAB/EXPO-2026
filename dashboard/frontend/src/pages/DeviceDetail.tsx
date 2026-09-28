@@ -1141,6 +1141,7 @@ function RfTab({ device }: Ctx) {
   const [groupEnabled, setGroupEnabled] = useState(false)
   const [groupPriority, setGroupPriority] = useState(100)
   const [groupSaved, setGroupSaved] = useState(false)
+  const groupOverview = useApi(() => api.getGroupOverview(), [])
 
   // 기기에 적용된 목록으로 초기화한다 (저장 후 다시 읽을 때도).
   useEffect(() => {
@@ -1156,6 +1157,7 @@ function RfTab({ device }: Ctx) {
       await api.setRfGroup(device.id, groupEnabled, groupPriority)
       setGroupSaved(true)
       rf.reload()
+      groupOverview.reload()
     } catch (e) {
       setError(describe(e))
     } finally {
@@ -1342,6 +1344,39 @@ function RfTab({ device }: Ctx) {
               </span>
             )}
           </div>
+
+          {/* 그룹 전체 재생 순서 — group_enabled인 기기들을 priority 순으로 나열 */}
+          {(groupOverview.data && groupOverview.data.length > 0) && (() => {
+            const list = groupOverview.data!
+            const myRank = list.findIndex((g) => g.id === device.id)
+            return (
+              <div className="mt-3 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold text-slate-600">전체 재생 순서</span>
+                  {myRank >= 0 && (
+                    <span className="text-[10px] font-bold text-[#2c4be0]">
+                      이 기기: {list.length}대 중 {myRank + 1}번째
+                    </span>
+                  )}
+                </div>
+                <ol className="space-y-1">
+                  {list.map((g, idx) => (
+                    <li key={g.id}
+                        className={`flex items-center gap-2 text-[10px] px-2 py-1 rounded-lg ${
+                          g.id === device.id ? 'bg-[#2c4be0]/10 border border-[#2c4be0]/20 font-bold' : 'text-slate-600'
+                        }`}>
+                      <span className="w-4 text-center font-mono text-[#2c4be0]">{idx + 1}</span>
+                      <span className="flex-1 truncate">{g.name}</span>
+                      <span className="font-mono text-slate-400">P{g.priority}</span>
+                      {!g.online && (
+                        <span className="text-orange-500">오프라인</span>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )
+          })()}
         </div>
       </div>
     </div>

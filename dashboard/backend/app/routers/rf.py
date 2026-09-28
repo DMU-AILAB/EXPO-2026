@@ -9,6 +9,7 @@ mtime으로 감지해 재시작 없이 반영한다.
 - `pi`: 기기에 이미 있는 파일의 절대경로 — 그대로 쓴다.
 """
 
+import asyncio
 import logging
 from typing import Literal, Optional
 
@@ -19,12 +20,15 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models.audio import AudioDeployment
+from ..models.camera import Device
 from ..services.pi_client import PiClient
 from .cameras import _get_device, ensure_audio_on_pi
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/devices", tags=["RF"])
+# 기기 목록 전체를 대상으로 하는 RF 엔드포인트 — prefix를 달리해 device_id와 충돌 방지.
+group_router = APIRouter(prefix="/api/rf", tags=["RF"])
 
 
 class RfAudioItem(BaseModel):
@@ -94,3 +98,36 @@ async def update_rf_group(device_id: str, body: RfGroupUpdate, db: Session = Dep
     return {"data": {"group_enabled": result.get("group_enabled", body.group_enabled),
                      "group_priority": result.get("group_priority", body.group_priority)},
             "ok": True}
+
+
+@group_router.get("/group", response_model=dict)
+async def get_group_overview(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """group_enabled인 모든 기기를 priority 순(오름차순)으로 반환한다.
+
+    각 Pi에 병렬로 RF 설정을 조회하고, 응답이 없으면 그 기기를 건너뛴다.
+    대시보드에서 "이 기기는 N개 중 X번째" 같은 상대적 순위를 표시하는 데 사용한다.
+    """
+    devices = db.query(Device).all()
+
+    async def _fetch(device: Device):
+        try:
+            rf = await PiClient(device.ip).get_rf_config()
+            cfg = rf.get("config", {})
+            return {
+                "id": device.id,
+                "name": device.name,
+                "priority": int(cfg.get("group_priority", 100)),
+                "group_enabled": bool(cfg.get("group_enabled", False)),
+                "online": True,
+            }
+        except Exception:
+            return {"id": device.id, "name": device.name, "priority": 100,
+                    "group_enabled": False, "online": False}
+
+    results = await asyncio.gather(*[_fetch(d) for d in devices])
+    # group_enabled인 기기만 포함, priority → id 순 정렬
+    group = sorted(
+        [r for r in results if r["group_enabled"]],
+        key=lambda x: (x["priority"], x["id"]),
+    )
+    return {"data": group, "ok": True}

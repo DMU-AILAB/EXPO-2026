@@ -155,6 +155,12 @@ export const setRfGroup = (deviceId: string, groupEnabled: boolean, groupPriorit
     method: 'PUT', body: { group_enabled: groupEnabled, group_priority: groupPriority },
   })
 
+/** group_enabled인 모든 기기를 priority 오름차순으로 반환. 상대적 순위 계산용. */
+export const getGroupOverview = () =>
+  request<{ id: string; name: string; priority: number; group_enabled: boolean; online: boolean }[]>(
+    '/api/rf/group'
+  )
+
 // ---------------------------------------------------------------- 예약 재부팅
 
 export const listSchedules = (deviceId: string) =>
