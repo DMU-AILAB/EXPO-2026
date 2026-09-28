@@ -3,7 +3,7 @@
 import { qs, request, requestEnvelope, setToken } from './client'
 import type {
   AudioFile, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
-  Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
+  RfAudioItem, RfState, Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
 } from '../types'
 
 // ---------------------------------------------------------------- 인증
@@ -138,6 +138,16 @@ export const generateTts = (body: {
   voice?: string
   rate?: number
 }) => request<AudioFile>('/api/audio/tts', { method: 'POST', body })
+
+// ---------------------------------------------------------------- RF 리모컨
+
+export const getRf = (deviceId: string) => request<RfState>(`/api/devices/${deviceId}/rf`)
+
+/** 리모컨을 한 번 누르면 items 순서대로 이어서 재생한다. */
+export const setRfAudio = (deviceId: string, items: RfAudioItem[]) =>
+  request<{ audio_files: string[] }>(`/api/devices/${deviceId}/rf/audio`, {
+    method: 'PUT', body: { items },
+  })
 
 // ---------------------------------------------------------------- 예약 재부팅
 

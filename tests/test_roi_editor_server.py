@@ -29,6 +29,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(srv, "traffic_db_path", tmp_path / "foot_traffic.db")
     monkeypatch.setattr(srv, "camera_config_path", tmp_path / "camera_config.json")
     monkeypatch.setattr(srv, "identity_path", tmp_path / "device_identity.json")
+    monkeypatch.setattr(srv, "rf_config_path", tmp_path / "rf_config.json")
     return TestClient(srv.app)
 
 
@@ -315,3 +316,49 @@ def test_fp_hotspots_returns_logged_spots_and_clear_resets(client, tmp_path):
 
     assert client.delete("/api/fp-hotspots").status_code == 200
     assert client.get("/api/fp-hotspots?min_count=1").json()["hotspots"] == []
+
+
+def test_audio_list_returns_only_audio_files(client, tmp_path):
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    (audio / "b.wav").write_bytes(b"x")
+    (audio / "a.mp3").write_bytes(b"yy")
+    (audio / "notes.txt").write_text("skip")
+    files = client.get("/api/audio/list").json()["files"]
+    assert [f["name"] for f in files] == ["a.mp3", "b.wav"]
+    assert files[0]["size"] == 2
+    assert Path(files[0]["path"]).is_absolute()
+
+
+def test_rf_config_defaults_to_empty_when_missing(client):
+    body = client.get("/api/rf/config").json()
+    assert body == {"config": {}, "audio_files": []}
+
+
+def test_put_rf_audio_saves_ordered_list_and_keeps_other_keys(client, tmp_path):
+    import json
+
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    first, second = audio / "1.mp3", audio / "2.mp3"
+    first.write_bytes(b"x")
+    second.write_bytes(b"x")
+    (tmp_path / "rf_config.json").write_text(
+        json.dumps({"enabled": True, "frequency_mhz": 356.635}), encoding="utf-8")
+
+    r = client.put("/api/rf/audio", json={"audio_files": [str(second), str(first)]})
+    assert r.status_code == 200
+    saved = json.loads((tmp_path / "rf_config.json").read_text(encoding="utf-8"))
+    assert saved["enabled"] is True and saved["frequency_mhz"] == 356.635
+    assert saved["audio_files"] == [str(second.resolve()), str(first.resolve())]
+    assert client.get("/api/rf/config").json()["audio_files"] == saved["audio_files"]
+
+
+def test_put_rf_audio_rejects_outside_and_missing_paths(client, tmp_path):
+    (tmp_path / "audio").mkdir()
+    outside = tmp_path / "evil.mp3"
+    outside.write_bytes(b"x")
+    assert client.put("/api/rf/audio", json={"audio_files": [str(outside)]}).status_code == 400
+    missing = tmp_path / "audio" / "nope.mp3"
+    assert client.put("/api/rf/audio", json={"audio_files": [str(missing)]}).status_code == 404
+    assert not (tmp_path / "rf_config.json").exists()

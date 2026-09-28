@@ -1,7 +1,11 @@
 {
   "enabled": false,
   "frequency_mhz": 358.5,
+  "detection_mode": "kics",
+  "rssi_threshold": 110,
+  "min_burst_ms": 150,
   "audio_file": "audio/rf_voice_guide.mp3",
+  "audio_files": [],
   "event_db": "foot_traffic.db",
   "spi_bus": 0,
   "spi_device": 0,
