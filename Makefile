@@ -21,6 +21,10 @@ PI      ?= 192.168.0.89
 # `Permission denied`로 실패했다. 문서의 `make sync PI=<ip>`가 대부분 환경에서
 # 그대로는 안 되던 원인이다. 환경변수와 겹치지 않는 이름으로 분리한다.
 PI_USER ?= ailab
+# Pi sudo 비밀번호 — sudoers가 설치되어 있으면 쓰이지 않는다.
+# visionguide-systemctl sudoers를 설치하면 restart가 비밀번호 없이 동작한다.
+# `make install-service`나 `./deploy.sh`가 sudoers를 자동 설치한다.
+PI_PASS ?= 12345678
 DEST     = $(PI_USER)@$(PI):~/visionguide
 # 파일 전송은 `tar | ssh tar -x`로 한다. rsync는 Windows Git Bash에 기본으로 없어서
 # `make sync`가 Windows에서 아예 돌지 않았다. tar는 Git Bash·WSL·Linux 모두에 있고,
@@ -80,13 +84,16 @@ DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v10_nolkc/weights \
 	runs/white_cane_v11_v26n/weights
 
-.PHONY: deploy sync sync-roi-editor deps deps-roi-editor check-time setup-ntp restart \
+.PHONY: deploy sync sync-roi-editor deps deps-roi-editor check-time setup-ntp restart quick \
         install-edgetpu-py39 setup-pi-python310 install-service \
         run-headless run run-roi-editor ping help
 
 help:
 	@echo "VisionGuide Pi 배포 도구"
 	@echo ""
+	@echo "  ./deploy.sh <ip>                  IP 한 줄로 전체 배포 (Git Bash)"
+	@echo ""
+	@echo "  make quick           [PI=<ip>]  파일 전송 + 재시작 (가장 자주 씀)"
 	@echo "  make deploy          [PI=<ip>]  전체 배포 (카메라 앱 + ROI 에디터)"
 	@echo "  make sync            [PI=<ip>]  카메라 앱 파일만 재전송"
 	@echo "  make sync-roi-editor [PI=<ip>]  ROI 에디터 파일만 재전송"
@@ -123,7 +130,7 @@ help:
 # **한 대가 실패해도 나머지는 계속한다** — 3대 중 1대만 꺼져 있을 때 나머지 2대 배포까지
 # 막을 이유가 없다. 대신 마지막에 실패한 기기를 모아 보여주고 종료코드를 낸다.
 MULTI_TARGETS = deploy sync sync-roi-editor deps deps-roi-editor \
-                install-service ping check-time setup-ntp restart
+                install-service ping check-time setup-ntp restart quick
 
 ifneq ($(word 2,$(PI)),)
 
@@ -150,6 +157,11 @@ else
 ## 전체 배포 (카메라 앱 + ROI 에디터 파일 전송 + 의존성 설치)
 deploy: sync sync-roi-editor deps deps-roi-editor
 	@echo "[완료] $(PI) 전체 배포 완료"
+
+## 빠른 배포 — 파일 전송 + 재시작만 (의존성 이미 설치된 경우)
+## PI_PASS: sudo 비밀번호 (sudoers 설치 후에는 불필요, 기본값 12345678)
+quick: sync sync-roi-editor restart
+	@echo "[완료] $(PI) 빠른 배포 완료 (http://$(PI):5000)"
 
 ## Pi로 카메라 앱 파일만 전송
 sync:
@@ -244,7 +256,11 @@ ping:
 ## **pkill로는 되살아나지 않는다** — 앱이 SIGTERM을 정상 종료(exit 0)로 처리하므로
 ## `Restart=on-failure`가 걸리지 않는다. 실기기 검증에서 실제로 걸린 지점이다.
 restart:
-	ssh $(PI_USER)@$(PI) "amixer -c 2 sset 'PCM' 100% 2>/dev/null; sudo systemctl restart visionguide-device && sudo systemctl restart visionguide-roi-editor"
+	@# sudoers 설치된 Pi는 sudo가 바로 동작하고, 미설치 Pi는 PI_PASS로 fallback한다.
+	@# `echo pass | sudo -S`는 NOPASSWD sudoers에서도 안전하게 동작한다.
+	ssh $(PI_USER)@$(PI) "amixer -c 2 sset 'PCM' 100% 2>/dev/null; \
+		echo '$(PI_PASS)' | sudo -S systemctl restart visionguide-device 2>/dev/null; \
+		echo '$(PI_PASS)' | sudo -S systemctl restart visionguide-roi-editor 2>/dev/null"
 	@sleep 3
 	@ssh $(PI_USER)@$(PI) "systemctl is-active visionguide-device visionguide-roi-editor | tr '\n' ' '; echo"
 
