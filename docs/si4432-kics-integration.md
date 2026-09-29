@@ -86,3 +86,73 @@ The test listens on BCM23 (physical pin 16) and drives the active buzzer on
 BCM25 (physical pin 22). Hardware test mode accepts any six-bit transmitter
 address and button code so it can verify reception before the production code
 list is known. `Ctrl+C` stops the receiver and turns the buzzer off.
+
+## RSSI press detection (`detection_mode: "rssi"`)
+
+Measured on 2026-09-28 with an AS4432-SMD module and a 한길에이치씨 HCR-2007A
+remote. Full KICS pulse decoding never produced a valid packet with the
+current Si4432 modem settings. The carrier itself, however, is unmistakable:
+
+| Measurement | Value |
+| --- | --- |
+| Strongest response | 356.635 MHz with the 11.5 kHz filter (358.5 − 1.865 MHz, about 2 × the Si4432 IF, so most likely image-side reception) |
+| Idle RSSI | raw 45–60 |
+| RSSI while pressing (2–3 m) | raw 140–170 |
+| Transmission length per press | 466–484 ms |
+| Noise bursts | almost all shorter than 50 ms |
+
+RSSI mode therefore counts one press whenever RSSI stays at or above
+`rssi_threshold` for `min_burst_ms`. It does not use GPIO2. It will also react to
+other KICS remotes on the same channel. Lowering `rssi_threshold` increases the
+reception range.
+
+```json
+{
+  "enabled": true,
+  "detection_mode": "rssi",
+  "frequency_mhz": 356.635,
+  "rssi_threshold": 110,
+  "min_burst_ms": 150,
+  "audio_files": []
+}
+```
+
+Buzzer check without the camera service:
+
+```bash
+python3 ~/visionguide/rf_test_mode.py --detection rssi --frequency 356.635 --debug-edges
+```
+
+### Announcement playlist from the dashboard
+
+Use the dashboard's device page → **리모컨** tab to choose the audio files. You
+can pick several, reorder them, and upload new files or generate them with TTS.
+A single press plays every selected file in order. A press that arrives while
+the playlist is still playing is ignored.
+
+The dashboard stores the selection as absolute Pi paths in `rf_config.json`
+(`audio_files`) through `PUT /api/rf/audio` on the Pi API. `camera_live_pi.py`
+watches the file's mtime and applies playlist changes without restarting.
+Changing radio fields (frequency, mode, threshold, SPI or pin) restarts only
+the receiver.
+
+### Group control (several guide devices in range)
+
+KICS KO-06.0046 3.3.2 (4)/(5) requires devices within range of each other to
+avoid overlapping sound and to play one after another by priority. With
+`group_enabled: true`, devices on the same LAN coordinate over UDP broadcast
+(`group_port`, default 47600). This is implemented in `device/rf_group.py`.
+
+1. A device that detects a press broadcasts `heard`.
+2. For `group_window_ms` (300 ms) each device collects the `heard`
+   messages from the other devices.
+3. Participants are ordered by `group_priority` (lower first; ties break by
+   device id). Each device plays after its predecessor broadcasts `done`.
+   If the predecessor stays silent for `group_turn_timeout_sec`, the device
+   plays anyway.
+4. Presses during a round are ignored.
+
+If broadcasts are lost, each device assumes it is alone and plays. The
+failure mode is an overlap, never a silent guide. Set the priority per device
+from the dashboard's **리모컨** tab (`PUT /api/rf/group` on the Pi API).
+Changing it restarts only the RF receiver.

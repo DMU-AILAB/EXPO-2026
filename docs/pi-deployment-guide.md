@@ -38,7 +38,7 @@
 
 | 항목 | 확인 |
 |------|------|
-| Git for Windows (ssh, rsync 포함) | `ssh -V` |
+| Git for Windows (ssh, tar 포함 — rsync는 필요 없음) | `ssh -V`, `tar --version` |
 | GNU Make | `scoop install make` 또는 `choco install make` |
 | Python 3.10 + Anaconda | `conda activate visionguide` |
 
@@ -314,6 +314,7 @@ IP 변경:   make <target> PI=<새IP>
 | `Connection timed out` | IP 오류 | Pi에서 `hostname -I` 재확인 |
 | `Host key verification failed` | Pi 재설치로 키 변경 | `ssh-keygen -R 192.168.0.89` 후 재시도 |
 | 비밀번호 계속 요구 | 공개키 미등록 | `ssh-copy-id ailab@192.168.0.89` 재실행 |
+| 키를 등록했는데도 비밀번호 요구 | `~/.ssh/config`에 그 IP용 `IdentityFile`이 있으면 ssh는 **그 키만** 제시한다 (DHCP로 IP가 다른 기기와 겹쳤을 때 흔함) | `ssh -v ailab@<ip> true 2>&1 \| grep Offering`으로 제시되는 키 확인 → 그 키를 등록하거나 config 항목 정리 |
 
 ### ROI 에디터 스트림이 안 보임
 

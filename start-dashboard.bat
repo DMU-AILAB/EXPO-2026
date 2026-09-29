@@ -4,17 +4,8 @@ setlocal
 set "ROOT=%~dp0"
 set "BACKEND_DIR=%ROOT%dashboard\backend"
 set "FRONTEND_DIR=%ROOT%dashboard\frontend"
-set "BACKEND_PYTHON=%BACKEND_DIR%\.venv\Scripts\python.exe"
-
-if not exist "%BACKEND_PYTHON%" (
-    echo [ERROR] Backend virtual environment was not found:
-    echo         %BACKEND_PYTHON%
-    echo.
-    echo Create it with: python -m venv dashboard\backend\.venv
-    pause
-    exit /b 1
-)
-
+rem Use the already active Conda environment. If this script is launched
+rem without an activated environment, fall back to the named environment.
 if not exist "%FRONTEND_DIR%\node_modules" (
     echo [ERROR] Frontend dependencies were not found:
     echo         %FRONTEND_DIR%\node_modules
@@ -25,7 +16,11 @@ if not exist "%FRONTEND_DIR%\node_modules" (
 )
 
 echo Starting VisionGuide dashboard...
-start "VisionGuide Backend :8000" /D "%BACKEND_DIR%" cmd /k ""%BACKEND_PYTHON%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+if defined CONDA_PREFIX (
+    start "VisionGuide Backend :8000" /D "%BACKEND_DIR%" cmd /k ""%CONDA_PREFIX%\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+) else (
+    start "VisionGuide Backend :8000" /D "%BACKEND_DIR%" cmd /k "conda run --no-capture-output -n visionguide-dashboard python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+)
 start "VisionGuide Frontend :5173" /D "%FRONTEND_DIR%" cmd /k "npm.cmd run dev -- --host 0.0.0.0"
 
 echo.

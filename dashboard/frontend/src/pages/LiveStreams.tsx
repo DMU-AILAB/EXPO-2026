@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Maximize2, Minimize2, Camera, Unlink, AlertTriangle } from 'lucide-react'
 
 import * as api from '../api'
@@ -22,12 +22,18 @@ const LAYOUTS = [
   { label: '4열', cols: 4 },
 ] as const
 
-function StreamCell({ item }: { item: StreamItem }) {
+function StreamCell({ item, onActiveChange }: { item: StreamItem; onActiveChange: (key: string, active: boolean) => void }) {
   const { device, camera } = item
   const stream = useMjpegStream(device.id, camera.id)
+  const key = `${device.id}-${camera.id}`
+
+  useEffect(() => {
+    onActiveChange(key, !stream.failed)
+    return () => onActiveChange(key, false)
+  }, [key, stream.failed, onActiveChange])
   const cellRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const isOffline = device.status === 'offline'
+  const isOffline = device.status === 'offline' && stream.failed
   const hasAlert = false
 
   useEffect(() => {
@@ -65,24 +71,17 @@ function StreamCell({ item }: { item: StreamItem }) {
     )
   }
 
-  if (stream.failed) {
-    return (
-      <div className="relative bg-black/90 rounded-xl overflow-hidden border border-slate-800 flex flex-col items-center justify-center aspect-video">
-        <Camera className="w-5 h-5 text-slate-500 mb-1.5" />
-        <span className="text-[11px] font-semibold text-slate-400">스트림 연결을 재시도하는 중입니다</span>
-        <span className="text-[10px] text-slate-600 mt-0.5">카메라 연결이 회복되면 자동으로 다시 표시됩니다</span>
-      </div>
-    )
-  }
-
   return (
     <div ref={cellRef} className={`stream-cell relative rounded-xl overflow-hidden group aspect-video transition-all duration-500 ${
       hasAlert
         ? 'border border-amber-500/60 shadow-[0_0_16px_rgba(245,158,11,0.18)]'
-        : 'border border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.16)]'
+        : stream.failed
+          ? 'border border-slate-700/60'
+          : 'border border-emerald-500/50 shadow-[0_0_16px_rgba(16,185,129,0.16)]'
     }`}>
-      {/* 실사 배경 이미지 */}
+      {/* 실사 배경 이미지 — key로 재연결 시 DOM 재생성 */}
       <img
+        key={stream.src}
         src={stream.src}
         alt=""
         onError={stream.onError}
@@ -90,6 +89,16 @@ function StreamCell({ item }: { item: StreamItem }) {
         className="absolute inset-0 w-full h-full object-cover bg-slate-900"
         draggable={false}
       />
+
+      {/* 재연결 중 subtle 오버레이 — 이전 프레임 위에 배지만 표시 */}
+      {stream.failed && (
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-slate-600/50">
+            <Camera className="w-3.5 h-3.5 text-slate-400 animate-pulse" />
+            <span className="text-[10px] font-semibold text-slate-300">재연결 중…</span>
+          </div>
+        </div>
+      )}
 
       {/* 상단 그라데이션 바 */}
       <div className="absolute top-0 left-0 right-0 px-3 py-2 flex items-center justify-between"
@@ -128,6 +137,7 @@ function StreamCell({ item }: { item: StreamItem }) {
 
 export default function LiveStreams() {
   const [layout, setLayout] = useState<1 | 2 | 3 | 4>(2)
+  const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set())
 
   const { data, loading } = useApi(() => api.listDevices(), [], 15_000)
   const devices = data?.data ?? []
@@ -135,8 +145,16 @@ export default function LiveStreams() {
   const streams: StreamItem[] = devices.flatMap((device) =>
     device.cameras.map((camera) => ({ device, camera })))
 
-  const activeCount = streams.filter(
-    (s) => s.device.status !== 'offline' && s.camera.is_streaming).length
+  const handleActiveChange = useCallback((key: string, active: boolean) => {
+    setActiveKeys((prev) => {
+      const next = new Set(prev)
+      if (active) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }, [])
+
+  const activeCount = activeKeys.size
 
   return (
     <div className="max-w-[1720px] mx-auto px-8 py-7">
@@ -181,7 +199,7 @@ export default function LiveStreams() {
         style={{ gridTemplateColumns: `repeat(${layout}, minmax(0, 1fr))` }}
       >
         {streams.map((item, idx) => (
-          <StreamCell key={`${item.device.id}-${item.camera.id}-${idx}`} item={item} />
+          <StreamCell key={`${item.device.id}-${item.camera.id}-${idx}`} item={item} onActiveChange={handleActiveChange} />
         ))}
       </div>
 

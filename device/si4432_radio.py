@@ -25,6 +25,7 @@ REG_RX_OFFSET_1 = 0x22
 REG_RX_OFFSET_0 = 0x23
 REG_RX_GAIN_1 = 0x24
 REG_RX_GAIN_0 = 0x25
+REG_RSSI = 0x26
 REG_DATA_ACCESS = 0x30
 REG_MODULATION_1 = 0x70
 REG_MODULATION_2 = 0x71
@@ -117,6 +118,11 @@ class Si4432Radio:
         if self.spi is None:
             raise RuntimeError("Si4432 SPI is not open")
         self.spi.xfer2([address | 0x80, value & 0xFF])
+
+    def read_rssi(self) -> int:
+        """Return the raw in-channel RSSI (roughly raw / 2 - 120 dBm)."""
+
+        return self.read_register(REG_RSSI)
 
     def configure_kics(self, frequency_mhz: float = 358.5000, deviation_khz: float = 2.5) -> None:
         fb, fc_high, fc_low = frequency_registers(frequency_mhz)

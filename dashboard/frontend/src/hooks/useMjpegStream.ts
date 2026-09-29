@@ -23,7 +23,7 @@ export function useMjpegStream(deviceId: string, cameraId: string) {
     setFailed(true)
     if (retryTimer.current !== null) clearTimeout(retryTimer.current)
 
-    const delay = Math.min(1000 * 2 ** Math.min(retryCount, 3), 8000)
+    const delay = Math.min(400 * 2 ** Math.min(retryCount, 3), 5000)
     retryTimer.current = setTimeout(() => {
       retryTimer.current = null
       setRetryCount((count) => count + 1)

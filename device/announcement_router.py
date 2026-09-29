@@ -22,6 +22,8 @@ class Announcement:
     camera_id: str = ""
     confidence: float | None = None
     event_type: str = "ANNOUNCEMENT"
+    # 같은 이벤트로 이어서 재생할 추가 파일들. audio_file이 끝나면 차례로 재생한다.
+    playlist: tuple[str, ...] = ()
 
 
 class AnnouncementRouter:
@@ -67,7 +69,18 @@ class AnnouncementRouter:
             except Exception as exc:
                 print(f"[WARN] announcement outbox failed: {exc}")
 
-        if self.audio_player is not None:
-            self.audio_player.play(announcement.audio_file, on_done=on_done)
-        elif on_done is not None:
-            on_done()
+        if self.audio_player is None:
+            if on_done is not None:
+                on_done()
+            return
+        self._play_chain([announcement.audio_file, *announcement.playlist], on_done)
+
+    def _play_chain(self, files: list[str], on_done: Callable[[], None] | None) -> None:
+        # 다음 파일은 앞 파일이 끝난 뒤에 큐에 넣는다. 한꺼번에 넣으면
+        # AudioPlayer 큐(max_queue)가 넘쳐 뒤쪽 파일이 버려진다.
+        if not files:
+            if on_done is not None:
+                on_done()
+            return
+        head, rest = files[0], files[1:]
+        self.audio_player.play(head, on_done=lambda: self._play_chain(rest, on_done))

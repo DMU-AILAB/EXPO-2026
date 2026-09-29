@@ -27,7 +27,7 @@ from fastapi.responses import (
     FileResponse, HTMLResponse, RedirectResponse, StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from shapely.geometry import Polygon
 
 # roi_editor/server.py는 서브디렉토리에서 실행되는 스크립트라 sys.path[0]이 그
@@ -69,15 +69,20 @@ _DEFAULT_ROIS = _ROOT / "rois.json"
 _DEFAULT_AUDIO_DIR = Path(__file__).parent.parent / "audio"
 _DEFAULT_TRAFFIC_DB = Path(__file__).parent.parent / "foot_traffic.db"
 _DEFAULT_CAMERA_CONFIG = Path(__file__).parent.parent / "camera_config.json"
+_DEFAULT_RF_CONFIG = Path(__file__).parent.parent / "rf_config.json"
 rois_path: Path = _DEFAULT_ROIS
 audio_dir: Path = _DEFAULT_AUDIO_DIR
 traffic_db_path: Path = _DEFAULT_TRAFFIC_DB
 camera_config_path: Path = _DEFAULT_CAMERA_CONFIG
+rf_config_path: Path = _DEFAULT_RF_CONFIG
 identity_path: Path = default_path(_ROOT)
 api_only = False
 STATIC_DIR = Path(__file__).parent / "static"
-_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+# 경로 조작 문자와 Windows 예약 문자만 제거한다 — 한글·한자 등 유니코드는 허용.
+# 이전 패턴 [^A-Za-z0-9._-]+ 은 한글을 전부 _로 치환해 파일명을 손상시켰다.
+_SAFE_NAME_RE = re.compile(r'[/\\:*?"<>|\x00-\x1f]+')
 _VALID_ZONE_TYPES = {"trigger", "exclude"}
+_AUDIO_SUFFIXES = {".mp3", ".wav"}
 
 # ---------------------------------------------------------------------------
 # App
@@ -112,6 +117,16 @@ def _save(data: dict, path: Path | None = None) -> None:
         except OSError:
             pass
         raise
+
+
+def _resolve_audio_path(path: str) -> Path:
+    """audio_dir 하위의 실제 파일만 허용한다 — 그 밖의 임의 경로 접근 차단."""
+    resolved = Path(path).resolve()
+    if audio_dir.resolve() not in resolved.parents:
+        raise HTTPException(status_code=400, detail="audio_dir 밖의 경로는 사용할 수 없습니다")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
+    return resolved
 
 
 def _safe_filename(name: str) -> str:
@@ -399,12 +414,72 @@ async def get_audio_file(path: str):
     `path`는 camera_live_pi.py가 재생에 쓰는 것과 동일한 절대경로(POST /api/audio/upload가
     반환한 값)이며, audio_dir 하위인지 확인해 그 밖의 임의 경로 접근은 차단한다.
     """
-    resolved = Path(path).resolve()
-    if audio_dir.resolve() not in resolved.parents:
-        raise HTTPException(status_code=400, detail="audio_dir 밖의 경로는 서빙할 수 없습니다")
-    if not resolved.is_file():
-        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
-    return FileResponse(resolved)
+    return FileResponse(_resolve_audio_path(path))
+
+
+@app.get("/api/audio/list")
+async def list_audio():
+    """Pi에 올라와 있는 안내 음성 목록 (RF 리모컨 음성 선택용)."""
+    if not audio_dir.is_dir():
+        return {"files": []}
+    files = [
+        {"name": f.name, "path": str(f.resolve()), "size": f.stat().st_size}
+        for f in sorted(audio_dir.iterdir())
+        if f.is_file() and f.suffix.lower() in _AUDIO_SUFFIXES
+    ]
+    return {"files": files}
+
+
+def _load_rf_config() -> dict:
+    try:
+        data = json.loads(rf_config_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@app.get("/api/rf/config")
+async def get_rf_config():
+    """rf_config.json 원본. 파일이 없으면 빈 설정(RF 비활성)."""
+    data = _load_rf_config()
+    return {"config": data, "audio_files": data.get("audio_files", [])}
+
+
+class RfAudioPayload(BaseModel):
+    audio_files: list[str]
+
+
+@app.put("/api/rf/audio")
+async def put_rf_audio(payload: RfAudioPayload):
+    """리모컨을 한 번 누를 때 순서대로 이어서 재생할 음성 목록을 저장한다.
+
+    다른 키(주파수, 감지 방식 등)는 그대로 두고 audio_files만 바꾼다.
+    camera_live_pi.py가 mtime으로 감지해 재시작 없이 반영한다.
+    """
+    files = [str(_resolve_audio_path(p)) for p in payload.audio_files]
+    data = _load_rf_config()
+    data["audio_files"] = files
+    _save(data, rf_config_path)
+    return {"ok": True, "audio_files": files}
+
+
+class RfGroupPayload(BaseModel):
+    group_enabled: bool
+    group_priority: int = Field(ge=0, le=9999)
+
+
+@app.put("/api/rf/group")
+async def put_rf_group(payload: RfGroupPayload):
+    """군집 제어 — 같은 누름을 들은 기기들이 우선순위(작을수록 먼저)대로 한 대씩 재생.
+
+    바뀌면 camera_live_pi.py가 RF 수신기를 다시 띄운다 (rf_group.py 참고).
+    """
+    data = _load_rf_config()
+    data["group_enabled"] = payload.group_enabled
+    data["group_priority"] = payload.group_priority
+    _save(data, rf_config_path)
+    return {"ok": True, "group_enabled": payload.group_enabled,
+            "group_priority": payload.group_priority}
 
 
 class RoisPayload(BaseModel):
@@ -1024,6 +1099,8 @@ if __name__ == "__main__":
                         help="정적 대시보드 화면을 끄고 Pi API만 제공")
     parser.add_argument("--camera-config", default=str(_DEFAULT_CAMERA_CONFIG),
                          help="다중 카메라 프로필 JSON 경로 (camera_live_pi.py --camera-config와 동일해야 함)")
+    parser.add_argument("--rf-config", default=str(_DEFAULT_RF_CONFIG),
+                         help="RF 리모컨 설정 JSON 경로 (camera_live_pi.py --rf-config와 동일해야 함)")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
@@ -1032,6 +1109,7 @@ if __name__ == "__main__":
     audio_dir = Path(args.audio_dir).resolve()
     traffic_db_path = Path(args.traffic_db).resolve()
     camera_config_path = Path(args.camera_config).resolve()
+    rf_config_path = Path(args.rf_config).resolve()
     identity_path = (Path(args.identity).resolve() if args.identity
                      else default_path(rois_path.parent))
     api_only = args.api_only
@@ -1039,6 +1117,7 @@ if __name__ == "__main__":
     print(f"[ROI Editor] audio_dir: {audio_dir}")
     print(f"[ROI Editor] traffic_db: {traffic_db_path}")
     print(f"[ROI Editor] camera_config: {camera_config_path}")
+    print(f"[ROI Editor] rf_config: {rf_config_path}")
     # 이벤트 전송 스레드. 신원이 없어도 띄운다 — 등록되는 순간 밀린 것이 함께
     # 올라가야 하고, 그때 프로세스를 재시작하게 만들면 안 된다.
     _sender["thread"] = EventSender(_all_traffic_dbs, identity_path)

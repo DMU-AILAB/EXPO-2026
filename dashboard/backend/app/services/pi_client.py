@@ -241,6 +241,29 @@ class PiClient:
             raise HTTPException(status_code=502, detail=f"기기가 오디오 경로를 돌려주지 않았습니다: {data}")
         return path
 
+    async def list_audio(self) -> list[dict]:
+        """기기 audio_dir의 `[{name, path, size}]`."""
+        data = await self._get_json("/api/audio/list")
+        return data.get("files", []) if isinstance(data, dict) else []
+
+    # ------------------------------------------------------------------ RF 리모컨
+
+    async def get_rf_config(self) -> dict:
+        """`{config: <rf_config.json 원본>, audio_files: [Pi 절대경로...]}`."""
+        data = await self._get_json("/api/rf/config")
+        return data if isinstance(data, dict) else {"config": {}, "audio_files": []}
+
+    async def put_rf_audio(self, paths: list[str]) -> dict:
+        """리모컨 한 번에 순서대로 재생할 음성 목록. 다른 RF 설정 키는 Pi가 보존한다."""
+        res = await self._request("PUT", "/api/rf/audio", json={"audio_files": paths})
+        return res.json()
+
+    async def put_rf_group(self, enabled: bool, priority: int) -> dict:
+        """군집 제어 on/off와 우선순위(작을수록 먼저 재생)."""
+        res = await self._request("PUT", "/api/rf/group",
+                                  json={"group_enabled": enabled, "group_priority": priority})
+        return res.json()
+
     # ------------------------------------------------------------------ 통계
 
     async def get_timeseries(self, camera_id: Optional[str] = None,

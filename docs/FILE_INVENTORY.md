@@ -232,7 +232,7 @@ PC 작업본 ──┬── make sync            → DEPLOY_PY 24개 + DEPLOY_M
                               Pi:~/visionguide/ (평면 배치)
 ```
 
-**Pi에는 git 저장소가 없다.** 배포는 체크아웃이 아니라 rsync이므로, "브랜치를
+**Pi에는 git 저장소가 없다.** 배포는 체크아웃이 아니라 파일 전송(`tar | ssh`)이므로, "브랜치를
 Pi에 적용"이라는 경로는 존재하지 않는다. `make deploy`가 위 세 타겟을 모두
 포함하며, **부분 배포 시 `sync`와 `sync-roi-editor`를 모두 챙겨야 한다**
 (`sync`만 하면 웹 UI가 구버전으로 남는다 — 실제로 발생한 사례가 있다).

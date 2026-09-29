@@ -159,6 +159,25 @@ export type AudioFile = {
   size_bytes: number
 }
 
+/** 기기(Pi) audio_dir에 이미 있는 파일. `path`는 Pi 로컬 절대경로. */
+export type PiAudioFile = {
+  name: string
+  path: string
+  size: number
+}
+
+/** 리모컨 음성 목록 항목 — 서버 라이브러리 파일명 또는 Pi 절대경로. */
+export type RfAudioItem =
+  | { source: 'library'; filename: string }
+  | { source: 'pi'; path: string }
+
+export type RfState = {
+  config: Record<string, unknown>
+  /** 현재 적용된 재생 순서 (Pi 절대경로). */
+  audio_files: string[]
+  pi_audio: PiAudioFile[]
+}
+
 export type Schedule = {
   id: number
   /** 0=일 … 6=토 (명세 §11). APScheduler와 하루 어긋나므로 서버가 변환한다. */

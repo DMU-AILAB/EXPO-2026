@@ -89,7 +89,7 @@ except ImportError as _e:
     print(f"[WARN] ROI/오디오 기능 비활성 (의존성 누락): {_e}")
 
 try:
-    from rf_audio_trigger import RFConfig, RFAudioTrigger, load_rf_config
+    from rf_audio_trigger import RADIO_FIELDS, RFAudioTrigger, load_rf_config
     _RF_AVAILABLE = True
 except ImportError as _e:
     _RF_AVAILABLE = False
@@ -1914,6 +1914,42 @@ def _reconcile_pipelines(pipelines: dict[str, CameraPipeline], new_profiles: lis
         pipelines[profile.id] = pipeline
 
 
+def _start_rf_trigger(rf_config, announcements, trigger_factory=None):
+    """RF 트리거를 만들어 시작한다. 비활성 설정이거나 시작에 실패하면 None."""
+    if not rf_config.enabled:
+        return None
+    trigger = (trigger_factory or RFAudioTrigger)(rf_config, announcements)
+    try:
+        trigger.start()
+    except Exception as exc:
+        print(f"[WARN] SI4432 RF receiver disabled: {exc}")
+        trigger.close()
+        return None
+    return trigger
+
+
+def _reload_rf_trigger(trigger, rf_path: Path, announcements, trigger_factory=None):
+    """rf_config.json을 다시 읽어 트리거에 반영하고, 이후 쓸 트리거를 돌려준다.
+
+    대시보드가 바꾸는 건 대부분 안내 음성 목록이다 — 그때는 무선 모듈을 다시 열지
+    않고 재생 목록만 바꾼다. 주파수·감지 방식 같은 무선 설정이 바뀌면 트리거를
+    닫고 새로 만든다. 잘못된 설정이면 경고만 남기고 기존 트리거를 유지한다.
+    """
+    try:
+        new_config = load_rf_config(rf_path)
+    except (OSError, ValueError) as exc:
+        print(f"[WARN] rf_config 갱신 무시: {exc}")
+        return trigger
+    if trigger is None:
+        return _start_rf_trigger(new_config, announcements, trigger_factory)
+    if all(getattr(trigger.config, f) == getattr(new_config, f) for f in RADIO_FIELDS):
+        trigger.update_audio(new_config)
+        return trigger
+    print("[INFO] RF 무선 설정 변경 감지 — 수신기 재시작")
+    trigger.close()
+    return _start_rf_trigger(new_config, announcements, trigger_factory)
+
+
 # ── 메인 (슈퍼바이저) ──────────────────────────────────────────────
 
 def main() -> None:
@@ -1976,23 +2012,19 @@ def main() -> None:
 
     # camera_config.json이 있으면 그 프로필들로, 없으면 기존 CLI 인자 그대로 단일
     # 카메라(레거시 모드)를 구성한다 — 레거시 단일카메라 설치는 마이그레이션 불필요.
+    # rf_config.json은 대시보드(Pi API)가 고쳐 쓰므로 camera_config처럼 mtime으로
+    # 감시한다. 시작 시 파일이 없어도 나중에 생기면 그때 켜진다.
     rf_trigger = None
+    rf_path = None
+    rf_mtime = None
     if not args.disable_rf and _RF_AVAILABLE and announcements is not None:
         rf_path = Path(args.rf_config) if args.rf_config else Path("rf_config.json")
-        if rf_path.exists() or args.rf_config:
-            try:
-                rf_config = load_rf_config(rf_path)
-            except (OSError, ValueError) as exc:
-                print(f"[WARN] RF config disabled: {exc}")
-                rf_config = RFConfig()
-            if rf_config.enabled:
-                rf_trigger = RFAudioTrigger(rf_config, announcements)
-                try:
-                    rf_trigger.start()
-                except Exception as exc:
-                    print(f"[WARN] SI4432 RF receiver disabled: {exc}")
-                    rf_trigger.close()
-                    rf_trigger = None
+        try:
+            rf_mtime = rf_path.stat().st_mtime
+        except OSError:
+            rf_mtime = None
+        if rf_mtime is not None or args.rf_config:
+            rf_trigger = _reload_rf_trigger(None, rf_path, announcements)
 
     cfg_path = Path(args.camera_config) if args.camera_config else None
     profiles = load_camera_config(cfg_path) if cfg_path is not None else []
@@ -2049,6 +2081,15 @@ def main() -> None:
                         _reconcile_pipelines(pipelines, new_profiles, shared, base_conf,
                                               args.headless, args.disable_traffic_count)
 
+            if rf_path is not None:
+                try:
+                    mtime = rf_path.stat().st_mtime
+                except OSError:
+                    mtime = None
+                if mtime is not None and mtime != rf_mtime:
+                    rf_mtime = mtime
+                    rf_trigger = _reload_rf_trigger(rf_trigger, rf_path, announcements)
+
             # 예기치 않게 죽은 파이프라인 자동 재시작 — camera_config.json 변경으로
             # 의도적으로 stop()된 카메라는 위 _reconcile_pipelines가 이미 pipelines
             # 딕셔너리에서 제거하므로, 여기 남아있는데 죽어있는 항목은 전부 "의도치
@@ -2068,7 +2109,7 @@ def main() -> None:
                 new_pipeline.start()
                 pipelines[cam_id] = new_pipeline
 
-            stop_event.wait(2.0)
+            stop_event.wait(0.5)
     finally:
         for pipeline in pipelines.values():
             pipeline.stop()

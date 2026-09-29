@@ -11,7 +11,7 @@ type Verify = { state: 'idle' | 'loading' | 'ok' | 'fail'; version?: string | nu
 type Issued = { id: string; apiKey: string; provisioned: boolean; error: string | null }
 
 export default function PiScan() {
-  const [subnet, setSubnet] = useState('192.168.1.0/24')
+  const [subnet, setSubnet] = useState('192.168.0.0/24')
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
@@ -152,7 +152,7 @@ export default function PiScan() {
             className="w-full mb-4 bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-[#2c4be0] focus:ring-2 focus:ring-[#2c4be0]/15"
             value={subnet}
             onChange={(e) => setSubnet(e.target.value)}
-            placeholder="192.168.1.0/24"
+            placeholder="192.168.0.0/24"
           />
 
           {!scan && !scanning && (
