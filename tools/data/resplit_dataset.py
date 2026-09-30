@@ -252,16 +252,21 @@ def _image_path(name: str) -> Path:
     raise FileNotFoundError(name)
 
 
-def audit_labels(names: list[str]) -> list[str]:
+def audit_labels(names: list[str], label_path=None) -> list[str]:
     """라벨의 기하학적 유효성 검사 — 0폭/프레임 이탈/극소 박스/완전 중복.
 
     현재 데이터는 39,110박스 전수에서 전부 0건이지만, 앞으로 데이터를 추가할 때
     조용히 깨지는 걸 막기 위해 재분할마다 다시 본다.
+
+    `label_path`는 이미지 파일명 → 라벨 경로 함수다. 생략하면 이 스크립트의 원본
+    풀(`datasets/v1` + 사람 보완본)을 본다. `add_source_variant.py`처럼 다른 위치의
+    라벨을 같은 기준으로 검사할 때 넘긴다.
     """
+    label_path = label_path or _label_path
     problems: list[str] = []
     for n in names:
         rows = []
-        for i, line in enumerate(_label_path(n).read_text().splitlines(), 1):
+        for i, line in enumerate(label_path(n).read_text().splitlines(), 1):
             parts = line.split()
             if not parts:
                 continue

@@ -144,6 +144,16 @@ datasets/data_v2_nolkc.yaml
 datasets/v3_*/
 datasets/data_v3_*.yaml
 
+# add_source_variant.py 산출물 (소스를 train에 더한 변형) — 하드링크로 재생성 가능.
+datasets/v4_*/
+datasets/data_v4_*.yaml
+
+# autolabel_videos.py 출력 — 사람이 검수한 라벨은 다시 만들 수 없는 작업물이라
+# **라벨·검수 이력·sidecar만 커밋**한다. 프레임 jpg는 원본 mp4(git 대상 아님)에서
+# 같은 명령으로 재생성된다. datasets/sources/* 전체 무시 규칙에서 이것만 되살린다.
+!datasets/sources/vid_*/
+datasets/sources/vid_*/train/images/
+
 
 # 강제종료로 생긴 학습 잔재 — ultralytics가 같은 이름이 있으면 <name>-2, -3 …으로
 # 자동 증가시키는데, 중단된 시도가 1~2 epoch짜리 빈 껍데기로 남는다. 실제 산출물은
