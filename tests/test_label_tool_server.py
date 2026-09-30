@@ -356,3 +356,25 @@ def test_검수완료된_프레임에는_sidecar_후보를_얹지_않는다(tmp_
     c.post("/api/save", json={"split": "train", "filename": name,
                               "person_boxes": [], "cane_boxes": []})
     assert c.get("/api/item/0").json()["candidates"] == []
+
+
+def test_데이터셋에_autolabel_json이_있으면_후보와_검수이력이_자동으로_켜진다(tmp_path):
+    """옵션을 빠뜨리면 검수 이력이 git 밖(apps/label_tool/reviewed.json)에 쌓여
+    add_source_variant가 '검수 안 됨'으로 거부한다 — 실제로 겪은 사고."""
+    (tmp_path / "autolabel.json").write_text("{}", encoding="utf-8")
+    side, rev, auto = srv.resolve_sidecar_paths(tmp_path, None, None)
+    assert side == (tmp_path / "autolabel.json").resolve()
+    assert rev == (tmp_path / "reviewed.json").resolve()
+    assert auto
+
+
+def test_autolabel_json이_없으면_기존_기본값을_유지한다(tmp_path):
+    assert srv.resolve_sidecar_paths(tmp_path, None, None) == (None, None, False)
+
+
+def test_명시한_옵션이_자동값보다_우선한다(tmp_path):
+    (tmp_path / "autolabel.json").write_text("{}", encoding="utf-8")
+    mine = tmp_path / "mine.json"
+    side, rev, _ = srv.resolve_sidecar_paths(tmp_path, None, str(mine))
+    assert rev == mine.resolve()
+    assert side == (tmp_path / "autolabel.json").resolve()

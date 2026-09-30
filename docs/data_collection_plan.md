@@ -240,9 +240,8 @@ python tools/data/autolabel_videos.py --videos <영상들> \
     --clip-prefix tr_lab_20260920 --out datasets/sources/vid_20260920
 
 # 3) 전수 검수 — 후보는 클릭해 수락해야 저장된다. C=이전 프레임 복사, A=후보 전부 수락
-python apps/label_tool/server.py --datasets-dir datasets/sources/vid_20260920 --targets all \
-    --suggestions datasets/sources/vid_20260920/autolabel.json \
-    --reviewed datasets/sources/vid_20260920/reviewed.json
+#    폴더에 autolabel.json이 있으면 후보(--suggestions)·검수이력(--reviewed)이 자동으로 켜진다
+python apps/label_tool/server.py --datasets-dir datasets/sources/vid_20260920 --targets all
 
 # 4) train에만 더한 변형 생성 (val/test 불변). 검수율 100%·누수·파일명·라벨 기하를 검사한다
 #    ★ 검수가 끝난 뒤에 만들 것 — 하드링크라 이후 라벨 수정은 변형에 반영되지 않는다

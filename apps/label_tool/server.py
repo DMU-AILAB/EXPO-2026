@@ -298,6 +298,31 @@ def _sidecar_candidates(filename: str, existing: dict[int, list[list[float]]]) -
     return out
 
 
+SIDECAR_NAME = "autolabel.json"
+
+
+def resolve_sidecar_paths(ds_dir: Path, suggestions: str | None,
+                          reviewed: str | None) -> tuple[Path | None, Path | None, bool]:
+    """`--suggestions`/`--reviewed`를 정한다. 반환: (sidecar, 검수이력, 자동으로 켰는가).
+
+    **데이터셋 폴더에 `autolabel.json`이 있으면 둘 다 자동으로 켠다.** 옵션을 빠뜨리면
+    ① 후보가 안 보여 teacher가 놓친 지팡이를 전부 손으로 그리게 되고 ② 검수 이력이
+    `apps/label_tool/reviewed.json`(git 대상 아님)에 쌓여 `add_source_variant.py`가
+    "검수 안 됨"으로 거부한다 — 실제로 검수 4장이 이렇게 엉뚱한 곳에 기록됐다.
+    명시한 옵션은 항상 자동값보다 우선한다.
+    """
+    side = Path(suggestions).expanduser().resolve() if suggestions else None
+    rev = Path(reviewed).expanduser().resolve() if reviewed else None
+    auto = False
+    found = ds_dir / SIDECAR_NAME
+    if found.exists():
+        if side is None:
+            side, auto = found.resolve(), True
+        if rev is None:
+            rev, auto = (ds_dir / "reviewed.json").resolve(), True
+    return side, rev, auto
+
+
 _FRAME_NO = re.compile(r"^(.+)_f(\d{4,})$")
 
 
@@ -558,11 +583,13 @@ if __name__ == "__main__":
     parser.add_argument("--no-auto-suggest", action="store_true",
                         help="새 이미지에서 자동 검출을 미리 얹지 않는다")
     parser.add_argument("--reviewed", default=None,
-                        help="검토 이력 파일 (기본: apps/label_tool/reviewed.json). "
+                        help="검토 이력 파일 (기본: apps/label_tool/reviewed.json, "
+                             "데이터셋 폴더에 autolabel.json이 있으면 그 폴더의 reviewed.json). "
                              "대기열을 바꿔 작업할 때는 따로 두는 편이 헷갈리지 않는다")
     parser.add_argument("--suggestions", default=None,
                         help="오토 라벨 sidecar(autolabel.json). 주면 COCO 제안 대신 그 후보를 "
-                             "'수락해야 저장되는' 점선 박스로 얹는다")
+                             "'수락해야 저장되는' 점선 박스로 얹는다. 데이터셋 폴더에 "
+                             "autolabel.json이 있으면 생략해도 자동으로 켜진다")
     parser.add_argument("--port", type=int, default=5050)
     args = parser.parse_args()
 
@@ -571,10 +598,12 @@ if __name__ == "__main__":
     allowed_splits = [s.strip() for s in args.splits.split(",") if s.strip()]
     if args.queue:
         queue_path = Path(args.queue).expanduser().resolve()
-    if args.reviewed:
-        reviewed_path = Path(args.reviewed).expanduser().resolve()
-    if args.suggestions:
-        suggestions_path = Path(args.suggestions).expanduser().resolve()
+    side, rev, auto_sidecar = resolve_sidecar_paths(Path(args.datasets_dir).resolve(),
+                                                    args.suggestions, args.reviewed)
+    if rev is not None:
+        reviewed_path = rev
+    if side is not None:
+        suggestions_path = side
         if not suggestions_path.exists():
             parser.error(f"--suggestions 파일이 없다: {suggestions_path}")
     if target_mode == "queue" and queue_path is None:
@@ -599,6 +628,8 @@ if __name__ == "__main__":
         print(f"[Label Tool] 자동 제안    : {'켜짐 (기존 라벨과 겹치는 것은 제외)' if auto_suggest else '꺼짐'}")
     print(f"[Label Tool] 대상 이미지  : {len(_targets)}장")
     print(f"[Label Tool] reviewed     : {reviewed_path}")
+    if auto_sidecar:
+        print(f"[Label Tool] ↑ {SIDECAR_NAME}이 있어 후보·검수이력을 데이터셋 폴더 기준으로 자동 설정했다")
     print(f"[Label Tool] → http://localhost:{args.port}")
 
     uvicorn.run(app, host="0.0.0.0", port=args.port)
