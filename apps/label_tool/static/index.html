@@ -179,7 +179,7 @@ main { display: flex; flex: 1; overflow: hidden; }
         <b>화면 이동</b>: 오른쪽/가운데 버튼 드래그 또는 Space+드래그<br>
       • <b>박스 클릭 = 선택</b> → 흰 핸들을 끌어 크기 조절, <b>Shift+드래그</b>로 이동.
         Delete=선택 박스 삭제, Esc=선택 해제<br>
-      • 단축키: Enter=저장·다음, Backspace=실행취소, ←/→=이전/다음(저장 안 함), 1=사람, 2=지팡이,
+      • 단축키: Enter=저장 후 바로 다음 이미지, Backspace=실행취소, ←/→=이전/다음(저장 안 함), 1=사람, 2=지팡이,
         C=이전 프레임 복사, A=후보 전부 수락
     </div>
   </div>
@@ -514,8 +514,8 @@ async function loadPrev() {
   loadItem(await res.json());
 }
 
-// 저장하지 않고 바로 다음 이미지 — Enter(저장 후 다음 **미검수** 이미지)와 달리
-// 검수 완료 이미지도 건너뛰지 않고 순서대로 넘긴다. ←의 짝. 이 화면의 편집은 버려진다.
+// 저장하지 않고 바로 다음 이미지 — Enter(저장 후 다음 이미지)와 순서는 같고 저장만
+// 하지 않는다. ←의 짝. 이 화면의 편집은 버려진다.
 async function loadNextItem() {
   if (!current) return;
   const res = await fetch(`/api/item/${current.index + 1}`);
@@ -544,7 +544,12 @@ async function saveAndNext() {
     return;
   }
   await refreshStats();
-  await loadNext(current.index);
+  // 저장 후에는 **바로 다음 이미지**로 간다 — 검수 완료 이미지도 건너뛰지 않는다.
+  // 연속 프레임을 순서대로 보며 앞 프레임에서 고친 것을 이어서 확인하기 위해서다.
+  // 마지막 이미지였다면 남은 미검수 이미지(처음부터)로, 없으면 완료 화면으로 간다.
+  const next = await fetch(`/api/item/${current.index + 1}`);
+  if (next.ok) loadItem(await next.json());
+  else await loadNext(-1);
 }
 
 async function suggestWithAI(auto = false) {
