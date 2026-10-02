@@ -8,3 +8,18 @@ pillow>=9.0.0
 shapely>=2.0.0
 pygame>=2.0.0
 pytest>=7.0.0
+
+# ── apps/label_tool, apps/roi_editor (PC에서 실행/테스트) ────────────────
+# roi_editor는 실제 운영 시 Pi에서 구동되지만(requirements-pi.txt에도 동일하게
+# 있음), PC에서 `python apps/label_tool/server.py`를 돌리거나
+# tests/test_roi_editor_server.py · tests/test_label_tool_server.py를
+# 돌리려면(현재는 pytest.importorskip으로 건너뛰는 선택 의존성) 여기에도 필요하다.
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+httpx>=0.24.0
+
+# apps/label_tool/server.py의 OpenAI 자동 제안 기능(선택 기능)은 여기 포함하지
+# 않는다 — 코드가 자체적으로 ImportError를 잡아 `pip install openai`를
+# 안내하므로 필요한 사람만 따로 설치한다.

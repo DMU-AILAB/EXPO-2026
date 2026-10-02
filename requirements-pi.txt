@@ -20,6 +20,7 @@ pillow>=9.0.0          # 한글 오버레이 (PIL)
 # ── ROI 웹 에디터 (roi_editor/server.py) ─────────────────────────────────
 fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
+python-multipart>=0.0.6  # 오디오 업로드(/api/audio/upload)용. make deps-roi-editor도 이걸 설치한다
 
 # 오디오 재생 (apt 권장, pip 불필요):
 #   sudo apt install -y mpg123
