@@ -375,3 +375,23 @@ def test_put_rf_group_saves_priority_and_keeps_other_keys(client, tmp_path):
     assert saved == {"enabled": True, "audio_files": ["/x.mp3"],
                      "group_enabled": True, "group_priority": 2}
     assert client.put("/api/rf/group", json={"group_enabled": True, "group_priority": -1}).status_code == 422
+
+
+def test_put_rf_detection_saves_threshold_and_keeps_other_keys(client, tmp_path):
+    import json
+
+    (tmp_path / "rf_config.json").write_text(
+        json.dumps({"enabled": True, "rssi_threshold": 110, "group_priority": 2}), encoding="utf-8")
+    r = client.put("/api/rf/detection", json={"rssi_threshold": 80})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "rssi_threshold": 80}
+    saved = json.loads((tmp_path / "rf_config.json").read_text(encoding="utf-8"))
+    assert saved == {"enabled": True, "rssi_threshold": 80, "group_priority": 2}
+
+
+def test_put_rf_detection_rejects_out_of_range(client, tmp_path):
+    # RSSI 레지스터는 0~255이고 rf_audio_trigger.py는 0 < threshold < 256만 받는다.
+    for bad in (0, -1, 256, 1000):
+        assert client.put("/api/rf/detection", json={"rssi_threshold": bad}).status_code == 422
+    assert client.put("/api/rf/detection", json={"rssi_threshold": "abc"}).status_code == 422
+    assert not (tmp_path / "rf_config.json").exists()

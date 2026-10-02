@@ -205,3 +205,114 @@ def test_rf_trigger_routes_presses_through_group():
         bus = trigger.group_bus
         trigger.close()
         assert bus.closed
+
+
+# ── 감지한 기기끼리만 군집 (group_follow_peers) ─────────────────────────────
+
+def _group_trigger(**cfg):
+    """네트워크·무선·소리 없이 RFAudioTrigger 군집 경로만 만든다."""
+    from rf_audio_trigger import RFAudioTrigger, RFConfig
+
+    class FakeBus:
+        def __init__(self, coordinator, port):
+            self.coordinator, self.sent = coordinator, []
+
+        def send(self, msg):
+            self.sent.append(msg)
+
+        def start(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Radio:
+        def __init__(self, *args):
+            pass
+
+        def open(self):
+            pass
+
+        def configure_kics(self, frequency):
+            pass
+
+        def close(self):
+            pass
+
+        def read_rssi(self):
+            return 10
+
+    class Router:
+        def __init__(self):
+            self.calls = []
+
+        def submit(self, announcement, on_done=None):
+            self.calls.append(announcement)
+            if on_done is not None:
+                on_done()
+
+    router = Router()
+    trigger = RFAudioTrigger(
+        RFConfig(enabled=True, detection_mode="rssi", audio_files=("/a/1.mp3",),
+                 group_enabled=True, group_priority=5, group_device_id="pi-near", **cfg),
+        router, radio_factory=Radio, group_bus_factory=FakeBus)
+    trigger.start()
+    return trigger, router
+
+
+def _peer(trigger, kind, prio=0):
+    trigger.group.on_message({"v": PROTOCOL_VERSION, "type": kind, "id": "pi-far", "prio": prio})
+
+
+def test_group_follow_peers_defaults_to_false_and_loads_from_config(tmp_path):
+    import json
+    from rf_audio_trigger import RFConfig, RADIO_FIELDS, load_rf_config
+
+    assert RFConfig().group_follow_peers is False
+    assert "group_follow_peers" in RADIO_FIELDS      # 바뀌면 수신기를 다시 띄워야 반영된다
+    path = tmp_path / "rf_config.json"
+    path.write_text(json.dumps({"group_follow_peers": True}), encoding="utf-8")
+    assert load_rf_config(path).group_follow_peers is True
+
+
+def test_device_that_did_not_detect_the_press_stays_silent_by_default():
+    trigger, router = _group_trigger()
+    try:
+        _peer(trigger, "heard")                    # 먼 기기가 감지했다 — 이 기기는 감지하지 못했다
+        trigger.group.clock = lambda: 1e9          # 군집 창이 지났다
+        trigger.group.tick()
+        _peer(trigger, "done")
+        trigger.group.tick()
+        assert router.calls == []                  # 소리를 내지 않는다
+        assert not trigger.group.busy              # 라운드도 남지 않는다
+    finally:
+        trigger.close()
+
+
+def test_device_that_did_not_detect_follows_peers_when_enabled():
+    trigger, router = _group_trigger(group_follow_peers=True)
+    try:
+        _peer(trigger, "heard")
+        trigger.group.clock = lambda: 1e9
+        trigger.group.tick()
+        assert router.calls == []                  # 우선순위 0인 동료가 먼저다
+        _peer(trigger, "done")
+        trigger.group.tick()
+        assert len(router.calls) == 1              # 동료가 끝난 뒤 따라 재생
+    finally:
+        trigger.close()
+
+
+def test_device_that_detected_the_press_still_plays_in_order_when_not_following():
+    trigger, router = _group_trigger()
+    try:
+        trigger._on_rssi_press(150)                # 이 기기도 직접 감지했다
+        _peer(trigger, "heard", prio=0)            # 동료(우선순위 0)도 감지했다
+        trigger.group.clock = lambda: 1e9
+        trigger.group.tick()
+        assert router.calls == []                  # 동료 차례를 기다린다
+        _peer(trigger, "done")
+        trigger.group.tick()
+        assert len(router.calls) == 1
+    finally:
+        trigger.close()

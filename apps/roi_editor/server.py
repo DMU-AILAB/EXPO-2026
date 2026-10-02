@@ -482,6 +482,24 @@ async def put_rf_group(payload: RfGroupPayload):
             "group_priority": payload.group_priority}
 
 
+class RfDetectionPayload(BaseModel):
+    rssi_threshold: int = Field(ge=1, le=255)
+
+
+@app.put("/api/rf/detection")
+async def put_rf_detection(payload: RfDetectionPayload):
+    """리모컨 감지 임계값(RSSI). 이 값 이상의 신호가 min_burst_ms 이어지면 한 번 누른 것으로 친다.
+
+    낮출수록 먼 거리에서도 반응하지만 다른 장비·리모컨에 오반응할 위험이 커진다.
+    다른 키는 그대로 두고 rssi_threshold만 바꾼다. camera_live_pi.py가 mtime으로 감지해
+    재시작 없이 수신기를 다시 띄운다.
+    """
+    data = _load_rf_config()
+    data["rssi_threshold"] = payload.rssi_threshold
+    _save(data, rf_config_path)
+    return {"ok": True, "rssi_threshold": payload.rssi_threshold}
+
+
 class RoisPayload(BaseModel):
     rois: list
     conf: float | dict[str, float] | None = None

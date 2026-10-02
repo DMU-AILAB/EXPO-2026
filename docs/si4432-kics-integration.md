@@ -106,12 +106,19 @@ RSSI mode therefore counts one press whenever RSSI stays at or above
 other KICS remotes on the same channel. Lowering `rssi_threshold` increases the
 reception range.
 
+The deployed devices (60, 89, 103) all use `rssi_threshold` 80. Measured at 2.5 m
+on the 103 device the press peaked at 79–91 (noise floor 14–29, 10 cm from the
+antenna 136–149), i.e. well below the 140–170 seen on the reference unit above.
+At the old threshold of 110 that device never triggered, and the 60/89 units
+triggered at a median raw value of only about 117. 80 sits between the noise
+ceiling and the weakest measured press; re-measure before lowering it further.
+
 ```json
 {
   "enabled": true,
   "detection_mode": "rssi",
   "frequency_mhz": 356.635,
-  "rssi_threshold": 110,
+  "rssi_threshold": 80,
   "min_burst_ms": 150,
   "audio_files": []
 }
@@ -144,15 +151,38 @@ avoid overlapping sound and to play one after another by priority. With
 (`group_port`, default 47600). This is implemented in `device/rf_group.py`.
 
 1. A device that detects a press broadcasts `heard`.
-2. For `group_window_ms` (300 ms) each device collects the `heard`
-   messages from the other devices.
+2. For `group_window_ms` (deployed value 600 ms, code default 300 ms) each
+   device collects the `heard` messages from the other devices.
 3. Participants are ordered by `group_priority` (lower first; ties break by
    device id). Each device plays after its predecessor broadcasts `done`.
    If the predecessor stays silent for `group_turn_timeout_sec`, the device
    plays anyway.
 4. Presses during a round are ignored.
 
+**Only devices that detected the press themselves take part.** A device on the
+same LAN that did not detect the remote (for example one 100 m away) receives
+the peers' `heard` messages but stays silent, so nothing sounds where nobody
+can hear it. Set `group_follow_peers: true` to restore the old behaviour in
+which a device that missed the press joins the round and plays after its
+peers (it compensates for weak reception, but also sounds far-away devices).
+The default is `false`. The LAN broadcast cannot tell how far away a peer is,
+so two remotes pressed at nearly the same time in different places would still
+be treated as one round.
+
 If broadcasts are lost, each device assumes it is alone and plays. The
-failure mode is an overlap, never a silent guide. Set the priority per device
+failure mode is an overlap, never a silent guide.
+
+**The window must exceed the Wi-Fi broadcast latency, not just the detection
+skew.** Measured between the 60/89/103 Pis on one access point, broadcast
+packets arrived 97–100 % of the time but with a median latency of about
+270–280 ms and a maximum of about 440 ms (unicast: under 10 ms median),
+consistent with the AP holding broadcast frames until the DTIM beacon. With
+`group_window_ms` 80 a `heard` message therefore arrived after the window had
+closed, so every device believed it was alone and they played at the same time
+(14 of 21 multi-device presses in the 12-hour log, 12 of them with detection
+skew under 10 ms). 600 ms covers the measured maximum with margin. The cost
+is that the first device plays about 0.6 s after the press. Re-measure when
+the access point or its DTIM setting changes; replacing the broadcast with
+unicast to known peers would remove the dependency on it. Set the priority per device
 from the dashboard's **리모컨** tab (`PUT /api/rf/group` on the Pi API).
 Changing it restarts only the RF receiver.
