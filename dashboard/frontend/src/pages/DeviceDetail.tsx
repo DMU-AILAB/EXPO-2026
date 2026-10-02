@@ -15,6 +15,7 @@ import RoiCanvas from '../components/RoiCanvas'
 import { DAY_NAMES, formatDays, formatMemory, memoryPercent } from '../format'
 import { useApi } from '../hooks/useApi'
 import { cameraDisplayName } from '../utils/cameraLabel'
+import { tempTone } from '../utils/temperature'
 import type {
   Camera as CameraType, DetectionParams, DeviceDetail as DeviceDetailType,
   RecentEvent, RfAudioItem, Roi,
@@ -80,7 +81,7 @@ function OverviewTab({ device, events }: { device: DeviceDetailType; events: Rec
             </div>
             <Row icon={<Thermometer className="w-3.5 h-3.5 text-emerald-500" />} label="온도"
                  value={temp != null ? `${temp.toFixed(1)}°C` : '—'}
-                 tone={temp == null ? '' : temp > 65 ? 'text-red-600' : temp > 55 ? 'text-amber-600' : 'text-emerald-600'} />
+                 tone={temp == null ? '' : tempTone(temp)} />
             <Row icon={<Clock className="w-3.5 h-3.5 text-slate-400" />} label="가동 시간"
                  value={device.uptime ?? '—'} />
             <Row icon={<Wifi className="w-3.5 h-3.5 text-slate-400" />} label="프레임 처리"
@@ -1129,6 +1130,11 @@ const rfKey = (item: RfAudioItem) =>
   item.source === 'library' ? `library:${item.filename}` : `pi:${item.path}`
 const baseName = (path: string) => path.split('/').pop() ?? path
 
+/** 코드 기본값(rf_audio_trigger.py)과 같다. rf_config.json에 값이 없을 때만 쓰인다. */
+const RSSI_DEFAULT = 110
+/** 실측 기준 — 잡음은 보통 10~30, 2.5m에서 누른 신호는 70~90, 10cm 이내는 135~150이다. */
+const RSSI_NOISE_MAX = 30
+
 /** 리모컨을 한 번 누르면 선택한 음성을 위에서부터 차례로 이어서 재생한다. */
 function RfTab({ device }: Ctx) {
   const rf = useApi(() => api.getRf(device.id), [device.id])
@@ -1143,13 +1149,30 @@ function RfTab({ device }: Ctx) {
   const [groupSaved, setGroupSaved] = useState(false)
   const groupOverview = useApi(() => api.getGroupOverview(), [])
 
+  const [rssiThreshold, setRssiThreshold] = useState(RSSI_DEFAULT)
+  const [rssiSaved, setRssiSaved] = useState(false)
+
   // 기기에 적용된 목록으로 초기화한다 (저장 후 다시 읽을 때도).
   useEffect(() => {
     if (!rf.data) return
     setSelected(rf.data.audio_files.map((path) => ({ source: 'pi' as const, path })))
     setGroupEnabled(rf.data.config.group_enabled === true)
     setGroupPriority(typeof rf.data.config.group_priority === 'number' ? rf.data.config.group_priority : 100)
+    setRssiThreshold(typeof rf.data.config.rssi_threshold === 'number' ? rf.data.config.rssi_threshold : RSSI_DEFAULT)
   }, [rf.data])
+
+  const saveRssi = async () => {
+    setBusy(true); setError(null); setRssiSaved(false)
+    try {
+      await api.setRfDetection(device.id, rssiThreshold)
+      setRssiSaved(true)
+      rf.reload()
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const saveGroup = async () => {
     setBusy(true); setError(null); setGroupSaved(false)
@@ -1312,6 +1335,41 @@ function RfTab({ device }: Ctx) {
         <p className="mt-3 text-[10px] text-slate-400">
           리모컨을 한 번 누르면 위 순서대로 이어서 재생합니다. 재생 중에 다시 누르면 무시합니다.
         </p>
+
+        <div className="mt-5 pt-4 border-t border-slate-200/70">
+          <h3 className="text-xs font-bold text-slate-700">리모컨 감도 (감지 임계값)</h3>
+          <p className="text-[10px] text-slate-400 mt-0.5">
+            수신 신호 세기(RSSI)가 이 값 이상으로 잠깐 이어지면 리모컨을 누른 것으로 봅니다.
+            낮출수록 먼 거리에서도 반응하지만, 근처 다른 장비나 리모컨에 잘못 반응할 수 있습니다.
+          </p>
+          <div className="flex items-end gap-3 mt-3">
+            <input type="range" min={20} max={200} step={1} className="flex-1 accent-[#2c4be0]"
+                   value={Math.max(20, Math.min(200, rssiThreshold))}
+                   onChange={(e) => { setRssiThreshold(Number(e.target.value)); setRssiSaved(false) }} />
+            <label className="w-24">
+              <span className={labelCls}>임계값 (1~255)</span>
+              <input type="number" min={1} max={255} className={inputCls} value={rssiThreshold}
+                     onChange={(e) => { setRssiThreshold(Math.max(1, Math.min(255, Math.round(Number(e.target.value)) || 1))); setRssiSaved(false) }} />
+            </label>
+            <button type="button" onClick={saveRssi} disabled={busy || rf.loading}
+                    className="glass-btn px-4 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50">
+              감도 저장
+            </button>
+            {rssiSaved && (
+              <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1 pb-1.5">
+                <CheckCircle className="w-3.5 h-3.5" />적용됨
+              </span>
+            )}
+          </div>
+          {rssiThreshold <= RSSI_NOISE_MAX && (
+            <p className="mt-2 text-[10px] font-semibold text-amber-600">
+              일반적인 잡음 수준({RSSI_NOISE_MAX} 안팎)과 비슷해서 리모컨을 누르지 않아도 계속 반응할 수 있습니다.
+            </p>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            참고(실측): 잡음 10~30 · 2.5m에서 누름 70~90 · 10cm 이내 135~150. 현재 장비 기준 권장 80 안팎.
+          </p>
+        </div>
 
         <div className="mt-5 pt-4 border-t border-slate-200/70">
           <div className="flex items-center justify-between gap-3">

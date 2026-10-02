@@ -62,6 +62,8 @@ async def get_devices(search: str = None, db: Session = Depends(get_db), current
             await refresh_cameras_from_pi(db, d)
             camera_rows = db.query(Camera).filter(Camera.device_id == d.id).all()
         runtime = await get_buffered_cameras(d.id)
+        # 꺼 둔 카메라는 목록 화면(관제 카드·실시간 스트림)에 올리지 않는다 — 올리면 영영
+        # "재연결 중"인 칸이 생기고, 카메라 1대짜리 장비가 2대짜리 넓은 카드로 그려진다.
         cameras = [
             {
                 "id": c.id,
@@ -69,6 +71,7 @@ async def get_devices(search: str = None, db: Session = Depends(get_db), current
                 "is_streaming": bool(runtime.get(c.id, {}).get("is_streaming", False)),
             }
             for c in camera_rows
+            if c.is_active
         ]
         data.append(build_device_summary(
             db, d, buffered,

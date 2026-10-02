@@ -6,6 +6,7 @@ import * as api from '../api'
 import StatusBadge from '../components/StatusBadge'
 import { useApi } from '../hooks/useApi'
 import { formatLastSeen } from '../format'
+import { tempTone } from '../utils/temperature'
 
 export default function DeviceList() {
   const [query, setQuery] = useState('')
@@ -72,14 +73,7 @@ export default function DeviceList() {
               const temp = device.temperature
               const cpuColor =
                 cpu == null ? 'text-slate-400' : cpu > 70 ? 'text-amber-600' : 'text-slate-800'
-              const tempColor =
-                temp == null
-                  ? 'text-slate-400'
-                  : temp > 60
-                  ? 'text-red-500'
-                  : temp > 55
-                  ? 'text-amber-500'
-                  : 'text-emerald-600'
+              const tempColor = tempTone(temp)
 
               return (
                 <tr

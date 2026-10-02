@@ -17,7 +17,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 STREAM_CONTENT_TYPE = "multipart/x-mixed-replace; boundary=frame"
-_QUEUE_SIZE = 3
+# 브라우저별 대기 프레임 수. 느린 뷰어에게는 쌓인 옛 프레임 대신 항상 최신 1장만 준다 —
+# 3이면 10fps 기준 최대 300ms가 그대로 화면 지연이 됐다.
+_QUEUE_SIZE = 1
 _RECONNECT_MIN_SEC = 0.5
 _RECONNECT_MAX_SEC = 5.0
 

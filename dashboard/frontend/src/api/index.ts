@@ -155,6 +155,12 @@ export const setRfGroup = (deviceId: string, groupEnabled: boolean, groupPriorit
     method: 'PUT', body: { group_enabled: groupEnabled, group_priority: groupPriority },
   })
 
+/** 리모컨 감지 임계값(RSSI 1~255). 낮을수록 먼 거리에서도 반응하지만 오반응 위험이 커진다. */
+export const setRfDetection = (deviceId: string, rssiThreshold: number) =>
+  request<{ rssi_threshold: number }>(`/api/devices/${deviceId}/rf/detection`, {
+    method: 'PUT', body: { rssi_threshold: rssiThreshold },
+  })
+
 /** group_enabled인 모든 기기를 priority 오름차순으로 반환. 상대적 순위 계산용. */
 export const getGroupOverview = () =>
   request<{ id: string; name: string; priority: number; group_enabled: boolean; online: boolean }[]>(
