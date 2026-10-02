@@ -24,6 +24,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -84,6 +85,12 @@ target_mode: str = "cane_only"
 auto_suggest: bool = True
 queue_path: Path | None = None
 
+# 오토 라벨 sidecar(`tools/data/autolabel_videos.py`의 autolabel.json). 주어지면 COCO 제안
+# 대신 여기의 **후보**(클래스 포함)를 얹는다. 후보는 주황 자동박스와 달리 **사람이
+# 수락해야 저장된다** — 저신뢰·보간 박스를 "지우지 않으면 저장" 방식으로 올리면
+# Enter만 눌러도 오라벨이 들어간다.
+suggestions_path: Path | None = None
+
 # ★ 기본적으로 train만 연다. val/test 라벨을 고치면 그때까지 측정한 모든 지표
 # (리포트 §13~§15)와 비교가 깨진다 — 잣대를 바꾸면 이전 결과와 나란히 놓을 수 없다.
 allowed_splits: list[str] = ["train"]
@@ -98,12 +105,24 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # _reset_cache()로 강제 재로드할 수 있도록 시작 이벤트 대신 지연 로딩 방식을 쓴다).
 _targets: list[dict] | None = None
 _reviewed: dict[str, bool] | None = None
+_suggestions: dict | None = None
 
 
 def _reset_cache() -> None:
-    global _targets, _reviewed
+    global _targets, _reviewed, _suggestions
     _targets = None
     _reviewed = None
+    _suggestions = None
+
+
+def _load_suggestions() -> dict:
+    global _suggestions
+    if _suggestions is None:
+        try:
+            _suggestions = json.loads(suggestions_path.read_text(encoding="utf-8"))
+        except (AttributeError, FileNotFoundError, json.JSONDecodeError):
+            _suggestions = {}
+    return _suggestions
 
 
 def _ensure_loaded() -> None:
@@ -261,6 +280,61 @@ def _new_suggestions(split: str, filename: str, existing: list[list[float]]) -> 
     return [b for b in boxes if all(_iou(b, e) < SUGGEST_DEDUP_IOU for e in existing)]
 
 
+def _sidecar_candidates(filename: str, existing: dict[int, list[list[float]]]) -> list[dict]:
+    """sidecar 후보 중 **같은 클래스**의 기존 라벨과 겹치지 않는 것만.
+
+    클래스를 가려야 하는 이유: 지팡이는 사람 박스 안에 들어가는 것이 정상이라, 클래스를
+    무시하고 겹침을 빼면 사람 옆의 지팡이 후보가 전부 사라진다.
+    """
+    item = _load_suggestions().get("items", {}).get(filename, {})
+    out = []
+    for c in item.get("candidates", []):
+        box = c.get("box")
+        cls = int(c.get("cls", 0))
+        if not box or len(box) != 4:
+            continue
+        if all(_iou(box, e) < SUGGEST_DEDUP_IOU for e in existing.get(cls, [])):
+            out.append({"cls": cls, "box": box, "conf": c.get("conf"), "why": c.get("why", "")})
+    return out
+
+
+SIDECAR_NAME = "autolabel.json"
+
+
+def resolve_sidecar_paths(ds_dir: Path, suggestions: str | None,
+                          reviewed: str | None) -> tuple[Path | None, Path | None, bool]:
+    """`--suggestions`/`--reviewed`를 정한다. 반환: (sidecar, 검수이력, 자동으로 켰는가).
+
+    **데이터셋 폴더에 `autolabel.json`이 있으면 둘 다 자동으로 켠다.** 옵션을 빠뜨리면
+    ① 후보가 안 보여 teacher가 놓친 지팡이를 전부 손으로 그리게 되고 ② 검수 이력이
+    `apps/label_tool/reviewed.json`(git 대상 아님)에 쌓여 `add_source_variant.py`가
+    "검수 안 됨"으로 거부한다 — 실제로 검수 4장이 이렇게 엉뚱한 곳에 기록됐다.
+    명시한 옵션은 항상 자동값보다 우선한다.
+    """
+    side = Path(suggestions).expanduser().resolve() if suggestions else None
+    rev = Path(reviewed).expanduser().resolve() if reviewed else None
+    auto = False
+    found = ds_dir / SIDECAR_NAME
+    if found.exists():
+        if side is None:
+            side, auto = found.resolve(), True
+        if rev is None:
+            rev, auto = (ds_dir / "reviewed.json").resolve(), True
+    return side, rev, auto
+
+
+_FRAME_NO = re.compile(r"^(.+)_f(\d{4,})$")
+
+
+def _source_info(filename: str) -> str:
+    """`tr_vid_20260930_007_f000030.jpg` → `tr_vid_20260930_007 · 1.0s` (sidecar에 fps가 있을 때)."""
+    m = _FRAME_NO.match(Path(filename).stem)
+    if not m:
+        return ""
+    fps = _load_suggestions().get("clips", {}).get(m.group(1), {}).get("fps")
+    return f"{m.group(1)} · {int(m.group(2)) / fps:.1f}s" if fps else m.group(1)
+
+
 def _build_item(split: str, filename: str) -> dict:
     label_path = _label_path(split, filename)
     boxes = _parse_label_file(label_path)
@@ -269,13 +343,21 @@ def _build_item(split: str, filename: str) -> dict:
     reviewed = _reviewed.get(_key(split, filename), False)
     # 아직 검수 전인 이미지만 제안을 미리 얹는다 — 이미 사람이 확인한 이미지를 다시
     # 열었을 때(이전 버튼) 지웠던 제안이 되살아나면 작업을 되돌리는 셈이 된다.
-    auto = [] if (reviewed or not auto_suggest) else _new_suggestions(split, filename, person_boxes)
+    # sidecar 모드에서는 COCO 제안을 끈다 — 두 출처가 섞이면 같은 사람이 두 번 뜬다.
+    if suggestions_path is not None:
+        auto = []
+        candidates = [] if reviewed else _sidecar_candidates(filename, {0: cane_boxes, 1: person_boxes})
+    else:
+        auto = [] if (reviewed or not auto_suggest) else _new_suggestions(split, filename, person_boxes)
+        candidates = []
     return {
         "split": split,
         "filename": filename,
         "cane_boxes": cane_boxes,
         "person_boxes": person_boxes,
         "auto_boxes": auto,
+        "candidates": candidates,
+        "source_info": _source_info(filename) if suggestions_path is not None else "",
         "reviewed": reviewed,
     }
 
@@ -501,8 +583,13 @@ if __name__ == "__main__":
     parser.add_argument("--no-auto-suggest", action="store_true",
                         help="새 이미지에서 자동 검출을 미리 얹지 않는다")
     parser.add_argument("--reviewed", default=None,
-                        help="검토 이력 파일 (기본: apps/label_tool/reviewed.json). "
+                        help="검토 이력 파일 (기본: apps/label_tool/reviewed.json, "
+                             "데이터셋 폴더에 autolabel.json이 있으면 그 폴더의 reviewed.json). "
                              "대기열을 바꿔 작업할 때는 따로 두는 편이 헷갈리지 않는다")
+    parser.add_argument("--suggestions", default=None,
+                        help="오토 라벨 sidecar(autolabel.json). 주면 COCO 제안 대신 그 후보를 "
+                             "'수락해야 저장되는' 점선 박스로 얹는다. 데이터셋 폴더에 "
+                             "autolabel.json이 있으면 생략해도 자동으로 켜진다")
     parser.add_argument("--port", type=int, default=5050)
     args = parser.parse_args()
 
@@ -511,8 +598,14 @@ if __name__ == "__main__":
     allowed_splits = [s.strip() for s in args.splits.split(",") if s.strip()]
     if args.queue:
         queue_path = Path(args.queue).expanduser().resolve()
-    if args.reviewed:
-        reviewed_path = Path(args.reviewed).expanduser().resolve()
+    side, rev, auto_sidecar = resolve_sidecar_paths(Path(args.datasets_dir).resolve(),
+                                                    args.suggestions, args.reviewed)
+    if rev is not None:
+        reviewed_path = rev
+    if side is not None:
+        suggestions_path = side
+        if not suggestions_path.exists():
+            parser.error(f"--suggestions 파일이 없다: {suggestions_path}")
     if target_mode == "queue" and queue_path is None:
         parser.error("--targets queue 를 쓰려면 --queue <json> 이 필요하다")
 
@@ -529,9 +622,14 @@ if __name__ == "__main__":
     print(f"[Label Tool] 대기열 방식  : {target_mode}"
           + (f"  ({queue_path})" if target_mode == "queue" else ""))
     print(f"[Label Tool] 편집 허용    : {allowed_splits}")
-    print(f"[Label Tool] 자동 제안    : {'켜짐 (기존 라벨과 겹치는 것은 제외)' if auto_suggest else '꺼짐'}")
+    if suggestions_path is not None:
+        print(f"[Label Tool] 후보(sidecar): {suggestions_path}  (COCO 자동 제안 꺼짐)")
+    else:
+        print(f"[Label Tool] 자동 제안    : {'켜짐 (기존 라벨과 겹치는 것은 제외)' if auto_suggest else '꺼짐'}")
     print(f"[Label Tool] 대상 이미지  : {len(_targets)}장")
     print(f"[Label Tool] reviewed     : {reviewed_path}")
+    if auto_sidecar:
+        print(f"[Label Tool] ↑ {SIDECAR_NAME}이 있어 후보·검수이력을 데이터셋 폴더 기준으로 자동 설정했다")
     print(f"[Label Tool] → http://localhost:{args.port}")
 
     uvicorn.run(app, host="0.0.0.0", port=args.port)

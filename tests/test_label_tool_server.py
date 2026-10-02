@@ -6,6 +6,7 @@ roi_editor/server.py도 모듈명이 똑같이 "server"라서 단순 sys.path �
 AttributeError가 난다 — importlib로 파일 경로 기준 고유한 이름의 모듈로 직접 로드해 피한다.
 """
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -289,3 +290,91 @@ def test_cane_boxes를_빈_목록으로_보내면_지팡이가_지워진다(clie
     })
     assert res.status_code == 200
     assert (tmp_path / "train" / "labels" / "img1.txt").read_text().strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# 오토 라벨 sidecar(`--suggestions`) — autolabel_videos.py의 후보를 얹는 모드
+# ---------------------------------------------------------------------------
+def _sidecar_client(tmp_path, monkeypatch, candidates):
+    """train에 영상 프레임 1장(지팡이 1 + 사람 1 라벨) + 그 프레임의 후보 sidecar."""
+    name = "tr_vid_20260930_007_f000030.jpg"
+    for sub in ("images", "labels"):
+        (tmp_path / "train" / sub).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "train" / "images" / name).write_bytes(b"\xff\xd8\xff")
+    (tmp_path / "train" / "labels" / (Path(name).stem + ".txt")).write_text(
+        "0 0.5 0.5 0.1 0.3\n1 0.5 0.5 0.3 0.8\n", encoding="utf-8")
+    side = tmp_path / "autolabel.json"
+    side.write_text(json.dumps({
+        "clips": {"tr_vid_20260930_007": {"fps": 30.0}},
+        "items": {name: {"candidates": candidates}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(srv, "datasets_dir", tmp_path)
+    monkeypatch.setattr(srv, "reviewed_path", tmp_path / "reviewed.json")
+    monkeypatch.setattr(srv, "target_mode", "all")
+    monkeypatch.setattr(srv, "allowed_splits", ["train"])
+    monkeypatch.setattr(srv, "auto_suggest", True)
+    monkeypatch.setattr(srv, "suggestions_path", side)
+    srv._reset_cache()
+    return TestClient(srv.app), name
+
+
+def test_sidecar_후보는_같은_클래스의_기존_라벨과_겹칠_때만_빠진다(tmp_path, monkeypatch):
+    """지팡이는 사람 박스 안에 있는 것이 정상이다 — 클래스를 무시하고 겹침을 빼면
+    사람 옆의 지팡이 후보가 전부 사라진다."""
+    c, _ = _sidecar_client(tmp_path, monkeypatch, [
+        {"cls": 0, "box": [0.5, 0.5, 0.1, 0.3], "conf": 0.2, "why": "low_conf"},  # 기존 지팡이와 동일 → 빠짐
+        {"cls": 0, "box": [0.45, 0.6, 0.05, 0.2], "conf": 0.0, "why": "interp"},  # 사람 박스 안의 다른 지팡이 → 남음
+        {"cls": 0, "box": [0.1, 0.1, 0.05, 0.2], "conf": 0.3, "why": "static"},   # 떨어진 곳 → 남음
+    ])
+    item = c.get("/api/item/0").json()
+    assert [x["why"] for x in item["candidates"]] == ["interp", "static"]
+    assert item["source_info"] == "tr_vid_20260930_007 · 1.0s"
+
+
+def test_sidecar_모드에서는_COCO_제안을_부르지_않는다(tmp_path, monkeypatch):
+    c, _ = _sidecar_client(tmp_path, monkeypatch, [])
+
+    def boom(path):
+        raise AssertionError("sidecar 모드에서 COCO 제안이 호출됐다")
+    monkeypatch.setattr(srv, "_call_local_yolo_suggest", boom)
+    assert c.get("/api/item/0").json()["auto_boxes"] == []
+
+
+def test_sidecar_후보는_저장_전까지_라벨에_쓰이지_않는다(tmp_path, monkeypatch):
+    c, name = _sidecar_client(tmp_path, monkeypatch, [
+        {"cls": 0, "box": [0.1, 0.1, 0.05, 0.2], "conf": 0.3, "why": "low_conf"}])
+    label = tmp_path / "train" / "labels" / (Path(name).stem + ".txt")
+    before = label.read_text()
+    c.get("/api/item/0")
+    c.get("/api/next")
+    assert label.read_text() == before
+
+
+def test_검수완료된_프레임에는_sidecar_후보를_얹지_않는다(tmp_path, monkeypatch):
+    c, name = _sidecar_client(tmp_path, monkeypatch, [
+        {"cls": 0, "box": [0.1, 0.1, 0.05, 0.2], "conf": 0.3, "why": "low_conf"}])
+    c.post("/api/save", json={"split": "train", "filename": name,
+                              "person_boxes": [], "cane_boxes": []})
+    assert c.get("/api/item/0").json()["candidates"] == []
+
+
+def test_데이터셋에_autolabel_json이_있으면_후보와_검수이력이_자동으로_켜진다(tmp_path):
+    """옵션을 빠뜨리면 검수 이력이 git 밖(apps/label_tool/reviewed.json)에 쌓여
+    add_source_variant가 '검수 안 됨'으로 거부한다 — 실제로 겪은 사고."""
+    (tmp_path / "autolabel.json").write_text("{}", encoding="utf-8")
+    side, rev, auto = srv.resolve_sidecar_paths(tmp_path, None, None)
+    assert side == (tmp_path / "autolabel.json").resolve()
+    assert rev == (tmp_path / "reviewed.json").resolve()
+    assert auto
+
+
+def test_autolabel_json이_없으면_기존_기본값을_유지한다(tmp_path):
+    assert srv.resolve_sidecar_paths(tmp_path, None, None) == (None, None, False)
+
+
+def test_명시한_옵션이_자동값보다_우선한다(tmp_path):
+    (tmp_path / "autolabel.json").write_text("{}", encoding="utf-8")
+    mine = tmp_path / "mine.json"
+    side, rev, _ = srv.resolve_sidecar_paths(tmp_path, None, str(mine))
+    assert rev == mine.resolve()
+    assert side == (tmp_path / "autolabel.json").resolve()

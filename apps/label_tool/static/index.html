@@ -57,7 +57,7 @@ main { display: flex; flex: 1; overflow: hidden; }
   gap: 12px;
 }
 #panel h2 { font-size: 13px; color: #999; text-transform: uppercase; letter-spacing: .5px; }
-.file-info { font-size: 12px; color: #ccc; word-break: break-all; }
+.file-info { font-size: 12px; color: #ccc; word-break: break-all; white-space: pre-line; }
 .btn {
   padding: 10px 14px;
   border: none;
@@ -119,6 +119,7 @@ main { display: flex; flex: 1; overflow: hidden; }
     <span><i class="swatch" style="background:#3498db"></i>지팡이</span>
     <span><i class="swatch" style="background:#27ae60"></i>사람</span>
     <span><i class="swatch" style="background:#f39c12"></i>자동검출(검수 전)</span>
+    <span><i class="swatch" style="background:#b36bd6"></i>후보(수락해야 저장)</span>
   </div>
 </header>
 
@@ -149,7 +150,12 @@ main { display: flex; flex: 1; overflow: hidden; }
 
     <div class="btn-row">
       <button class="btn btn-sec" id="btnPrev">◀ 이전</button>
+      <button class="btn btn-sec" id="btnNextNoSave" title="저장하지 않고 다음 이미지 (검수 완료 이미지도 순서대로)">다음 ▶</button>
       <button class="btn btn-danger" id="btnUndo">실행취소</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sec" id="btnCopyPrev">📋 이전 프레임 복사 <small>(C)</small></button>
+      <button class="btn btn-sec" id="btnAcceptAll">✓ 후보 전부 수락 <small>(A)</small></button>
     </div>
     <div>
       <label style="font-size:11px; color:#999">제안 방식</label>
@@ -167,7 +173,14 @@ main { display: flex; flex: 1; overflow: hidden; }
         표시됩니다 — 맞으면 두고, 틀리면 지우고 저장하세요<br>
       • 빠진 대상은 캔버스에 드래그해서 추가. <b>1/2 키로 사람↔지팡이 전환</b><br>
       • 대상이 없으면 제안을 다 지우고 바로 "저장하고 다음"<br>
-      • 단축키: Enter=저장·다음, Backspace=실행취소, ←=이전, 1=사람, 2=지팡이
+      • <b>보라 점선 = 후보</b>(오토 라벨의 저신뢰·보간·정지 검출, 이전 프레임 복사).
+        <b>클릭하거나 ✓를 눌러 수락해야 저장</b>되고, 그대로 두면 버려집니다<br>
+      • <b>확대</b>: 마우스 휠(커서 위치 기준) · +/- · 0=원래 크기 (다른 이미지로 넘어가면 초기화).
+        <b>화면 이동</b>: 오른쪽/가운데 버튼 드래그 또는 Space+드래그<br>
+      • <b>박스 클릭 = 선택</b> → 흰 핸들을 끌어 크기 조절, <b>Shift+드래그</b>로 이동.
+        Delete=선택 박스 삭제, Esc=선택 해제<br>
+      • 단축키: Enter=저장 후 바로 다음 이미지, Backspace=실행취소, ←/→=이전/다음(저장 안 함), 1=사람, 2=지팡이,
+        C=이전 프레임 복사, A=후보 전부 수락
     </div>
   </div>
 </main>
@@ -179,46 +192,207 @@ const viewer = document.getElementById('viewer');
 
 let img = new Image();
 let current = null;      // 서버 아이템 {split, filename, cane_boxes, person_boxes, auto_boxes, index}
-// 편집 중인 전체 박스. {cx,cy,w,h,cls,source} — cls: 0=지팡이 1=사람, source: 'manual'|'ai'
-// (source는 "아직 검수 전"이라는 표시일 뿐, 저장 시엔 클래스와 좌표만 보낸다)
+// 편집 중인 전체 박스. {cx,cy,w,h,cls,source,why} — cls: 0=지팡이 1=사람,
+// source: 'manual'|'ai'|'cand'. 'ai'는 "검수 전" 표시일 뿐 그대로 저장되지만,
+// **'cand'(후보)는 수락해야 저장된다** — 저신뢰·보간 박스가 Enter 한 번에 라벨이 되지 않게.
 let boxes = [];
 let drawClass = 1;       // 지금 드래그하면 그려질 클래스 (1=사람)
-let dragStart = null;    // 드래그 시작 캔버스 픽셀 좌표
+let dragStart = null;    // 드래그 시작 캔버스(화면) 픽셀 좌표
 let dragCurrent = null;
 let aiBusy = false;
 
+// ── 확대/이동 ──
+// 캔버스 크기는 그대로 두고 그리는 배율만 바꾼다. 화면 좌표 = 정규화 × 캔버스 × zoom − 이동량.
+// 다른 이미지로 넘어가면 원래 크기로 돌아간다(새 이미지는 전체부터 보고 판단). 0 키로도 초기화.
+const ZOOM_MAX = 10;
+let view = { z: 1, x: 0, y: 0 };
+let spaceDown = false;   // Space를 누른 채 드래그 = 화면 이동
+
+// ── 선택/편집 ──
+// 크기 조절·이동(Shift+드래그)은 **선택한 박스에만** 된다. 지팡이는 사람 박스 안에 있는 게 보통이라,
+// 아무 박스나 끌리게 하면 사람 박스 안에서 새 지팡이를 그리려다 사람 박스가 움직인다.
+let sel = -1;            // 선택된 박스 인덱스
+let mode = null;         // null | 'draw' | 'pan' | 'move' | 'resize'
+let grab = null;         // 이동/크기조절 시작 상태
+const HANDLE_PX = 7;     // 핸들 잡기 허용 거리(화면 픽셀)
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
 function px2norm(x, y) {
-  return [x / canvas.width, y / canvas.height];
+  return [(x + view.x) / (canvas.width * view.z), (y + view.y) / (canvas.height * view.z)];
 }
 function norm2px(cx, cy, w, h) {
-  return [
-    (cx - w / 2) * canvas.width,
-    (cy - h / 2) * canvas.height,
-    w * canvas.width,
-    h * canvas.height,
-  ];
+  const W = canvas.width * view.z, H = canvas.height * view.z;
+  return [(cx - w / 2) * W - view.x, (cy - h / 2) * H - view.y, w * W, h * H];
 }
+
+function clampView() {
+  view.z = clamp(view.z, 1, ZOOM_MAX);
+  view.x = clamp(view.x, 0, canvas.width * (view.z - 1));
+  view.y = clamp(view.y, 0, canvas.height * (view.z - 1));
+}
+
+function zoomAt(sx, sy, factor) {
+  const [nx, ny] = px2norm(sx, sy);          // 커서 아래 지점이 그대로 커서 아래 남도록
+  view.z = clamp(view.z * factor, 1, ZOOM_MAX);
+  view.x = nx * canvas.width * view.z - sx;
+  view.y = ny * canvas.height * view.z - sy;
+  clampView();
+  redraw();
+}
+
+function resetZoom() {
+  view = { z: 1, x: 0, y: 0 };
+  redraw();
+}
+
+// 선택된 박스의 핸들 8개 — [이름, 화면x, 화면y]
+function handlesOf(b) {
+  const [x, y, w, h] = norm2px(b.cx, b.cy, b.w, b.h);
+  return [['nw', x, y], ['n', x + w / 2, y], ['ne', x + w, y], ['e', x + w, y + h / 2],
+          ['se', x + w, y + h], ['s', x + w / 2, y + h], ['sw', x, y + h], ['w', x, y + h / 2]];
+}
+
+function hitHandle(sx, sy) {
+  if (sel < 0 || !boxes[sel]) return null;
+  for (const [name, hx, hy] of handlesOf(boxes[sel])) {
+    if (Math.abs(sx - hx) <= HANDLE_PX && Math.abs(sy - hy) <= HANDLE_PX) return name;
+  }
+  return null;
+}
+
+function insideBox(b, nx, ny) {
+  return Math.abs(nx - b.cx) <= b.w / 2 && Math.abs(ny - b.cy) <= b.h / 2;
+}
+
+// 그 지점의 박스 중 가장 작은 것(가장 구체적인 것) — 사람 박스 안의 지팡이를 고를 수 있게
+function boxAt(nx, ny, filter) {
+  let best = -1;
+  boxes.forEach((b, i) => {
+    if (filter && !filter(b)) return;
+    if (insideBox(b, nx, ny) && (best < 0 || b.w * b.h < boxes[best].w * boxes[best].h)) best = i;
+  });
+  return best;
+}
+
+function selectBox(i) {
+  sel = i;
+  renderBoxList();
+  redraw();
+}
+
+const CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize',
+                  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
 
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+// 정규화 cxcywh 박스 두 개의 IoU
+function boxIoU(a, b) {
+  const [ax1, ay1, ax2, ay2] = [a.cx - a.w / 2, a.cy - a.h / 2, a.cx + a.w / 2, a.cy + a.h / 2];
+  const [bx1, by1, bx2, by2] = [b.cx - b.w / 2, b.cy - b.h / 2, b.cx + b.w / 2, b.cy + b.h / 2];
+  const [x1, y1, x2, y2] = [Math.max(ax1, bx1), Math.max(ay1, by1), Math.min(ax2, bx2), Math.min(ay2, by2)];
+  if (x2 <= x1 || y2 <= y1) return 0;
+  const i = (x2 - x1) * (y2 - y1);
+  return i / (a.w * a.h + b.w * b.h - i);
+}
+
+const CAND_COLOR = '#b36bd6';
+const WHY_LABEL = { interp: '보간', low_conf: '저신뢰', static: '정지(구조물?)', prev: '이전 프레임' };
+
+function boxColor(b) {
+  if (b.source === 'cand') return CAND_COLOR;
+  if (b.source === 'ai') return '#f39c12';
+  return b.cls === 0 ? '#3498db' : '#27ae60';
+}
+
+function acceptBox(i) {
+  if (boxes[i] && boxes[i].source === 'cand') boxes[i].source = 'manual';
+  renderBoxList();
+  redraw();
+}
+
+function acceptAll() {
+  boxes.forEach(b => { if (b.source === 'cand') b.source = 'manual'; });
+  renderBoxList();
+  redraw();
+}
+
+// 직전 항목의 라벨을 후보로 얹는다 — teacher가 놓친 지팡이를 새로 그리는 대신
+// 0.5초 전 프레임의 박스를 가져와 위치만 확인하고 수락하면 된다.
+async function copyPrev() {
+  if (!current || current.index <= 0) return;
+  const targetIndex = current.index;
+  const res = await fetch(`/api/item/${targetIndex - 1}`);
+  if (!res.ok) return;
+  const prev = await res.json();
+  if (!current || current.index !== targetIndex) return;
+  let added = 0;
+  const push = (arr, cls) => (arr || []).forEach(([cx, cy, w, h]) => {
+    const nb = { cx, cy, w, h, cls, source: 'cand', why: 'prev' };
+    if (boxes.every(b => b.cls !== cls || boxIoU(nb, b) < 0.3)) { boxes.push(nb); added++; }
+  });
+  push(prev.cane_boxes, 0);
+  push(prev.person_boxes, 1);
+  renderBoxList();
+  redraw();
+  document.getElementById('aiStatus').textContent =
+    added ? `이전 프레임에서 후보 ${added}개 — 맞는 것만 수락하세요` : '이전 프레임에서 가져올 새 박스 없음';
+}
+
 function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (img.complete && img.naturalWidth > 0) {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, -view.x, -view.y, canvas.width * view.z, canvas.height * view.z);
   }
   // 사람(초록) / 지팡이(파랑) / 자동검출은 검수 전이라 주황
   ctx.lineWidth = 2;
-  boxes.forEach(({ cx, cy, w, h, cls, source }) => {
-    const [x, y, bw, bh] = norm2px(cx, cy, w, h);
-    const color = source === 'ai' ? '#f39c12' : (cls === 0 ? '#3498db' : '#27ae60');
+  boxes.forEach(b => {
+    const [x, y, bw, bh] = norm2px(b.cx, b.cy, b.w, b.h);
+    const color = boxColor(b);
     ctx.strokeStyle = color;
-    ctx.fillStyle = color.replace('#', 'rgba(').length ? hexA(color, 0.15) : color;
+    if (b.source === 'cand') {
+      // 후보는 채우지 않고 점선 — 확정 박스와 한눈에 구분되게
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(x, y, bw, bh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = color;
+      ctx.font = '11px sans-serif';
+      ctx.fillText(`${b.cls === 0 ? '지팡이' : '사람'}·${WHY_LABEL[b.why] || b.why || ''}`, x + 2, Math.max(11, y - 3));
+      return;
+    }
+    ctx.fillStyle = hexA(color, 0.15);
     ctx.fillRect(x, y, bw, bh);
     ctx.strokeRect(x, y, bw, bh);
   });
+
+  // 선택된 박스 — 굵은 흰 테두리 + 크기 조절 핸들
+  if (sel >= 0 && boxes[sel]) {
+    const b = boxes[sel];
+    const [x, y, bw, bh] = norm2px(b.cx, b.cy, b.w, b.h);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.strokeRect(x - 2, y - 2, bw + 4, bh + 4);
+    ctx.setLineDash([]);
+    handlesOf(b).forEach(([, hx, hy]) => {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(hx - 4, hy - 4, 8, 8);
+      ctx.strokeStyle = boxColor(b);
+      ctx.strokeRect(hx - 4, hy - 4, 8, 8);
+    });
+    ctx.lineWidth = 2;
+  }
+
+  if (view.z > 1) {
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    ctx.fillRect(canvas.width - 64, 6, 58, 20);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(`×${view.z.toFixed(1)}`, canvas.width - 56, 20);
+  }
 
   // 드래그 중인 미리보기 — 파란 점선
   if (dragStart && dragCurrent) {
@@ -234,21 +408,30 @@ function redraw() {
 }
 
 function renderBoxList() {
-  const nP = boxes.filter(b => b.cls === 1).length;
-  const nC = boxes.filter(b => b.cls === 0).length;
-  document.getElementById('boxCount').textContent = `사람 ${nP} · 지팡이 ${nC}`;
+  const kept = boxes.filter(b => b.source !== 'cand');
+  const nP = kept.filter(b => b.cls === 1).length;
+  const nC = kept.filter(b => b.cls === 0).length;
+  const nCand = boxes.length - kept.length;
+  document.getElementById('boxCount').textContent =
+    `사람 ${nP} · 지팡이 ${nC}` + (nCand ? ` · 후보 ${nCand}` : '');
   document.getElementById('boxList').innerHTML = boxes.map((b, i) => `
-    <div class="box-item">
-      <span style="color:${b.source === 'ai' ? '#f39c12' : (b.cls === 0 ? '#3498db' : '#27ae60')}">
-        ${b.cls === 0 ? '🦯 지팡이' : '🧑 사람'}${b.source === 'ai' ? ' (자동)' : ''}
+    <div class="box-item" style="${i === sel ? 'outline:1px solid #fff;' : ''}">
+      <span style="color:${boxColor(b)}; cursor:pointer" onclick="selectBox(${i})" title="선택 — 캔버스에서 핸들로 크기 조절">
+        ${b.cls === 0 ? '🦯 지팡이' : '🧑 사람'}${b.source === 'ai' ? ' (자동)' : ''}${
+          b.source === 'cand' ? ` (후보·${WHY_LABEL[b.why] || b.why || ''}${b.conf ? ' ' + b.conf.toFixed(2) : ''})` : ''}
       </span>
-      <button onclick="removeBox(${i})">✕</button>
+      <span>
+        ${b.source === 'cand' ? `<button onclick="acceptBox(${i})" title="수락">✓</button>` : ''}
+        <button onclick="removeBox(${i})">✕</button>
+      </span>
     </div>
   `).join('') || '<div style="color:#666">아직 없음</div>';
 }
 
 function removeBox(i) {
   boxes.splice(i, 1);
+  if (sel === i) sel = -1;
+  else if (sel > i) sel--;
   renderBoxList();
   redraw();
 }
@@ -264,8 +447,16 @@ function fitCanvas() {
   const availW = viewer.clientWidth - 20;
   const availH = viewer.clientHeight - 20;
   const scale = Math.min(availW / img.naturalWidth, availH / img.naturalHeight, 1.5);
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
+  const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  if (w !== canvas.width || h !== canvas.height) {
+    // 크기가 바뀌면(창 크기 변경, 가로↔세로 영상) 이동량의 기준이 달라지므로 비율을 보존해 옮긴다
+    const rx = canvas.width ? w / canvas.width : 1, ry = canvas.height ? h / canvas.height : 1;
+    canvas.width = w;
+    canvas.height = h;
+    view.x *= rx;
+    view.y *= ry;
+    clampView();
+  }
   redraw();
 }
 
@@ -283,21 +474,31 @@ function loadItem(data) {
   canvas.style.display = 'block';
   document.getElementById('doneMsg').style.display = 'none';
   current = data;
+  sel = -1;
+  mode = null;
+  view = { z: 1, x: 0, y: 0 };   // 새 이미지는 확대를 초기화한 상태로 연다
   boxes = [
     ...(data.cane_boxes || []).map(([cx, cy, w, h]) => ({ cx, cy, w, h, cls: 0, source: 'manual' })),
     ...(data.person_boxes || []).map(([cx, cy, w, h]) => ({ cx, cy, w, h, cls: 1, source: 'manual' })),
     // 서버가 기존 라벨과 겹치지 않는 것만 걸러서 준다 — 중복으로 쌓이지 않는다
     ...(data.auto_boxes || []).map(([cx, cy, w, h]) => ({ cx, cy, w, h, cls: 1, source: 'ai' })),
+    // 오토 라벨 sidecar의 후보 — 수락해야 저장된다
+    ...(data.candidates || []).map(c => ({
+      cx: c.box[0], cy: c.box[1], w: c.box[2], h: c.box[3], cls: c.cls, source: 'cand', why: c.why, conf: c.conf,
+    })),
   ];
-  document.getElementById('fileInfo').textContent = `[${data.split}] ${data.filename} (#${data.index})`;
+  document.getElementById('fileInfo').textContent = `[${data.split}] ${data.filename} (#${data.index})`
+    + (data.source_info ? `\n${data.source_info}` : '');
   document.getElementById('aiStatus').textContent = '';
   img = new Image();
   img.onload = () => {
     fitCanvas();
     renderBoxList();
     const nAuto = (data.auto_boxes || []).length;
+    const nCand = (data.candidates || []).length;
     document.getElementById('aiStatus').textContent =
-      nAuto ? `자동검출 ${nAuto}개(주황) — 확인 후 저장하세요` : '';
+      nAuto ? `자동검출 ${nAuto}개(주황) — 확인 후 저장하세요`
+      : nCand ? `후보 ${nCand}개(보라 점선) — 맞는 것만 클릭해 수락하세요` : '';
   };
   img.src = `/api/image/${data.split}/${data.filename}`;
 }
@@ -313,9 +514,22 @@ async function loadPrev() {
   loadItem(await res.json());
 }
 
+// 저장하지 않고 바로 다음 이미지 — Enter(저장 후 다음 이미지)와 순서는 같고 저장만
+// 하지 않는다. ←의 짝. 이 화면의 편집은 버려진다.
+async function loadNextItem() {
+  if (!current) return;
+  const res = await fetch(`/api/item/${current.index + 1}`);
+  if (!res.ok) {                      // 마지막 이미지
+    document.getElementById('aiStatus').textContent = '마지막 이미지입니다';
+    return;
+  }
+  loadItem(await res.json());
+}
+
 async function saveAndNext() {
   if (!current) return;
-  const pick = c => boxes.filter(b => b.cls === c).map(({ cx, cy, w, h }) => [cx, cy, w, h]);
+  // 수락하지 않은 후보는 보내지 않는다
+  const pick = c => boxes.filter(b => b.cls === c && b.source !== 'cand').map(({ cx, cy, w, h }) => [cx, cy, w, h]);
   const res = await fetch('/api/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -330,7 +544,12 @@ async function saveAndNext() {
     return;
   }
   await refreshStats();
-  await loadNext(current.index);
+  // 저장 후에는 **바로 다음 이미지**로 간다 — 검수 완료 이미지도 건너뛰지 않는다.
+  // 연속 프레임을 순서대로 보며 앞 프레임에서 고친 것을 이어서 확인하기 위해서다.
+  // 마지막 이미지였다면 남은 미검수 이미지(처음부터)로, 없으면 완료 화면으로 간다.
+  const next = await fetch(`/api/item/${current.index + 1}`);
+  if (next.ok) loadItem(await next.json());
+  else await loadNext(-1);
 }
 
 async function suggestWithAI(auto = false) {
@@ -355,18 +574,10 @@ async function suggestWithAI(auto = false) {
       return;
     }
     // 이미 화면에 있는 박스와 겹치는 제안은 버린다 — 버튼을 여러 번 눌러도 쌓이지 않는다
-    const iou = (a, b) => {
-      const [ax1, ay1, ax2, ay2] = [a.cx - a.w / 2, a.cy - a.h / 2, a.cx + a.w / 2, a.cy + a.h / 2];
-      const [bx1, by1, bx2, by2] = [b.cx - b.w / 2, b.cy - b.h / 2, b.cx + b.w / 2, b.cy + b.h / 2];
-      const [x1, y1, x2, y2] = [Math.max(ax1, bx1), Math.max(ay1, by1), Math.min(ax2, bx2), Math.min(ay2, by2)];
-      if (x2 <= x1 || y2 <= y1) return 0;
-      const i = (x2 - x1) * (y2 - y1);
-      return i / (a.w * a.h + b.w * b.h - i);
-    };
     let added = 0;
     body.boxes.forEach(([cx, cy, w, h]) => {
       const nb = { cx, cy, w, h, cls: 1, source: 'ai' };
-      if (boxes.every(b => iou(nb, b) < 0.3)) { boxes.push(nb); added++; }
+      if (boxes.every(b => boxIoU(nb, b) < 0.3)) { boxes.push(nb); added++; }
     });
     renderBoxList();
     redraw();
@@ -392,56 +603,181 @@ async function refreshStats() {
   return s;
 }
 
-// ── 마우스로 박스 드래그 그리기 ──
-canvas.addEventListener('mousedown', e => {
+// ── 마우스: 그리기 / 선택·수락 / 크기 조절·이동 / 화면 이동 ──
+function mousePos(e) {
   const rect = canvas.getBoundingClientRect();
-  dragStart = [e.clientX - rect.left, e.clientY - rect.top];
+  return [e.clientX - rect.left, e.clientY - rect.top];
+}
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const [sx, sy] = mousePos(e);
+  zoomAt(sx, sy, e.deltaY < 0 ? 1.25 : 1 / 1.25);
+}, { passive: false });
+
+canvas.addEventListener('mousedown', e => {
+  const [sx, sy] = mousePos(e);
+  // 가운데/오른쪽 버튼, 또는 Space+왼쪽 = 화면 이동
+  if (e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown)) {
+    e.preventDefault();
+    mode = 'pan';
+    grab = { sx, sy, vx: view.x, vy: view.y };
+    return;
+  }
+  if (e.button !== 0) return;
+  const handle = hitHandle(sx, sy);
+  const [nx, ny] = px2norm(sx, sy);
+  if (handle) {
+    const b = boxes[sel];
+    mode = 'resize';
+    grab = { handle, x1: b.cx - b.w / 2, y1: b.cy - b.h / 2, x2: b.cx + b.w / 2, y2: b.cy + b.h / 2 };
+    return;
+  }
+  // 이동은 Shift+드래그만 — 그냥 드래그는 항상 새 박스를 그린다. 선택된 사람 박스 안에서
+  // 지팡이를 새로 그리는 일이 흔한데, 그 드래그가 사람 박스를 끌고 가면 안 된다.
+  if (e.shiftKey && sel >= 0 && boxes[sel] && insideBox(boxes[sel], nx, ny)) {
+    mode = 'move';
+    grab = { nx, ny, cx: boxes[sel].cx, cy: boxes[sel].cy, moved: false };
+    return;
+  }
+  mode = 'draw';
+  dragStart = [sx, sy];
   dragCurrent = dragStart;
 });
+
 canvas.addEventListener('mousemove', e => {
-  if (!dragStart) return;
-  const rect = canvas.getBoundingClientRect();
-  dragCurrent = [e.clientX - rect.left, e.clientY - rect.top];
+  const [sx, sy] = mousePos(e);
+  if (!mode) {
+    // 커서 모양으로 무엇을 잡을 수 있는지 알려준다
+    const handle = hitHandle(sx, sy);
+    const [nx, ny] = px2norm(sx, sy);
+    canvas.style.cursor = spaceDown ? 'grab'
+      : handle ? CURSORS[handle]
+      : (e.shiftKey && sel >= 0 && boxes[sel] && insideBox(boxes[sel], nx, ny)) ? 'move' : 'crosshair';
+  }
+});
+
+window.addEventListener('mousemove', e => {
+  if (!mode) return;
+  const [sx, sy] = mousePos(e);
+  if (mode === 'pan') {
+    view.x = grab.vx - (sx - grab.sx);
+    view.y = grab.vy - (sy - grab.sy);
+    clampView();
+  } else if (mode === 'draw') {
+    dragCurrent = [clamp(sx, 0, canvas.width), clamp(sy, 0, canvas.height)];
+  } else if (mode === 'move') {
+    const [nx, ny] = px2norm(sx, sy);
+    const b = boxes[sel];
+    b.cx = clamp(grab.cx + nx - grab.nx, b.w / 2, 1 - b.w / 2);
+    b.cy = clamp(grab.cy + ny - grab.ny, b.h / 2, 1 - b.h / 2);
+    grab.moved = true;
+  } else if (mode === 'resize') {
+    let [nx, ny] = px2norm(sx, sy);
+    nx = clamp(nx, 0, 1);
+    ny = clamp(ny, 0, 1);
+    const g = grab;
+    let { x1, y1, x2, y2 } = g;
+    if (g.handle.includes('w')) x1 = nx;
+    if (g.handle.includes('e')) x2 = nx;
+    if (g.handle.includes('n')) y1 = ny;
+    if (g.handle.includes('s')) y2 = ny;
+    const b = boxes[sel];
+    b.cx = (x1 + x2) / 2;
+    b.cy = (y1 + y2) / 2;
+    b.w = Math.abs(x2 - x1);
+    b.h = Math.abs(y2 - y1);
+    g.moved = true;
+  }
   redraw();
 });
+
+// 사람이 손댄 박스는 사람이 확인한 박스다 — 후보/자동 표시를 뗀다
+function markEdited(i) {
+  if (boxes[i] && (boxes[i].source === 'cand' || boxes[i].source === 'ai')) boxes[i].source = 'manual';
+}
+
 window.addEventListener('mouseup', e => {
-  if (!dragStart) return;
-  const rect = canvas.getBoundingClientRect();
-  const end = [
-    Math.max(0, Math.min(e.clientX - rect.left, canvas.width)),
-    Math.max(0, Math.min(e.clientY - rect.top, canvas.height)),
-  ];
+  if (!mode) return;
+  const m = mode;
+  mode = null;
+  if (m === 'pan') { grab = null; return; }
+
+  if (m === 'move' || m === 'resize') {
+    const moved = grab.moved;
+    grab = null;
+    if (!moved) { redraw(); return; }         // 선택된 박스를 그냥 클릭 — 아무 변화 없음
+    const b = boxes[sel];
+    const minW = 3 / (canvas.width * view.z), minH = 3 / (canvas.height * view.z);
+    if (b.w < minW || b.h < minH) {           // 뒤집다가 납작해진 박스는 되돌릴 수 없으니 최소 크기 보장
+      b.w = Math.max(b.w, minW);
+      b.h = Math.max(b.h, minH);
+    }
+    markEdited(sel);
+    renderBoxList();
+    redraw();
+    return;
+  }
+
+  // draw
+  const end = dragCurrent || dragStart;
   const x = Math.min(dragStart[0], end[0]);
   const y = Math.min(dragStart[1], end[1]);
   const w = Math.abs(end[0] - dragStart[0]);
   const h = Math.abs(end[1] - dragStart[1]);
   dragStart = null;
   dragCurrent = null;
-  if (w < 4 || h < 4) { redraw(); return; }  // 너무 작은 실수 클릭 무시
-  const [ncx, ncy] = px2norm(x + w / 2, y + h / 2);
-  const [nw, nh] = [w / canvas.width, h / canvas.height];
-  boxes.push({ cx: ncx, cy: ncy, w: nw, h: nh, cls: drawClass, source: 'manual' });
-  renderBoxList();
-  redraw();
+  if (w < 4 || h < 4) {
+    // 클릭 — 그 자리에서 가장 작은 박스를 고른다. 그게 후보면 수락, 아니면 선택만.
+    // 후보를 우선하면 확정 박스를 고르려던 클릭이 겹친 큰 후보를 몰래 수락해 버린다.
+    const [px, py] = px2norm(end[0], end[1]);
+    const i = boxAt(px, py);
+    if (i >= 0 && boxes[i].source === 'cand') acceptBox(i);
+    selectBox(i);
+    return;
+  }
+  const [x1, y1] = px2norm(x, y);
+  const [x2, y2] = px2norm(x + w, y + h);
+  boxes.push({ cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1, cls: drawClass, source: 'manual' });
+  selectBox(boxes.length - 1);                // 방금 그린 박스는 바로 다듬을 수 있게 선택
 });
 
 document.getElementById('btnSaveNext').addEventListener('click', saveAndNext);
 document.getElementById('btnSuggest').addEventListener('click', suggestWithAI);
 document.getElementById('btnUndo').addEventListener('click', () => {
-  boxes.pop();
-  renderBoxList();
-  redraw();
+  removeBox(boxes.length - 1);
 });
 document.getElementById('btnPrev').addEventListener('click', loadPrev);
+document.getElementById('btnNextNoSave').addEventListener('click', loadNextItem);
+document.getElementById('btnCopyPrev').addEventListener('click', copyPrev);
+document.getElementById('btnAcceptAll').addEventListener('click', acceptAll);
 document.querySelectorAll('.btn-cls').forEach(b =>
   b.addEventListener('click', () => setDrawClass(Number(b.dataset.cls))));
 
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') { spaceDown = false; canvas.style.cursor = 'crosshair'; }
+});
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); saveAndNext(); }
-  else if (e.key === 'Backspace') { e.preventDefault(); boxes.pop(); renderBoxList(); redraw(); }
+  else if (e.key === 'Backspace' || e.key === 'Delete') {
+    // 선택된 박스가 있으면 그것을, 없으면 마지막 박스를 지운다
+    e.preventDefault();
+    removeBox(sel >= 0 ? sel : boxes.length - 1);
+  }
+  else if (e.key === 'Escape') { selectBox(-1); }
+  else if (e.key === '0') { resetZoom(); }
+  else if (e.key === '+' || e.key === '=') { zoomAt(canvas.width / 2, canvas.height / 2, 1.25); }
+  else if (e.key === '-') { zoomAt(canvas.width / 2, canvas.height / 2, 1 / 1.25); }
+  else if (e.key === ' ') { e.preventDefault(); spaceDown = true; canvas.style.cursor = 'grab'; }
   else if (e.key === '1') { setDrawClass(1); }
   else if (e.key === '2') { setDrawClass(0); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); loadPrev(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); loadNextItem(); }
+  else if (e.key === 'c' || e.key === 'C') { copyPrev(); }
+  else if (e.key === 'a' || e.key === 'A') { acceptAll(); }
 });
 
 refreshStats();

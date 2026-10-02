@@ -1,0 +1,142 @@
+{
+ "tr_vid_20260930_001": {
+  "source": "datasets/videos/1.mp4",
+  "frames": 2766,
+  "fps": 30.000542309152372,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_002": {
+  "source": "datasets/videos/2.mp4",
+  "frames": 28,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_003": {
+  "source": "datasets/videos/3.mp4",
+  "frames": 442,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_004": {
+  "source": "datasets/videos/4.mp4",
+  "frames": 96,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_005": {
+  "source": "datasets/videos/5.mp4",
+  "frames": 1838,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_006": {
+  "source": "datasets/videos/6.mp4",
+  "frames": 966,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_007": {
+  "source": "datasets/videos/7.mp4",
+  "frames": 80,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_008": {
+  "source": "datasets/videos/8.mp4",
+  "frames": 936,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_009": {
+  "source": "datasets/videos/9.mp4",
+  "frames": 563,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_010": {
+  "source": "datasets/videos/10.mp4",
+  "frames": 759,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_011": {
+  "source": "datasets/videos/11.mp4",
+  "frames": 491,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_012": {
+  "source": "datasets/videos/12.mp4",
+  "frames": 183,
+  "fps": 30.0,
+  "size": [
+   1080,
+   1920
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_013": {
+  "source": "datasets/videos/13.mp4",
+  "frames": 3473,
+  "fps": 30.000431909471775,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ },
+ "tr_vid_20260930_014": {
+  "source": "datasets/videos/14.mp4",
+  "frames": 314,
+  "fps": 30.0,
+  "size": [
+   1920,
+   1080
+  ],
+  "sample_step": 15
+ }
+}

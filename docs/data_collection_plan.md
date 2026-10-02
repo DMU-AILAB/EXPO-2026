@@ -233,21 +233,25 @@ curl -X POST "http://<Pi>:8080/recording/stop"
 cp ev_*.mp4 datasets/videos/
 #    video_gt.json에 정답 구간 추가
 
-# 2) 학습 클립에서 2 fps로 프레임 추출 (파일명 규칙 §3 준수)
-#    ffmpeg -i tr_lab_20260920_007.mp4 -vf fps=2 tr_lab_20260920_007_f%06d.jpg
+# 2) 학습 클립에서 2 fps로 프레임 추출 + 1차 오토 라벨 (파일명 규칙 §3 자동 준수)
+#    지팡이는 v10 teacher(imgsz 960) + 30fps 추적, 사람은 COCO yolov8l.
+#    저신뢰·보간·정지 검출은 라벨이 아니라 "후보"(autolabel.json)로만 남는다.
+python tools/data/autolabel_videos.py --videos <영상들> \
+    --clip-prefix tr_lab_20260920 --out datasets/sources/vid_20260920
 
-# 3) 라벨링 → datasets/sources/indoor_<날짜>/{images,labels}
+# 3) 전수 검수 — 후보는 클릭해 수락해야 저장된다. C=이전 프레임 복사, A=후보 전부 수락
+#    폴더에 autolabel.json이 있으면 후보(--suggestions)·검수이력(--reviewed)이 자동으로 켜진다
+python apps/label_tool/server.py --datasets-dir datasets/sources/vid_20260920 --targets all
 
-# 4) 그룹 단위 재분할 (★ §1-1의 group_key 변경이 끝난 뒤)
-python tools/data/resplit_dataset.py ...
+# 4) train에만 더한 변형 생성 (val/test 불변). 검수율 100%·누수·파일명·라벨 기하를 검사한다
+#    ★ 검수가 끝난 뒤에 만들 것 — 하드링크라 이후 라벨 수정은 변형에 반영되지 않는다
+python tools/data/add_source_variant.py --dataset datasets/v2_nolkc \
+    --source datasets/sources/vid_20260920 --out datasets/v4_vid
 
-# 5) 누수 검사 — 이게 통과해야 학습을 시작한다
-python -m pytest tests/test_resplit_dataset.py -v
+# 5) 학습 — data만 바꾼 단일 변수 A/B
+yolo train cfg=configs/train_v15_vid.yaml
 
-# 6) 학습
-yolo train cfg=configs/train_v12_indoor.yaml
-
-# 7) 판정 — 기존 영상과 새 평가 영상 양쪽에서
+# 6) 판정 — 기존 영상과 새 평가 영상 양쪽에서
 python tools/eval/eval_video_recall.py --video datasets/videos/test1.mp4 ...   # 회귀 확인
 python tools/eval/eval_video_recall.py --video datasets/videos/ev_lab_*.mp4 ... # 개선 확인
 ```
