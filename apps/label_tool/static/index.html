@@ -466,6 +466,10 @@ function loadItem(data) {
   if (data.done) {
     canvas.style.display = 'none';
     document.getElementById('doneMsg').style.display = 'block';
+    // index만 기억해둔다 — "이전" 버튼이 current.index를 보고 큐의 마지막
+    // 항목부터 거슬러 볼 수 있어야 한다. 여기서 current를 안 세팅하면 done
+    // 화면에서 이전/다음 네비게이션이 전부 먹통이 된다(current가 계속 null).
+    current = { index: data.index };
     refreshStats().then(s => {
       document.getElementById('doneStats').textContent = `${s.reviewed} / ${s.total} 검토됨`;
     });
