@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 import hashlib
 import json
@@ -14,6 +14,7 @@ from ..models.event import DetectionEvent
 from ..models.roi import Roi
 from ..schemas.device import DeviceCreate, DeviceUpdate, ProvisionDeviceRequest
 from ..deps import get_current_user
+from ..services.device_address import adopt_peer_ip, peer_ipv4
 from ..services.device_view import build_device_summary, build_status_payload, is_stale
 from ..services.pi_client import PiClient
 from ..services.heartbeat_service import get_buffered_cameras, get_buffered_status
@@ -323,9 +324,14 @@ class HeartbeatPayload(BaseModel):
     cameras: List[dict] = []
 
 @router.patch("/me/heartbeat")
-async def heartbeat(payload: HeartbeatPayload, device: Device = Depends(get_device_by_api_key)):
-    # DB I/O 없이 인메모리 버퍼에만 상태 갱신
+async def heartbeat(payload: HeartbeatPayload, request: Request,
+                    device: Device = Depends(get_device_by_api_key),
+                    db: Session = Depends(get_db)):
+    # 상태는 DB I/O 없이 인메모리 버퍼에만 갱신한다.
     await update_heartbeat_buffer(device.id, payload.model_dump())
+    # IP는 거의 안 바뀌므로 달라졌을 때만 DB에 쓴다(`device`는 이미 읽어 온 행이라 비교는 공짜다).
+    # Pi가 DHCP로 새 주소를 받아도 서버→Pi 호출이 끊기지 않게 한다 — services/device_address.py.
+    adopt_peer_ip(db, device, peer_ipv4(request))
     return {"ok": True}
 
 from ..models.device import DeviceStatusCache
