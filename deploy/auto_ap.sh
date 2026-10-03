@@ -40,7 +40,18 @@ remove_captive_portal() {
 sleep 15
 CONN=$(nmcli -g GENERAL.CONNECTION device show "$AP_IFACE" 2>/dev/null)
 
-if [ -z "$CONN" ] || [ "$CONN" = "--" ]; then
+# 유선(eth0)으로 이미 망에 있으면 핫스팟을 띄우지 않는다. 대시보드가 유선으로
+# 이 기기에 닿으므로 Wi-Fi는 거기서(네트워크 탭) 설정하면 되고, 아무나 붙을 수
+# 있는 열린 핫스팟을 현장에 남길 이유가 없다.
+WIRED_UP=0
+if nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -q '^eth0:connected$'; then
+  WIRED_UP=1
+fi
+
+if { [ -z "$CONN" ] || [ "$CONN" = "--" ]; } && [ "$WIRED_UP" = "1" ]; then
+  echo "[auto-ap] Wi-Fi 미연결이지만 유선(eth0) 연결됨 — AP를 켜지 않습니다"
+  remove_captive_portal
+elif [ -z "$CONN" ] || [ "$CONN" = "--" ]; then
   echo "[auto-ap] 네트워크 미연결 — VisionGuide-AP로 전환합니다"
   remove_captive_portal  # 이전 규칙 정리
   nmcli connection up VisionGuide-AP

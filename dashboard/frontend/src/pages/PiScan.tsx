@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Wifi, Plus, CheckCircle2, AlertCircle, Loader2, Search, KeyRound } from 'lucide-react'
+import {
+  Wifi, Plus, CheckCircle2, AlertCircle, Loader2, Search, KeyRound, Cable, Save, Bluetooth,
+} from 'lucide-react'
 
 import * as api from '../api'
 import { ApiError } from '../api/client'
@@ -27,6 +29,11 @@ export default function PiScan() {
 
   // 스캔은 백그라운드로 돌고 진행률은 폴링으로 읽는다 (명세 §12).
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+
+  // 서버가 있는 대역을 기본값으로 — 기기는 그 주소로 보고하므로 같은 망일 가능성이 가장 높다.
+  useEffect(() => {
+    api.getSuggestedSubnet().then((r) => { if (r.subnet) setSubnet(r.subnet) }).catch(() => {})
+  }, [])
 
   const startScan = async () => {
     setScanError(null)
@@ -194,6 +201,8 @@ export default function PiScan() {
             </div>
           )}
 
+          {scan?.status === 'completed' && discovered.length === 0 && <OnboardingHelp />}
+
           {discovered.length > 0 && (
             <div className="space-y-2 mb-5 max-h-72 overflow-y-auto">
               {discovered.map((d) => {
@@ -320,6 +329,36 @@ export default function PiScan() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+
+/**
+ * 기기가 스캔에 안 잡힐 때 — 대부분 **아직 이 망에 없는** 것이다. 대시보드는 같은 망의
+ * 기기만 다룰 수 있으므로 먼저 기기를 망에 올려야 한다(docs/wifi-onboarding-guide.md).
+ */
+function OnboardingHelp() {
+  const items = [
+    { icon: Cable, title: '랜선 연결', body: '유선으로 연결하면 공유기에서 주소를 받아 바로 스캔됩니다. Wi-Fi는 등록 후 기기 상세의 네트워크 탭에서 설정하세요.' },
+    { icon: Save, title: 'Wi-Fi 미리 저장', body: '설치 전에 Raspberry Pi Imager나 nmcli로 이 현장의 Wi-Fi를 저장해 두면 부팅하자마자 연결됩니다.' },
+    { icon: Bluetooth, title: '블루투스로 설정', body: '아래 "블루투스로 설정"에서 기기에 Wi-Fi를 바로 알려줄 수 있습니다(기기의 Wi-Fi 버튼을 3초 눌러야 합니다).' },
+  ]
+  return (
+    <div className="mb-5 p-4 rounded-xl bg-amber-50/70 border border-amber-200">
+      <p className="text-xs font-bold text-amber-900 mb-1">기기가 보이지 않나요?</p>
+      <p className="text-[11px] text-amber-800 mb-3">
+        기기가 아직 이 네트워크에 없을 가능성이 큽니다. 아래 중 하나로 먼저 네트워크에 연결하세요.
+        서브넷이 서버와 다른 대역이 아닌지도 확인하세요.
+      </p>
+      <div className="space-y-2">
+        {items.map(({ icon: Icon, title, body }) => (
+          <div key={title} className="flex gap-2.5 text-[11px]">
+            <Icon className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <p className="text-amber-900"><b>{title}</b> — {body}</p>
+          </div>
+        ))}
       </div>
     </div>
   )

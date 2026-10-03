@@ -182,6 +182,9 @@ export const deleteSchedule = (deviceId: string, id: number) =>
 export const startScan = (subnet: string, port = 5000) =>
   request<{ scan_id: string; status: string }>('/api/scan/network', { method: 'POST', body: { subnet, port } })
 
+/** 서버 주소(`PUBLIC_BASE_URL`)가 속한 /24 — 탐색 서브넷의 기본값. */
+export const getSuggestedSubnet = () => request<{ subnet: string | null }>('/api/scan/suggest')
+
 export const getScan = (scanId: string) => request<ScanResult>(`/api/scan/${scanId}`)
 
 export const verifyDevice = (ip: string, port = 5000) =>

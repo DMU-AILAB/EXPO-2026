@@ -13,6 +13,34 @@
 PC 방화벽에서 TCP 8000을 허용하고, Pi와 PC가 같은 LAN 또는 서로 접근 가능한
 VPN에 있어야 한다. `localhost`는 Pi가 PC를 가리키는 주소로 사용할 수 없다.
 
+### WSL2에서 실행할 때
+
+WSL2 기본(NAT) 모드에서는 Pi가 WSL 안의 백엔드에 닿지 못한다. Windows의
+`%USERPROFILE%\.wslconfig`에 다음을 넣고 `wsl --shutdown` 후 다시 연다.
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+관리자 PowerShell에서 백엔드 포트의 인바운드를 연다(Windows 방화벽 + Hyper-V 방화벽).
+
+```powershell
+New-NetFirewallRule -DisplayName "VisionGuide 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+New-NetFirewallHyperVRule -Name VisionGuide8000 -DisplayName "VisionGuide 8000" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8000
+```
+
+**mirrored 모드에서는 주소가 둘로 갈린다.** Pi는 PC의 LAN IP로 들어오지만,
+같은 PC의 Windows 브라우저는 자기 LAN IP로 WSL에 닿지 못하고 `localhost`로만
+닿는다. 그래서
+
+- 백엔드 `.env`의 `PUBLIC_BASE_URL`(Pi가 쓰는 주소) = `http://<pc-lan-ip>:8000`
+- 프론트 `.env`의 `VITE_API_BASE`(이 PC 브라우저가 쓰는 주소) = `http://localhost:8000`
+
+`VITE_API_BASE`를 LAN IP로 두면 로그인에서 "Failed to fetch"가 난다. 이 설정이면
+대시보드는 그 PC의 브라우저에서만 쓸 수 있다(다른 PC에서 쓰려면 LAN IP로 빌드).
+블루투스 페어링(Web Bluetooth)도 `localhost` 또는 HTTPS에서만 동작하므로 같은 제약이다.
+
 ## 백엔드 설정
 
 `dashboard/backend/.env.example`을 `.env`로 복사하고 PC의 LAN 주소와 운영용

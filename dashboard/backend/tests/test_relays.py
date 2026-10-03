@@ -229,3 +229,23 @@ def test_device_unreachable_is_503(client, auth, device):
     respx.get(f"{PI}/api/network/status").mock(side_effect=httpx.ConnectError("down"))
     res = client.get(f"{BASE}/network", headers=auth)
     assert res.status_code == 503
+
+
+# ------------------------------------------------------------------ 탐색 기본 대역
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://192.168.0.2:8001", "192.168.0.0/24"),
+    ("http://10.1.2.3:8000", "10.1.2.0/24"),
+    ("http://localhost:8000", None),
+    ("http://127.0.0.1:8000", None),
+    ("https://vg.example.com", None),
+])
+def test_suggest_subnet(url, expected):
+    from app.routers.scan import suggest_subnet
+    assert suggest_subnet(url) == expected
+
+
+def test_suggest_route_is_not_shadowed_by_scan_id(client, auth):
+    res = client.get("/api/scan/suggest", headers=auth)
+    assert res.status_code == 200
+    assert "subnet" in res.json()["data"]
