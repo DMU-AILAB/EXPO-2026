@@ -5,6 +5,7 @@ import {
 
 import * as api from '../api'
 import { ApiError } from '../api/client'
+import BleSetup from '../components/BleSetup'
 import type { DiscoveredDevice, ScanResult } from '../types'
 
 type Verify = { state: 'idle' | 'loading' | 'ok' | 'fail'; version?: string | null; cameras?: number | null }
@@ -67,7 +68,7 @@ export default function PiScan() {
   }
 
   /** 발견한 기기를 등록한다 — 등록이 곧 신원 주입이다(백엔드가 Pi에 심는다). */
-  const addDevice = async (d: DiscoveredDevice, alias?: string) => {
+  const addDevice = async (d: DiscoveredDevice, alias?: string): Promise<boolean> => {
     setBusyIp(d.ip)
     try {
       // id는 Pi가 이미 아는 것이 있으면 그것을, 없으면 별칭이나 IP에서 만든다.
@@ -79,16 +80,24 @@ export default function PiScan() {
         id: res.id, apiKey: res.api_key,
         provisioned: res.provisioned, error: res.provision_error,
       }])
+      return true
       // 잘못된 토큰이나 일시적인 연결 실패라면 같은 토큰으로 재시도할 수 있게 둔다.
     } catch (e) {
       const msg = e instanceof ApiError && e.code === 'DEVICE_ALREADY_EXISTS'
         ? '이미 등록된 디바이스입니다'
         : e instanceof Error ? e.message : '등록에 실패했습니다'
       setScanError(msg)
+      return false
     } finally {
       setBusyIp(null)
     }
   }
+
+  /** 블루투스로 Wi-Fi를 받은 기기 — 새 IP로 일반 등록과 같은 경로를 탄다. */
+  const registerByIp = (ip: string) => addDevice({
+    ip, hostname: null, port: 5000, version: null, registered: false,
+    device_id: null, already_registered: false,
+  })
 
   const handleVerify = async () => {
     if (!manualIp) return
@@ -329,6 +338,10 @@ export default function PiScan() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <BleSetup onRegister={registerByIp} />
       </div>
     </div>
   )

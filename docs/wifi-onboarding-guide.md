@@ -52,6 +52,28 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 
 ---
 
+## 블루투스 페어링 (대시보드에서)
+
+1. 기기의 **Wi-Fi 버튼을 3초** 누른다 → 부저가 길게 한 번 울리고 LED가 0.5초 간격으로
+   고르게 깜빡인다(3분간 페어링 창). 짧게 누르면 지금처럼 홈 Wi-Fi ↔ 핫스팟 전환이다.
+2. 대시보드를 띄운 PC의 **Chrome/Edge에서 `http://localhost:5173`** → 디바이스 탐색 →
+   "블루투스로 설정" → 주변 기기 찾기 → `VG-xxxx` 선택.
+3. Wi-Fi를 고르고 비밀번호를 넣는다 → 기기가 연결되면 새 IP를 알려주고, 대시보드가
+   그 IP로 **등록(신원 주입)까지** 한다. 성공하면 창이 바로 닫힌다.
+
+| 증상 | 원인 |
+|---|---|
+| 기기 목록에 `VG-xxxx`가 없다 | 창이 안 열렸거나(3분 경과) 기기가 이미 Wi-Fi에 연결돼 있다 — 운영 중인 기기는 광고하지 않는다 |
+| "블루투스를 지원하지 않습니다" | iPhone Safari, 또는 `localhost`·HTTPS가 아닌 주소로 연 대시보드 |
+| 연결은 됐는데 "서버에서 닿지 않습니다" | 기기가 붙은 Wi-Fi가 대시보드 PC와 다른 망이다 |
+
+서비스: `visionguide-ble`(`device/ble_provisioning.py`). 테스트용으로 버튼 없이 창을 열려면
+Pi에서 `python ~/visionguide/ble_provisioning.py --open-window 180`(root 서비스가 만든 창 파일이
+있으면 같은 사용자 권한으로 실행). BLE 구간에는 앱 수준 암호화가 없으니 근처에 낯선
+사람이 없을 때 설정한다.
+
+---
+
 ## 구성 요소
 
 | 파일 | 역할 |
@@ -64,6 +86,8 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 | `deploy/visionguide-network.sudoers` | ailab 유저가 nmcli/iptables를 NOPASSWD로 실행하는 sudoers 규칙 |
 | `deploy/visionguide-avahi.service` | Avahi mDNS 광고 — `raspberrypi.local:5000` 자동 노출 |
 | `discover.py` | PC에서 실행 — 서브넷 전체를 스캔해 VisionGuide Pi URL 탐색 |
+| `device/ble_provisioning.py` + `deploy/visionguide-ble.service` | 블루투스 페어링(버튼 3초 창) |
+| `dashboard/frontend/src/components/BleSetup.tsx` | 대시보드의 Web Bluetooth 화면 |
 
 ---
 

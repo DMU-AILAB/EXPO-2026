@@ -95,7 +95,8 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `camera_config.py` | 다중 카메라 프로필 + `MODEL_VARIANTS` |
 | `audio_trigger.py` · `announcement_router.py` | 디바운스·쿨다운·순차 재생 · 안내 라우팅 |
 | `foot_traffic_counter.py` · `detection_events.py` · `fp_hotspots.py` | 유동인구 · 이벤트 로그 · 오탐지 핫스팟 |
-| `gpio_controls.py` · `fan_controller.py` | Wi-Fi 버튼·LED·부저 · 냉각팬 |
+| `gpio_controls.py` · `fan_controller.py` | Wi-Fi 버튼(짧게=전환 · 3초=BLE 페어링 창)·LED·부저 · 냉각팬 |
+| `ble_provisioning.py` | BLE Wi-Fi 페어링 — 대시보드 Web Bluetooth의 상대(`visionguide-ble.service`) |
 | `si4432_radio.py` · `kics_protocol.py` · `rf_audio_trigger.py` | Si4432 수신 · KICS 디코더 · RF 트리거 |
 
 ## 2-2. `tools/` — PC 전용 17개

@@ -41,6 +41,8 @@ TOGGLE_PIN = 17
 STATE_LED_PIN = 27
 BUZZER_PIN = 25
 DEBOUNCE_SEC = 0.3
+# 이만큼 누르고 있으면 Wi-Fi 전환 대신 블루투스 페어링 창을 연다(ble_provisioning.py).
+BLE_HOLD_SEC = 3.0
 BUTTON_TEST_MODE = os.environ.get("VISIONGUIDE_BUTTON_TEST", "0").lower() in {
     "1", "true", "yes", "on",
 }
@@ -63,12 +65,21 @@ _PATTERNS = {
     "network_error": ((True, 0.08), (False, 0.08), (True, 0.08), (False, 0.08),
                       (True, 0.08), (False, 0.08), (True, 0.08), (False, 1.50)),
     "boot": ((True, 0.08), (False, 0.22)),
+    # 블루투스 페어링 창이 열려 있는 동안 — 다른 패턴과 헷갈리지 않게 느리고 고른 점멸.
+    "ble_pairing": ((True, 0.5), (False, 0.5)),
 }
 
 try:
     from device_metrics import read_metrics
 except ImportError:
     read_metrics = None
+
+try:
+    # 창 함수만 쓴다 — dbus-next는 ble_provisioning이 실제로 광고할 때만 import한다.
+    from ble_provisioning import open_window as open_ble_window, pairing_window_open
+except ImportError:
+    open_ble_window = None
+    pairing_window_open = None
 
 
 def _active_connection() -> str:
@@ -172,6 +183,9 @@ def _status_kind(switching: threading.Event, transition: dict,
         transition["kind"] = None
         transition["until"] = 0.0
 
+    if pairing_window_open is not None and pairing_window_open():
+        return "ble_pairing"
+
     connection = _active_connection()
     if connection == HOTSPOT_CONNECTION:
         return "hotspot"
@@ -243,8 +257,22 @@ def handle_button_press(buzzer: "Buzzer", switching: threading.Event,
     toggle_wifi(buzzer, switching, transition, transition_lock)
 
 
+def open_ble_pairing(buzzer: "Buzzer") -> None:
+    """3초 누름 — 블루투스 페어링 창을 연다. 길게 한 번 울려 짧은 누름과 구분한다."""
+    if open_ble_window is None:
+        _beep(buzzer, 3, on_time=0.08, gap=0.08)
+        print("[GPIO] ble_provisioning 모듈이 없어 페어링 창을 열 수 없습니다")
+        return
+    open_ble_window()
+    _beep(buzzer, 1, on_time=0.8, gap=0.0)
+    print("[GPIO] 블루투스 페어링 창 열림 (3분)")
+
+
 def main() -> None:
-    button = Button(TOGGLE_PIN, bounce_time=DEBOUNCE_SEC, pull_up=True)
+    # 짧게 누름 = 놓을 때 Wi-Fi 전환, 3초 누름 = 블루투스 페어링 창.
+    # 누르는 순간 전환하면 길게 누르려던 사람도 전환이 먼저 일어나므로, 판정을
+    # "놓을 때"로 미룬다(체감 차이는 전환이 손을 뗀 뒤 시작된다는 것뿐이다).
+    button = Button(TOGGLE_PIN, bounce_time=DEBOUNCE_SEC, pull_up=True, hold_time=BLE_HOLD_SEC)
     led = LED(STATE_LED_PIN)
     buzzer = Buzzer(BUZZER_PIN)
 
@@ -258,9 +286,22 @@ def main() -> None:
         name="status-led", daemon=True,
     )
     status_thread.start()
-    button.when_pressed = lambda: handle_button_press(
-        buzzer, switching, transition, transition_lock,
-    )
+    gesture = {"held": False}
+
+    def _pressed() -> None:
+        gesture["held"] = False
+
+    def _held() -> None:
+        gesture["held"] = True
+        open_ble_pairing(buzzer)
+
+    def _released() -> None:
+        if not gesture["held"]:
+            handle_button_press(buzzer, switching, transition, transition_lock)
+
+    button.when_pressed = _pressed
+    button.when_held = _held
+    button.when_released = _released
 
     print(f"[GPIO] Wi-Fi 전환 버튼 대기 중 (GPIO{TOGGLE_PIN}) — 통합 상태 LED GPIO{STATE_LED_PIN}")
     if BUTTON_TEST_MODE:

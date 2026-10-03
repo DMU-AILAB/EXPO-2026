@@ -56,6 +56,7 @@ DEPLOY_PY = \
 	device/rf_led_test.py \
 	device/rf_sweep.py \
 	device/gpio_controls.py \
+	device/ble_provisioning.py \
 	device/fan_controller.py \
 	device/yolo_postprocess.py \
 	device/simple_tracker.py \
@@ -195,7 +196,7 @@ sync-roi-editor:
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
 	ssh $(PI_USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 uhubctl || true"
-	ssh $(PI_USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio"
+	ssh $(PI_USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio dbus-next"
 
 ## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
 deps-roi-editor:
@@ -239,11 +240,11 @@ run:
 ## Wi-Fi 온보딩과 현장 유지보수를 위한 호환 경로로 남아 있다.
 install-service:
 	@echo "[SERVICE] systemd 유닛 설치..."
-	scp deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-network.sudoers deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(PI_USER)@$(PI):/tmp/
-	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service"
-	ssh $(PI_USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /etc/systemd/system/ && sudo install -m 440 /tmp/visionguide-network.sudoers /etc/sudoers.d/visionguide-network && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(PI_USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(PI_USER)/visionguide/deploy/"
+	scp deploy/visionguide-device.service deploy/visionguide-roi-editor.service deploy/visionguide-controls.service deploy/visionguide-fan.service deploy/visionguide-auto-ap.service deploy/visionguide-ble.service deploy/visionguide-network.sudoers deploy/visionguide-uhubctl.sudoers deploy/visionguide-systemctl.sudoers deploy/auto_ap.sh $(PI_USER)@$(PI):/tmp/
+	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g; s|__PI_PYTHON__|$(PI_PYTHON)|g' /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /tmp/visionguide-ble.service"
+	ssh $(PI_USER)@$(PI) "sudo mv /tmp/visionguide-device.service /tmp/visionguide-roi-editor.service /tmp/visionguide-controls.service /tmp/visionguide-fan.service /tmp/visionguide-auto-ap.service /tmp/visionguide-ble.service /etc/systemd/system/ && sudo install -m 440 /tmp/visionguide-network.sudoers /etc/sudoers.d/visionguide-network && sudo chmod +x /tmp/auto_ap.sh && sudo mkdir -p /home/$(PI_USER)/visionguide/deploy && sudo mv /tmp/auto_ap.sh /home/$(PI_USER)/visionguide/deploy/"
 	ssh $(PI_USER)@$(PI) "sed -i 's|__USER__|$(PI_USER)|g' /tmp/visionguide-systemctl.sudoers && sudo install -m 440 /tmp/visionguide-systemctl.sudoers /etc/sudoers.d/visionguide-systemctl && sudo visudo -cf /etc/sudoers.d/visionguide-systemctl"
-	ssh $(PI_USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap"
+	ssh $(PI_USER)@$(PI) "sudo apt-get install -y uhubctl iptables && sudo install -m 440 /tmp/visionguide-uhubctl.sudoers /etc/sudoers.d/visionguide-uhubctl && sudo visudo -cf /etc/sudoers.d/visionguide-uhubctl && sudo systemctl daemon-reload && sudo usermod -aG bluetooth $(PI_USER) && sudo systemctl enable --now bluetooth && sudo systemctl enable --now visionguide-device visionguide-roi-editor visionguide-controls visionguide-fan visionguide-auto-ap visionguide-ble"
 	@echo "[완료] 재부팅해도 자동 시작됩니다."
 	@echo "       확인: ssh $(PI_USER)@$(PI) sudo systemctl status visionguide-device"
 	@echo "       ROI 에디터를 끄고 싶으면: ssh $(PI_USER)@$(PI) sudo systemctl disable --now visionguide-roi-editor"
