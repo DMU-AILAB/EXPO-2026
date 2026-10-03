@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models.audio import AudioDeployment
-from ..models.camera import Device
+from ..models.device import Device
 from ..services.pi_client import PiClient
 from .cameras import _get_device, ensure_audio_on_pi
 
