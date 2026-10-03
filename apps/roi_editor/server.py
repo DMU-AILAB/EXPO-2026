@@ -1038,6 +1038,10 @@ def replay_stream():
     def gen():
         last = None
         while True:
+            # 세션이 교체·정지되면 끝낸다. 계속 붙어 있으면 대시보드의 스트림 팬아웃이
+            # (같은 URL이라 연결을 재사용해) 옛 세션의 마지막 프레임에 영원히 멈춘다.
+            if _replay["session"] is not s:
+                break
             frame = s.latest_jpeg
             if frame is None or frame is last:
                 if s.status()["done"] and frame is None:

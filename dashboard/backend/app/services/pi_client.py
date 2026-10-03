@@ -16,6 +16,12 @@ Pi 쪽 실제 계약 (apps/roi_editor/server.py):
 | 신원 심기 | `POST /api/identity` |
 | 오디오 업로드 | `POST /api/audio/upload` (multipart, 필드명 `file`) → `{"ok":true,"path":"<절대경로>"}` |
 | 기기 판별 | `GET /api/version` → `{version, product:"VisionGuide", ...}` |
+| 검증 재생 | `/api/replay/{videos,start,pause,step,stop,status,stream.mjpg}` — 세션은 기기에 하나 |
+| 오탐 관리 | `/api/static-mask/{candidates,apply,hits,thumb}`·`DELETE /api/static-mask`·`/api/fp-hotspots` (`?camera=`) |
+| Wi-Fi | `/api/network/{status,scan,connect,connect-result}` — `/api/network/ap`는 일부러 안 부른다 |
+| **녹화·수집** | **카메라 MJPEG 포트**의 `/recording/*`·`/calibrate/*` — `PiClient(ip, camera.port)` |
+
+이 표와 실제 Pi 라우트의 일치는 루트 `tests/test_dashboard_pi_routes.py`가 소스를 읽어 검사한다.
 
 주의점 셋:
 
@@ -274,6 +280,168 @@ class PiClient:
             params["camera"] = camera_id
         return await self._get_json("/api/stats/timeseries", params=params)
 
+    # ------------------------------------------------------------------ 녹화·수집
+    # ★ 이 절의 메서드는 roi_editor(5000)가 아니라 **카메라 MJPEG 포트**에 있다
+    # (`device/camera_live_pi.py`의 `_route_recording`/`_route_calibrate`). 프레임을
+    # 쥔 프로세스만 녹화할 수 있어서다. `PiClient(ip, camera.port)`로 만들어 쓴다.
+
+    async def recording_status(self) -> dict:
+        return await self._get_json("/recording/status")
+
+    async def recording_start(self, raw: bool = False) -> dict:
+        """`raw=True`면 오버레이 이전 프레임을 저장한다(학습용 촬영)."""
+        res = await self._request("POST", "/recording/start",
+                                  params={"raw": "1"} if raw else None)
+        return res.json()
+
+    async def recording_stop(self) -> dict:
+        res = await self._request("POST", "/recording/stop")
+        return res.json()
+
+    async def recording_list(self) -> list[dict]:
+        data = await self._get_json("/recording/list")
+        return data.get("clips", []) if isinstance(data, dict) else []
+
+    async def calibration_status(self) -> dict:
+        return await self._get_json("/calibrate/status")
+
+    async def calibration_start(self, seconds: float) -> dict:
+        """폐장 시간 구조물 수집. Pi가 10~1800초로 자른다."""
+        res = await self._request("POST", "/calibrate/start", params={"seconds": str(seconds)})
+        return res.json()
+
+    async def calibration_cancel(self) -> dict:
+        res = await self._request("POST", "/calibrate/cancel")
+        return res.json()
+
+    # ------------------------------------------------------------------ 검증 재생
+
+    async def replay_videos(self) -> list[dict]:
+        data = await self._get_json("/api/replay/videos")
+        return data.get("videos", []) if isinstance(data, dict) else []
+
+    async def replay_start(self, payload: dict) -> dict:
+        """`{video, conf?, model_variant?, require_person?, speed?, loop?, debug_gates?}`."""
+        # 추론 백엔드를 이때 import하므로(Pi에서 수 초) 기본 5초로는 부족하다.
+        res = await self._request("POST", "/api/replay/start", json=payload, timeout=30.0)
+        return res.json()
+
+    async def replay_pause(self, paused: Optional[bool] = None) -> dict:
+        """`paused=None`이면 토글."""
+        res = await self._request("POST", "/api/replay/pause", json={"paused": paused})
+        return res.json()
+
+    async def replay_step(self) -> dict:
+        res = await self._request("POST", "/api/replay/step")
+        return res.json()
+
+    async def replay_stop(self) -> dict:
+        res = await self._request("POST", "/api/replay/stop")
+        return res.json()
+
+    async def replay_status(self) -> dict:
+        return await self._get_json("/api/replay/status")
+
+    # ------------------------------------------------------------------ 오탐 관리
+
+    @staticmethod
+    def _camera_params(camera_id: Optional[str], **extra: Any) -> dict:
+        params = {k: str(v) for k, v in extra.items() if v is not None}
+        if camera_id:
+            params["camera"] = camera_id
+        return params
+
+    async def mask_candidates(self, camera_id: Optional[str]) -> list[dict]:
+        data = await self._get_json("/api/static-mask/candidates",
+                                    params=self._camera_params(camera_id))
+        return data.get("candidates", []) if isinstance(data, dict) else []
+
+    async def mask_apply(self, camera_id: Optional[str], ids: list[int]) -> dict:
+        """**선택한 것만 남기는 전체 치환** — 빈 목록이면 마스크를 모두 끈다."""
+        res = await self._request("POST", "/api/static-mask/apply",
+                                  params=self._camera_params(camera_id), json={"ids": ids})
+        return res.json()
+
+    async def mask_clear(self, camera_id: Optional[str]) -> dict:
+        """후보·적용 상태·적중 기록을 모두 지운다(재수집 전)."""
+        res = await self._request("DELETE", "/api/static-mask",
+                                  params=self._camera_params(camera_id))
+        return res.json()
+
+    async def mask_hits(self, camera_id: Optional[str]) -> Any:
+        data = await self._get_json("/api/static-mask/hits",
+                                    params=self._camera_params(camera_id))
+        return data.get("hits") if isinstance(data, dict) else data
+
+    async def fp_hotspots(self, camera_id: Optional[str], min_count: int = 30,
+                          limit: int = 5) -> list[dict]:
+        data = await self._get_json("/api/fp-hotspots", params=self._camera_params(
+            camera_id, min_count=min_count, limit=limit))
+        return data.get("hotspots", []) if isinstance(data, dict) else []
+
+    async def fp_hotspots_clear(self, camera_id: Optional[str]) -> dict:
+        res = await self._request("DELETE", "/api/fp-hotspots",
+                                  params=self._camera_params(camera_id))
+        return res.json()
+
+    # ------------------------------------------------------------------ 네트워크
+    # `/api/network/ap`는 일부러 없다 — 원격에서 AP로 돌리면 그 순간 기기가 망에서
+    # 사라져 대시보드로는 되돌릴 수 없다(현장에 가야 한다).
+
+    async def network_status(self) -> dict:
+        """`{mode: "ap"|"station"|"disconnected", ssid, ip, hostname}` (wlan0 기준)."""
+        return await self._get_json("/api/network/status")
+
+    async def network_scan(self) -> list[dict]:
+        # nmcli 스캔은 Pi에서 최대 15초 걸린다(network_manager.scan_networks).
+        res = await self._request("GET", "/api/network/scan", timeout=20.0)
+        data = res.json()
+        return data.get("networks", []) if isinstance(data, dict) else []
+
+    async def network_connect(self, ssid: str, password: str) -> dict:
+        res = await self._request("POST", "/api/network/connect",
+                                  json={"ssid": ssid, "password": password})
+        return res.json()
+
+    async def network_connect_result(self) -> dict:
+        return await self._get_json("/api/network/connect-result")
+
+    # ------------------------------------------------------------------ 바이너리 중계
+
+    async def stream_file(self, path: str, params: dict | None = None,
+                          headers: dict[str, str] | None = None):
+        """큰 파일(녹화 클립·썸네일)을 메모리에 다 올리지 않고 넘긴다.
+
+        `(status, content_type, content_length, 본문 async iterator)`를 돌려준다.
+        iterator가 끝나야 연결이 닫히므로 호출부는 끝까지 소비하거나 버려야 한다.
+        """
+        client = httpx.AsyncClient(follow_redirects=False)
+        try:
+            req = client.build_request("GET", f"{self.base}{path}", params=params,
+                                       headers=headers, timeout=self.timeout)
+            res = await client.send(req, stream=True)
+        except httpx.RequestError as exc:
+            await client.aclose()
+            raise HTTPException(status_code=503,
+                                detail=f"기기에 연결할 수 없습니다 ({self.base}): {exc}") from exc
+        if res.status_code >= 400 or res.status_code in (301, 302, 303, 307, 308):
+            await res.aclose()
+            await client.aclose()
+            code = 404 if res.status_code == 404 else 502
+            raise HTTPException(status_code=code,
+                                detail=f"기기가 {path}에 {res.status_code}를 반환했습니다")
+
+        async def body():
+            try:
+                async for chunk in res.aiter_bytes():
+                    yield chunk
+            finally:
+                await res.aclose()
+                await client.aclose()
+
+        return (res.status_code, res.headers.get("content-type", "application/octet-stream"),
+                res.headers.get("content-length"), body())
+
 
 def _pi_detail(res: httpx.Response) -> Any:
     """Pi의 오류 본문을 그대로 살린다 — 검증 오류는 **문자열 배열**로 온다."""
@@ -283,6 +451,10 @@ def _pi_detail(res: httpx.Response) -> Any:
         return res.text or f"기기가 {res.status_code}를 반환했습니다"
     if isinstance(body, dict) and "detail" in body:
         return body["detail"]
+    # 카메라 MJPEG 포트(녹화·수집)는 FastAPI가 아니라 `{"ok": false, "error": "<문장>"}`을
+    # 준다. 그대로 넘기면 오류 봉투가 그 문장을 **코드**로 읽어 메시지가 비므로 문장만 꺼낸다.
+    if isinstance(body, dict) and isinstance(body.get("error"), str) and "message" not in body:
+        return body["error"]
     return body
 
 
