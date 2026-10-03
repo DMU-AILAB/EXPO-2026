@@ -87,6 +87,16 @@ def test_recording_clip_streams_with_query_token(client, token, device):
     assert res.status_code == 200
     assert res.content == b"MP4DATA"
     assert res.headers["content-type"] == "video/mp4"
+    assert res.headers["content-disposition"].startswith("inline")
+
+
+@respx.mock
+def test_recording_clip_download_is_attachment(client, token, device):
+    respx.get(f"{CAM}/recording/clips/clip_20261004_120000.mp4").mock(return_value=httpx.Response(
+        200, content=b"MP4DATA", headers={"Content-Type": "video/mp4"}))
+    res = client.get(f"{BASE}/cameras/cam0/recording/clips/clip_20261004_120000.mp4"
+                     f"?token={token}&download=true")
+    assert res.headers["content-disposition"].startswith("attachment")
 
 
 @pytest.mark.parametrize("name", ["../rois.json", "clip_1.mp4", "clip_20261004_120000.json",

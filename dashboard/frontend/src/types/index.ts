@@ -212,3 +212,80 @@ export type WsMessage =
   | { type: 'device_status_change'; data: { device_id: string; status: DeviceStatus; timestamp: string } }
   | { type: 'alert'; data: { device_id: string; camera_id: string; message: string; timestamp: string } }
   | { type: 'ping' }
+
+// ---------------------------------------------------------------- Pi 기능 중계
+// 아래 타입은 Pi 응답을 **그대로** 옮긴 것이다(백엔드는 봉투만 씌운다).
+
+/** 카메라 MJPEG 포트의 `/recording/status`. */
+export type RecordingStatus =
+  | { recording: false }
+  | { recording: true; clip_id: string; elapsed_sec: number }
+
+export type RecordingClip = {
+  id: string
+  started_at: string | null
+  duration_sec: number | null
+  size_bytes: number
+  has_thumb: boolean
+}
+
+export type ReplayVideo = { name: string; size_mb: number; dir: string }
+
+/** `device/replay_engine.py`의 `ReplaySession.status()`. 세션이 없으면 `{running:false, done:false}`만 온다. */
+export type ReplayStatus = {
+  running: boolean
+  done: boolean
+  video?: string
+  paused?: boolean
+  error?: string | null
+  frame?: number
+  total?: number
+  fps?: number
+  conf?: number
+  counters?: Record<string, number>
+  events?: { t: number; frame: number; roi: string; subject: string; audio: string }[]
+}
+
+/** 폐장 시간 구조물 수집 (`/calibrate/status`). */
+export type CalibrationStatus = {
+  running: boolean
+  remaining_sec?: number
+  frames?: number
+  result?: Record<string, unknown> | null
+}
+
+/** 구조물 마스크 후보 (`static_mask.read_candidates`). bbox는 정규화 0~1. */
+export type MaskCandidate = {
+  id: number
+  cls: number
+  bbox: [number, number, number, number]
+  hits: number
+  frames: number
+  max_disp: number
+  max_conf: number
+  thumb: string | null
+  collected_at: number
+  applied: boolean
+  /** 지팡이=기본 선택, 사람=기본 해제 — 사람 마스크는 그 자리의 진짜 사람을 가릴 수 있다. */
+  recommend: boolean
+}
+
+export type MaskHit = { cls: number; count: number; last_ts: number }
+
+/** 오탐 지점 (`fp_hotspots.read_hotspots`). bbox는 정규화 0~1 평균 박스. */
+export type FpHotspot = { cell: [number, number]; count: number; bbox: [number, number, number, number] }
+
+export type NetworkStatus = {
+  mode: 'ap' | 'station' | 'disconnected'
+  ssid: string | null
+  ip: string | null
+  hostname: string
+}
+
+export type WifiNetwork = { ssid: string; signal_pct: number; security: string }
+
+export type WifiConnectResult = {
+  in_progress: boolean
+  /** `network_manager._do_connect`가 남긴 값. */
+  result: { status: 'ok'; ip: string | null } | { status: 'error'; error: string } | null
+}

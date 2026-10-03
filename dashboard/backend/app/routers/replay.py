@@ -23,6 +23,8 @@ from .cameras import _get_device, get_current_user_or_query
 
 router = APIRouter(prefix="/api/devices", tags=["Replay"])
 
+_BOUNDARY = b"--frame\r\n"   # stream_fanout._frame_packet이 쓰는 것과 같은 경계
+
 
 class ReplayStartRequest(BaseModel):
     """Pi의 `ReplayStart`와 같은 필드. 기본값은 Pi가 정하도록 보내지 않는다."""
@@ -90,9 +92,14 @@ async def replay_stream(device_id: str, db: Session = Depends(get_db),
     channel, queue = await stream_fanout.subscribe(target)
 
     async def generator():
+        # 브라우저는 multipart의 한 파트를 **다음 경계가 도착해야** 그린다. 라이브는
+        # 다음 프레임이 곧 오니 상관없지만, 재생이 끝나면 마지막 프레임이 영영 안
+        # 그려져 화면이 검게 남는다. 그래서 경계를 프레임 **뒤에** 붙여 보낸다.
         try:
+            yield _BOUNDARY
             while True:
-                yield await queue.get()
+                packet = await queue.get()
+                yield packet.removeprefix(_BOUNDARY) + _BOUNDARY
         except asyncio.CancelledError:
             raise
         finally:

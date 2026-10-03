@@ -59,7 +59,7 @@ async def recording_list(device_id: str, camera_id: str = Depends(validate_camer
 
 
 @router.get("/{device_id}/cameras/{camera_id}/recording/clips/{filename}")
-async def recording_clip_file(device_id: str, filename: str,
+async def recording_clip_file(device_id: str, filename: str, download: bool = False,
                               camera_id: str = Depends(validate_camera_id),
                               db: Session = Depends(get_db),
                               current_user=Depends(get_current_user_or_query)):
@@ -70,5 +70,8 @@ async def recording_clip_file(device_id: str, filename: str,
     _status, content_type, length, body = await client.stream_file(f"/recording/clips/{filename}")
     headers = {"Content-Length": length} if length else {}
     if filename.endswith(".mp4"):
-        headers["Content-Disposition"] = f'inline; filename="{filename}"'
+        # 대시보드와 API의 출처가 달라(5173 ↔ 8000) 브라우저가 <a download>를 무시하므로
+        # 저장은 서버가 attachment로 지시해야 한다.
+        disposition = "attachment" if download else "inline"
+        headers["Content-Disposition"] = f'{disposition}; filename="{filename}"'
     return StreamingResponse(body, media_type=content_type, headers=headers)

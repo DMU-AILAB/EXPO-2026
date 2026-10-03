@@ -4,11 +4,16 @@ import {
   ChevronLeft, Activity, Thermometer, Clock, Wifi, Camera, Video,
   MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle,
   CalendarClock, Trash2, AlertTriangle, Loader2,
-  Upload, Radio, ArrowUp, ArrowDown,
+  Upload, Radio, ArrowUp, ArrowDown, Film, ScanSearch, ShieldAlert,
 } from 'lucide-react'
 
 import * as api from '../api'
 import { ApiError } from '../api/client'
+import { describe } from './device/shared'
+import CalibrationTab from './device/CalibrationTab'
+import NetworkTab from './device/NetworkTab'
+import RecordingTab from './device/RecordingTab'
+import ReplayTab from './device/ReplayTab'
 import StatusBadge from '../components/StatusBadge'
 import { streamUrl } from '../components/StreamThumbnail'
 import RoiCanvas from '../components/RoiCanvas'
@@ -1109,19 +1114,6 @@ function camFormOf(cam?: CameraType) {
   }
 }
 
-/** 서버 오류를 사람이 읽을 문장으로. Pi의 검증 오류는 여러 줄로 온다. */
-function describe(e: unknown): string {
-  if (e instanceof ApiError) {
-    if (e.code === 'DEVICE_OFFLINE' || e.status === 503) {
-      return '기기에 연결할 수 없어 설정을 적용하지 못했습니다. 기기 전원과 네트워크를 확인하세요.'
-    }
-    if (e.code === 'ETAG_MISMATCH') {
-      return '설정이 그 사이 변경되었습니다. 새로고침한 뒤 다시 시도하세요.'
-    }
-    return e.message
-  }
-  return e instanceof Error ? e.message : '알 수 없는 오류'
-}
 
 // ─── RF Remote Tab ────────────────────────────────────────────────────────────
 
@@ -1385,12 +1377,16 @@ function RfTab({ device }: Ctx) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'roi' | 'rf' | 'settings'
+type Tab = 'overview' | 'roi' | 'replay' | 'calibration' | 'recording' | 'rf' | 'network' | 'settings'
 
 const TABS: { key: Tab; label: string; icon: typeof MapPin }[] = [
   { key: 'overview', label: '개요', icon: Activity },
   { key: 'roi', label: 'ROI 관리', icon: MapPin },
+  { key: 'replay', label: '검증', icon: ScanSearch },
+  { key: 'calibration', label: '오탐 관리', icon: ShieldAlert },
+  { key: 'recording', label: '녹화', icon: Film },
   { key: 'rf', label: '리모컨', icon: Radio },
+  { key: 'network', label: '네트워크', icon: Wifi },
   { key: 'settings', label: '설정', icon: SlidersHorizontal },
 ]
 
@@ -1451,7 +1447,11 @@ export default function DeviceDetail() {
 
       {tab === 'overview' && <OverviewTab device={device} events={device.recent_events} />}
       {tab === 'roi' && <RoiTab device={device} reload={reload} />}
+      {tab === 'replay' && <ReplayTab device={device} reload={reload} />}
+      {tab === 'calibration' && <CalibrationTab device={device} reload={reload} />}
+      {tab === 'recording' && <RecordingTab device={device} reload={reload} />}
       {tab === 'rf' && <RfTab device={device} reload={reload} />}
+      {tab === 'network' && <NetworkTab device={device} reload={reload} />}
       {tab === 'settings' && <SettingsTab device={device} reload={reload} />}
     </div>
   )
