@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 import hashlib
+import ipaddress
 import json
 import logging
 import secrets
@@ -320,10 +321,34 @@ class HeartbeatPayload(BaseModel):
     cameras: List[dict] = []
 
 @router.patch("/me/heartbeat")
-async def heartbeat(payload: HeartbeatPayload, device: Device = Depends(get_device_by_api_key)):
+async def heartbeat(payload: HeartbeatPayload, request: Request,
+                    device: Device = Depends(get_device_by_api_key),
+                    db: Session = Depends(get_db)):
     # DB I/O 없이 인메모리 버퍼에만 상태 갱신
     await update_heartbeat_buffer(device.id, payload.model_dump())
+    _follow_device_ip(db, device, request.client.host if request.client else None)
     return {"ok": True}
+
+
+def _follow_device_ip(db: Session, device: Device, source: Optional[str]) -> None:
+    """하트비트를 보낸 주소로 `device.ip`를 따라간다.
+
+    등록 시 적은 IP가 영원히 고정이면 DHCP 재할당이나 Wi-Fi 변경 뒤 **모든 중계가
+    옛 주소로 나간다** — 기기는 하트비트로 살아 있다고 알리는데 대시보드의 설정·
+    스트림·재시작은 전부 503이 된다. 하트비트는 api_key로 인증된 요청이라 출발
+    주소가 곧 기기 주소다(리버스 프록시 뒤에 두면 이 가정이 깨지므로 그때는 끌 것).
+
+    바뀐 경우에만 쓴다 — 하트비트 경로는 원래 DB I/O가 없는 곳이다.
+    """
+    if not source or source == device.ip:
+        return
+    try:
+        ipaddress.ip_address(source)
+    except ValueError:
+        return  # TestClient의 "testclient" 같은 비주소
+    logger.info("기기 IP 변경 감지 (%s): %s → %s", device.id, device.ip, source)
+    device.ip = source
+    db.commit()
 
 from ..models.device import DeviceStatusCache
 
