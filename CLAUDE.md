@@ -47,7 +47,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `device_metrics.py` | 탐지 루프의 추론 시간·프레임 시간·스트리밍 여부를 sqlite로 `roi_editor`에 넘긴다 — 하트비트가 쓰는 값이 탐지 프로세스에만 있기 때문 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
-| `gpio_controls.py` | Wi-Fi 버튼(GPIO17) — **짧게 누름(뗄 때)** = 홈 Wi-Fi ↔ 핫스팟 전환, **3초 누름** = 블루투스 페어링 창 3분(`ble_window.json`) · 통합 상태 LED · 부저 |
+| `gpio_controls.py` | Wi-Fi 버튼(GPIO17) — **짧게 누름(뗄 때)** = 홈 Wi-Fi ↔ 핫스팟 전환, **3초 누름** = 블루투스 페어링 창 3분(`ble_window.json`, 홈 Wi-Fi 연결 중이면 열지 않고 짧게 3번 — 광고할 수 없는데 켜진 것처럼 보이면 안 된다. LED 페어링 패턴도 광고 가능할 때만) · 통합 상태 LED · 부저 |
 | `ble_provisioning.py` | **BLE Wi-Fi 페어링** — 대시보드(Web Bluetooth)가 망에 없는 기기에 SSID·비밀번호를 건넨다. Wi-Fi 미연결 + 버튼 창이 열렸을 때만 광고(`VG-xxxx`). GATT: info/command/result(+순번 `n`)/event. Wi-Fi 조작은 `roi_editor/network_manager.py` 재사용, `dbus-next` |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v10_320`** (= `runs/white_cane_v10_nolkc/weights`). v10은 **누수 없는 재분할(`datasets/v2`) 위에서 처음부터 학습한 계보**이고, 실영상 탐지율이 v9 계열 최고 수준이다(`docs/model_evaluation_report_v3.md`). `v11_yolo26n_320`은 백본 비교용으로 남겨둔 것이지 권장이 아니다(실영상 35.3% vs v10 73.2%). **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |

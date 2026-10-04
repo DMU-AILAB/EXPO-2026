@@ -248,7 +248,9 @@ export default function BleSetup({ onRegister }: {
       ) : (
         <>
           <ol className="mb-4 space-y-1 text-[11px] text-slate-500 list-decimal pl-4">
-            <li>기기의 <b>Wi-Fi 버튼을 3초</b> 누르세요. 길게 한 번 울리고 LED가 천천히 깜빡이면 3분간 열립니다.</li>
+            <li>기기가 홈 Wi-Fi에 연결돼 있으면 먼저 <b>Wi-Fi 버튼을 짧게</b> 눌러 핫스팟으로 바꾸세요(비프 2번).</li>
+            <li><b>Wi-Fi 버튼을 3초</b> 누르세요. 길게 한 번 울리고 LED가 0.5초 간격으로 고르게 깜빡이면 3분간 열립니다.
+              짧게 3번 울리면 아직 홈 Wi-Fi에 연결된 상태입니다.</li>
             <li>아래 버튼을 눌러 <b>VG-</b>로 시작하는 기기를 고르세요.</li>
             <li>Wi-Fi를 고르고 비밀번호를 넣으면 연결 후 이 대시보드에 자동으로 등록됩니다.</li>
           </ol>

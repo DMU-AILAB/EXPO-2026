@@ -39,12 +39,16 @@ def gc(monkeypatch, tmp_path):
     win = tmp_path / "ble_window.json"
     monkeypatch.setattr(mod, "open_ble_window", lambda: bp.open_window(win))
     monkeypatch.setattr(mod, "pairing_window_open", lambda: bp.pairing_window_open(win))
-    monkeypatch.setattr(mod, "_beep", lambda *a, **k: None)
+    beeps = []
+    monkeypatch.setattr(mod, "_beep", lambda _bz, times, **k: beeps.append(times))
+    conn = {"now": "VisionGuide-AP"}               # 기본: 핫스팟(페어링 가능)
+    monkeypatch.setattr(mod, "_active_connection", lambda: conn["now"])
     monkeypatch.setattr(mod, "pause", lambda: None)          # main()이 바로 돌아오게
     monkeypatch.setattr(mod, "_status_led_loop", lambda *a, **k: None)
     toggles = []
     monkeypatch.setattr(mod, "handle_button_press", lambda *a, **k: toggles.append(1))
     mod.main()
+    mod._test_beeps, mod._test_conn = beeps, conn
     yield mod, created["button"], toggles, win
     sys.modules.pop("gpio_controls", None)
 
@@ -79,11 +83,36 @@ def test_next_short_press_after_long_press_toggles(gc):
     assert toggles == [1]
 
 
-def test_led_shows_pairing_while_window_open(gc, monkeypatch):
-    mod, button, _, _ = gc
+def _kind(mod):
     import threading
-    monkeypatch.setattr(mod, "_active_connection", lambda: "")
+    return mod._status_kind(threading.Event(), {"kind": None, "until": 0.0}, threading.Lock())
+
+
+@pytest.mark.parametrize("connection", ["", "VisionGuide-AP"])
+def test_led_shows_pairing_while_window_open(gc, connection):
+    mod, button, _, _ = gc
+    mod._test_conn["now"] = connection
     button.when_pressed(); button.when_held()
-    kind = mod._status_kind(threading.Event(), {"kind": None, "until": 0.0}, threading.Lock())
-    assert kind == "ble_pairing"
+    assert _kind(mod) == "ble_pairing"
+    assert mod._test_beeps == [1]                  # 긴 비프 한 번
     assert "ble_pairing" in mod._PATTERNS
+
+
+def test_long_press_on_home_wifi_refuses(gc):
+    # 홈 Wi-Fi에 붙어 있으면 광고하지 않으므로 창을 열지 않고 짧게 3번 울린다.
+    mod, button, toggles, win = gc
+    mod._test_conn["now"] = "enjoy"
+    button.when_pressed(); button.when_held(); button.when_released()
+    assert not win.exists()
+    assert mod._test_beeps == [3]
+    assert toggles == []                           # 길게 누른 것이니 Wi-Fi 전환도 하지 않는다
+
+
+def test_led_ignores_stale_window_on_home_wifi(gc, monkeypatch):
+    # 핫스팟에서 창을 연 뒤 짧게 눌러 홈으로 돌아가면 창 파일이 남아 있어도 페어링 패턴이 아니다.
+    mod, button, _, _ = gc
+    button.when_pressed(); button.when_held()
+    mod._test_conn["now"] = "enjoy"
+    monkeypatch.setattr(mod, "_service_active", lambda: True)
+    monkeypatch.setattr(mod, "_camera_pipeline_active", lambda: True)
+    assert _kind(mod) == "home"

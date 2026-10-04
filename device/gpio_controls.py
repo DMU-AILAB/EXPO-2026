@@ -183,10 +183,14 @@ def _status_kind(switching: threading.Event, transition: dict,
         transition["kind"] = None
         transition["until"] = 0.0
 
-    if pairing_window_open is not None and pairing_window_open():
+    connection = _active_connection()
+    # 페어링 패턴은 **실제로 광고하는 동안만** 보인다 — ble_provisioning은 홈 Wi-Fi에
+    # 붙어 있으면 창이 열려 있어도 광고하지 않는다. 그때 깜빡이면 "켜졌다"고 오해하고,
+    # 아래 오류 패턴까지 가려진다.
+    if (pairing_window_open is not None and pairing_window_open()
+            and _pairing_possible(connection)):
         return "ble_pairing"
 
-    connection = _active_connection()
     if connection == HOTSPOT_CONNECTION:
         return "hotspot"
     if not connection:
@@ -257,11 +261,27 @@ def handle_button_press(buzzer: "Buzzer", switching: threading.Event,
     toggle_wifi(buzzer, switching, transition, transition_lock)
 
 
+def _pairing_possible(connection: str) -> bool:
+    """블루투스로 Wi-Fi를 받을 수 있는 상태인가 — `ble_provisioning.pairing_allowed`와 같은
+    기준(wlan0이 홈 Wi-Fi에 붙어 있지 않음). 핫스팟이거나 연결이 없을 때만 참이다."""
+    return connection in ("", HOTSPOT_CONNECTION)
+
+
 def open_ble_pairing(buzzer: "Buzzer") -> None:
-    """3초 누름 — 블루투스 페어링 창을 연다. 길게 한 번 울려 짧은 누름과 구분한다."""
+    """3초 누름 — 블루투스 페어링 창을 연다. 길게 한 번 울려 짧은 누름과 구분한다.
+
+    홈 Wi-Fi에 연결돼 있으면 열지 않고 짧게 3번 울린다 — 열어 봐야 광고하지 않으므로
+    "켜졌다"는 신호를 주면 안 된다. 먼저 짧게 눌러 핫스팟으로 바꾼 뒤 다시 누르면 된다.
+    """
     if open_ble_window is None:
         _beep(buzzer, 3, on_time=0.08, gap=0.08)
         print("[GPIO] ble_provisioning 모듈이 없어 페어링 창을 열 수 없습니다")
+        return
+    connection = _active_connection()
+    if not _pairing_possible(connection):
+        _beep(buzzer, 3, on_time=0.08, gap=0.08)
+        print(f"[GPIO] 홈 Wi-Fi({connection})에 연결돼 있어 블루투스 페어링을 열지 않습니다 "
+              "— 짧게 눌러 핫스팟으로 바꾼 뒤 다시 3초 누르세요")
         return
     open_ble_window()
     _beep(buzzer, 1, on_time=0.8, gap=0.0)
