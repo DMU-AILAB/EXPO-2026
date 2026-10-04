@@ -68,6 +68,9 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 | 기기 목록에 `VG-xxxx`가 없다 | 창이 안 열렸거나(3분 경과, LED가 0.5초 점멸이 아님) 기기가 홈 Wi-Fi에 연결돼 있다 |
 | "블루투스를 지원하지 않습니다" | iPhone Safari, 또는 `localhost`·HTTPS가 아닌 주소로 연 대시보드 |
 | 연결은 됐는데 "서버에서 닿지 않습니다" | 기기가 붙은 Wi-Fi가 대시보드 PC와 다른 망이다 |
+| "기기가 요청을 거절했습니다"(GATT operation not permitted) | 창이 닫혔다 — 버튼 3초로 다시 열고 같은 버튼을 다시 누른다. 명령을 보낼 때마다 창이 3분 연장된다 |
+| Wi-Fi 목록이 비거나 원하는 네트워크가 없다 | 숨김 네트워크 등 — SSID를 직접 입력한다. 핫스팟 중에는 검색할 때 핫스팟이 몇 초 꺼졌다 켜진다(정상) |
+| 브라우저 목록에 안 보이는데 기기는 광고 중인지 모르겠다 | 휴대폰 기본 설정 화면은 이런 BLE 기기를 잘 안 보여준다 — **nRF Connect** 앱의 Scanner로 `VG-xxxx`를 확인한다 |
 
 서비스: `visionguide-ble`(`device/ble_provisioning.py`). 테스트용으로 버튼 없이 창을 열려면
 Pi에서 `python ~/visionguide/ble_provisioning.py --open-window 180`(root 서비스가 만든 창 파일이

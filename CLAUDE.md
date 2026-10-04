@@ -338,6 +338,15 @@ Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세�
   - 광고 이름이 `VG-xxxx`로 짧은 이유: 광고 패킷 31바이트 = 플래그 3 + 128비트 UUID 18 + 이름.
   - 결과는 notify가 아니라 read로 준다(notify는 MTU-3=20바이트). 결과 JSON의 순번 `n`이
     명령 전후로 **달라진** 것만 이번 결과로 본다 — 직전의 `failed`를 오인하지 않게.
+  - **핫스팟(AP)인 동안 wlan0은 새로 검색하지 못한다**(`--rescan yes`도 예전 기록). 기록이
+    몇 분 뒤 사라져 목록에 자기 자신만 남고 연결이 "network could not be found"로 실패했다
+    (실기기 실험). 블루투스 경로는 스캔·연결 직전에 `device disconnect`로 칩을 비우고 다시
+    검색한다(`network_manager.scan_networks_fresh`, `connect_wifi(release_ap=True)`), 실패하면
+    핫스팟으로 되돌린다. **Pi 화면(:5000) 경로는 휴대폰이 그 핫스팟에 붙어 있어 쓰면 안 된다.**
+  - 창은 명령이 올 때마다 3분으로 다시 연장된다 — 버튼은 새 연결을 받아들이는 증명이고,
+    설정하는 도중에 닫혀 'GATT operation not permitted'로 끊기면 안 된다.
+  - 광고에 `Discoverable`(LE General Discoverable 플래그)이 없으면 휴대폰·브라우저 목록에서
+    빠진다. 진단은 휴대폰 기본 설정 화면이 아니라 BLE 스캐너 앱(nRF Connect)으로 할 것.
   - `ble_beacon.py`(iBeacon)를 켜게 되면 같은 칩의 광고를 쓰므로 `pairing_window_open()`
     동안은 비콘을 멈춰야 한다.
   - **Web Bluetooth는 `localhost` 또는 HTTPS에서만** 동작한다. 다른 PC에서 LAN IP로 대시보드를

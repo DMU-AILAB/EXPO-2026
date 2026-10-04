@@ -6,7 +6,8 @@
 
 허용 조건(둘 다 만족해야 **광고 자체를** 한다):
   1. wlan0이 Wi-Fi(station)에 붙어 있지 않다 — 운영 중인 기기는 건드릴 수 없다.
-  2. 페어링 창이 열려 있다 — Wi-Fi 버튼(GPIO17)을 3초 누르면 3분 열린다
+  2. 페어링 창이 열려 있다 — Wi-Fi 버튼(GPIO17)을 3초 누르면 3분 열린다(명령이 올 때마다
+     다시 3분으로 연장 — 설정하는 도중에 닫히지 않게)
      (`gpio_controls.py`가 `ble_window.json`을 쓴다). 반경 10m 안의 누구나 Wi-Fi를
      바꾸지 못하도록 **기기를 만질 수 있는 사람**만 열 수 있게 했다.
 
@@ -231,18 +232,30 @@ class Provisioner:
         return pairing_allowed(self.nm.get_status().get("mode", ""),
                                pairing_window_open(self.window))
 
+    def extend_window(self) -> None:
+        """명령을 받을 때마다 창을 처음부터 다시 연다.
+
+        버튼 3초는 **새 연결을 받아들이기 위한** 증명이다. 그 뒤 기기 선택·검색·비밀번호
+        입력을 하는 동안 3분이 지나 명령이 거절되면 처음부터 다시 해야 한다(현장 테스트에서
+        실제로 'GATT operation not permitted'로 끊겼다). 쓰는 동안은 계속 열어 둔다.
+        """
+        open_window(self.window)
+
     def handle(self, cmd: dict) -> None:
         """동기 호출 — 스캔은 수 초 걸리므로 호출부가 실행기 스레드에서 부른다."""
         if cmd["op"] == "scan":
             self._set({"state": "scanning"})
-            self._set(scan_payload(self.nm.scan_networks()))
+            # 핫스팟에서는 예전 검색 기록만 남아 목록이 비거나 자기 자신만 보인다 —
+            # AP를 잠깐 내려 실제로 다시 검색하는 쪽을 쓴다(network_manager 참고).
+            scan = getattr(self.nm, "scan_networks_fresh", self.nm.scan_networks)
+            self._set(scan_payload(scan()))
             return
         if self.nm.is_connect_in_progress():
             raise CommandError("이미 연결을 시도하는 중입니다")
         self._set({"state": "connecting", "ssid": cmd["ssid"]})
         self.awaiting_connect = True
         # 기기 화면(5000)과 같은 경로 — nmcli 프로필 생성·캡티브 포털 해제까지 같다.
-        self.nm.connect_wifi(cmd["ssid"], cmd["psk"], delay_seconds=1)
+        self.nm.connect_wifi(cmd["ssid"], cmd["psk"], delay_seconds=1, release_ap=True)
 
     def poll_connect(self) -> bool:
         """연결 결과가 나왔으면 결과를 싣고 True. 성공하면 창을 닫는다."""
@@ -347,6 +360,7 @@ def _build_bluez_objects(prov: Provisioner, loop: asyncio.AbstractEventLoop, loc
             if not prov.allowed():
                 raise DBusError("org.bluez.Error.NotPermitted",
                                 "페어링 창이 닫혀 있습니다 — 기기의 Wi-Fi 버튼을 3초 누르세요")
+            prov.extend_window()
             try:
                 done = assembler.feed(bytes(value), _offset(options))
                 if done is None:

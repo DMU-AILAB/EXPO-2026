@@ -293,6 +293,9 @@ export default function BleSetup({ onRegister }: {
                   </button>
                 ))}
               </div>
+              {networks && (
+                <p className="text-[10.5px] text-slate-400">원하는 Wi-Fi가 목록에 없으면 SSID를 직접 입력하세요(숨김 네트워크 등).</p>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <input className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs" placeholder="SSID"
                        value={ssid} maxLength={32} onChange={(e) => setSsid(e.target.value)} />
@@ -337,8 +340,10 @@ export default function BleSetup({ onRegister }: {
 
 function describeBle(e: unknown): string {
   if (e instanceof DOMException) {
-    if (e.name === 'NotAllowedError') {
-      return '기기가 요청을 거부했습니다. 페어링 창이 닫혔을 수 있습니다 — Wi-Fi 버튼을 다시 3초 누르세요.'
+    // 기기가 "페어링 창 닫힘"으로 쓰기를 거절하면(org.bluez.Error.NotPermitted) Chrome·Edge는
+    // NotSupportedError("GATT operation not permitted")로 올린다 — 원문만 보여주면 뜻을 알 수 없다.
+    if (e.name === 'NotAllowedError' || /not permitted/i.test(e.message)) {
+      return '기기가 요청을 거절했습니다. 페어링 창이 닫혔습니다 — 기기의 Wi-Fi 버튼을 3초 눌러(긴 비프) 다시 연 뒤 같은 버튼을 다시 누르세요.'
     }
     if (e.name === 'NetworkError') return '블루투스 연결이 끊겼습니다. 기기가 가까이 있는지 확인하고 다시 시도하세요.'
     return `${e.name}: ${e.message}`

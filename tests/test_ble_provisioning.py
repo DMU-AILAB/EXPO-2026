@@ -163,8 +163,13 @@ class FakeNM:
     def scan_networks(self):
         return [{"ssid": "Home", "signal_pct": 80, "security": "WPA2"}]
 
-    def connect_wifi(self, ssid, password, delay_seconds=3):
+    def scan_networks_fresh(self):
+        self.fresh_scans = getattr(self, "fresh_scans", 0) + 1
+        return self.scan_networks()
+
+    def connect_wifi(self, ssid, password, delay_seconds=3, release_ap=False):
         self.connected_with = (ssid, password)
+        self.release_ap = release_ap
         self.in_progress = True
 
     def get_connect_result(self):
@@ -314,3 +319,42 @@ def test_advert_fits_31_bytes():
 def test_network_manager_import_path():
     nm = bp._import_network_manager()
     assert hasattr(nm, "connect_wifi") and hasattr(nm, "scan_networks")
+
+
+# ------------------------------------------------------------------ 핫스팟에서의 검색·연결
+
+def test_scan_uses_fresh_scan_when_available(tmp_path):
+    nm = FakeNM()
+    prov = bp.Provisioner(nm, window=tmp_path / "w")
+    prov.handle({"op": "scan"})
+    assert nm.fresh_scans == 1               # 핫스팟의 낡은 검색 기록을 쓰지 않는다
+
+
+def test_connect_releases_ap(tmp_path):
+    nm = FakeNM(mode="ap")
+    prov = bp.Provisioner(nm, window=tmp_path / "w")
+    prov.handle({"op": "connect", "ssid": "Home", "psk": "password1"})
+    assert nm.release_ap is True
+
+
+def test_extend_window_reopens_full_length(tmp_path):
+    w = tmp_path / "w.json"
+    bp.open_window(w, seconds=5)
+    prov = bp.Provisioner(FakeNM(), window=w)
+    prov.extend_window()
+    assert bp.window_remaining(w) > bp.WINDOW_SEC - 5
+
+
+def test_accepted_write_extends_window(tmp_path):
+    pytest.importorskip("dbus_next")
+    w = tmp_path / "w.json"
+    bp.open_window(w, seconds=5)               # 거의 닫힌 창
+    prov = bp.Provisioner(FakeNM(), window=w)
+    loop = asyncio.new_event_loop()
+    try:
+        _, _, _, chars, _, _ = bp._build_bluez_objects(prov, loop, "VG-abcd")
+        command = chars[1]
+        _call(type(command).WriteValue, command, _cmd({"op": "connect", "ssid": "x"}), {})
+    finally:
+        loop.close()
+    assert bp.window_remaining(w) > bp.WINDOW_SEC - 5

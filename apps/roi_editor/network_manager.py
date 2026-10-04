@@ -87,14 +87,15 @@ def scan_networks() -> list[dict]:
     except Exception:
         return []
 
+    own = _ap_ssid()
     seen: dict[str, dict] = {}
     for line in lines:
         parts = line.split(":")
         if len(parts) < 2:
             continue
         ssid = parts[0].strip()
-        if not ssid or ssid == "--":
-            continue
+        if not ssid or ssid == "--" or ssid == own:
+            continue   # 자기 핫스팟은 연결 대상이 아니다
         try:
             signal_pct = int(parts[1].strip())
         except (ValueError, IndexError):
@@ -106,12 +107,71 @@ def scan_networks() -> list[dict]:
     return sorted(seen.values(), key=lambda x: x["signal_pct"], reverse=True)
 
 
-def _do_connect(ssid: str, password: str, delay_seconds: int) -> None:
+_ap_ssid_cache: str | None = None
+
+
+def _ap_ssid() -> str | None:
+    """핫스팟 프로필의 실제 SSID. 프로필 이름(`VisionGuide-AP`)과 다르다(예: `VisionGuide-Pi`)."""
+    global _ap_ssid_cache
+    if _ap_ssid_cache is None:
+        try:
+            r = _run(["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", AP_CONNECTION])
+            _ap_ssid_cache = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            _ap_ssid_cache = ""
+    return _ap_ssid_cache or None
+
+
+# 핫스팟(AP)으로 동작하는 동안 wlan0은 **새로 검색하지 못한다** — `--rescan yes`도 예전
+# 기록을 그대로 돌려준다. 그 기록은 몇 분 뒤 사라져서, 오래 켜 둔 핫스팟에서는 목록에
+# 자기 자신만 남고 연결도 "The Wi-Fi network could not be found"로 실패했다(실기기 실험).
+# 칩을 잠깐 비우면(`device disconnect`) 실제로 다시 검색된다. `device disconnect`는
+# 자동 재연결도 막아 주므로 그 사이 홈 Wi-Fi로 저절로 붙지 않는다.
+#
+# ★ 블루투스 페어링 경로에서만 쓴다. Pi 화면(:5000)은 휴대폰이 바로 그 핫스팟으로
+#   붙어 있어 AP를 내리면 화면이 끊긴다.
+_RESCAN_SETTLE_S = 4
+
+
+def _release_ap_and_rescan() -> bool:
+    """AP 모드면 내리고 다시 검색한다. AP였으면 True(호출부가 되돌릴지 정한다)."""
+    was_ap = get_status().get("mode") == "ap"
+    if was_ap:
+        _sudo(["nmcli", "device", "disconnect", WIFI_DEVICE], timeout=10)
+        time.sleep(1)
+    _sudo(["nmcli", "device", "wifi", "rescan", "ifname", WIFI_DEVICE], timeout=10)
+    time.sleep(_RESCAN_SETTLE_S)
+    return was_ap
+
+
+def _restore_ap() -> None:
+    try:
+        switch_to_ap()
+    except Exception as e:   # noqa: BLE001 — 되돌리기 실패가 원래 결과를 가리면 안 된다
+        print(f"[network] 핫스팟 복구 실패: {e}")
+
+
+def scan_networks_fresh() -> list[dict]:
+    """실제로 다시 검색한 목록. AP 모드였으면 끝난 뒤 AP를 다시 올린다(블루투스 경로용)."""
+    was_ap = _release_ap_and_rescan()
+    try:
+        return scan_networks()
+    finally:
+        if was_ap:
+            _restore_ap()
+
+
+def _do_connect(ssid: str, password: str, delay_seconds: int, release_ap: bool = False) -> None:
     """백그라운드 스레드 — delay 후 실제 nmcli 연결 수행."""
     global _connect_result, _connect_in_progress
 
     time.sleep(delay_seconds)
+    was_ap = False
+    ok = False
     try:
+        if release_ap:
+            # 핫스팟에서는 대상 네트워크가 검색 기록에서 사라져 있을 수 있다 — 먼저 비우고 검색.
+            was_ap = _release_ap_and_rescan()
         # 기존 프로필 존재 여부 확인 (읽기 전용 — sudo 불필요)
         r_list = _run(["nmcli", "-g", "NAME", "connection", "show"], timeout=5)
         existing = [n.strip() for n in r_list.stdout.splitlines()] if r_list.returncode == 0 else []
@@ -141,6 +201,7 @@ def _do_connect(ssid: str, password: str, delay_seconds: int) -> None:
         new_ip = raw.split("/")[0] if raw and raw != "--" else None
 
         _remove_captive_portal()
+        ok = True
         with _connect_lock:
             _connect_result = {"status": "ok", "ip": new_ip}
 
@@ -151,17 +212,27 @@ def _do_connect(ssid: str, password: str, delay_seconds: int) -> None:
         with _connect_lock:
             _connect_result = {"status": "error", "error": str(e)}
     finally:
+        # 핫스팟에서 시작했는데 실패하면 핫스팟으로 되돌린다 — 그대로 두면 어디에도 붙지
+        # 않은 기기가 되어, 비밀번호를 고쳐 다시 시도할 길(핫스팟 화면)도 사라진다.
+        if was_ap and not ok:
+            _restore_ap()
         with _connect_lock:
             _connect_in_progress = False
 
 
-def connect_wifi(ssid: str, password: str, delay_seconds: int = CONNECT_DELAY_S) -> None:
-    """Wi-Fi 연결을 백그라운드에서 시작. 즉시 반환."""
+def connect_wifi(ssid: str, password: str, delay_seconds: int = CONNECT_DELAY_S,
+                 release_ap: bool = False) -> None:
+    """Wi-Fi 연결을 백그라운드에서 시작. 즉시 반환.
+
+    `release_ap=True`(블루투스 경로)면 핫스팟을 먼저 내려 다시 검색한 뒤 연결하고,
+    실패하면 핫스팟으로 되돌린다.
+    """
     global _connect_result, _connect_in_progress
     with _connect_lock:
         _connect_in_progress = True
         _connect_result = None
-    t = threading.Thread(target=_do_connect, args=(ssid, password, delay_seconds), daemon=True)
+    t = threading.Thread(target=_do_connect, args=(ssid, password, delay_seconds, release_ap),
+                         daemon=True)
     t.start()
 
 
