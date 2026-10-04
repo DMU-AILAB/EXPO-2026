@@ -782,7 +782,9 @@ pip install -r requirements.txt
 python -m app.db.init_db
 
 # 개발 서버. ★ --workers 금지 (명세 §1.3: 인메모리 하트비트 버퍼 + APScheduler)
-uvicorn app.main:app --reload --port 8000
+# --timeout-graceful-shutdown: 없으면 --reload가 열린 MJPEG/WebSocket 연결이 끝나기를
+# 영원히 기다려("Waiting for connections to close") 코드 변경 후 서버가 멈춘다(실제로 겪음).
+uvicorn app.main:app --reload --port 8000 --timeout-graceful-shutdown 3
 
 # 테스트
 python -m pytest tests/ -v
