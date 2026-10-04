@@ -90,25 +90,41 @@ def _active_connection() -> str:
     return result.stdout.strip()
 
 
-def _home_wifi_connection() -> str:
-    """Find the configured home Wi-Fi profile on fresh Pi images.
+def _home_wifi_candidates() -> list[str]:
+    """홈 Wi-Fi로 돌아갈 프로필 후보 — **최근에 연결했던 순서**.
 
-    NetworkManager profile names are image/site-specific (for example,
-    ``netplan-wlan0-Home_5G``), so the old fixed ``204_WIFI`` name cannot be
-    the only option. An explicit environment variable still wins.
+    프로필 이름은 이미지·현장마다 달라(``netplan-wlan0-Home_5G`` 등) 고정 이름을 쓸 수
+    없다. 예전에는 `nmcli connection show`의 **첫 번째** Wi-Fi 프로필을 골랐는데, 그 순서는
+    활성 연결이 먼저이고 나머지는 이름순이라 핫스팟 모드(홈이 비활성)에서는 이 현장에
+    없는 예전 프로필(``204_WIFI``)이 골려 복귀가 실패했다(실기기). 마지막 연결 시각
+    (TIMESTAMP)으로 정렬한다. 환경 변수로 지정하면 그것만 쓴다.
     """
     if HOME_WIFI_CONNECTION != "204_WIFI":
-        return HOME_WIFI_CONNECTION
+        return [HOME_WIFI_CONNECTION]
 
     result = subprocess.run(
-        ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+        ["nmcli", "-t", "-f", "NAME,TYPE,TIMESTAMP", "connection", "show"],
         capture_output=True, text=True, check=False,
     )
+    found: list[tuple[int, str]] = []
     for line in result.stdout.splitlines():
-        name, separator, connection_type = line.rpartition(":")
-        if separator and connection_type == "802-11-wireless" and name != HOTSPOT_CONNECTION:
-            return name
-    return HOME_WIFI_CONNECTION
+        parts = line.rsplit(":", 2)
+        if len(parts) != 3:
+            continue
+        name, connection_type, stamp = parts
+        name = name.replace("\\:", ":")      # nmcli -t는 이름 속 ':'를 '\:'로 적는다
+        if connection_type != "802-11-wireless" or name == HOTSPOT_CONNECTION:
+            continue
+        try:
+            found.append((int(stamp), name))
+        except ValueError:
+            found.append((0, name))
+    found.sort(reverse=True)
+    return [name for _, name in found] or [HOME_WIFI_CONNECTION]
+
+
+def _home_wifi_connection() -> str:
+    return _home_wifi_candidates()[0]
 
 
 def _service_active() -> bool:
@@ -230,11 +246,17 @@ def toggle_wifi(buzzer: "Buzzer", switching: threading.Event,
     switching.set()
     current = _active_connection()
     switching_to_hotspot = current != HOTSPOT_CONNECTION
-    target = HOTSPOT_CONNECTION if switching_to_hotspot else _home_wifi_connection()
+    # 홈으로 돌아갈 때는 가장 최근 프로필이 실패하면 다음 하나만 더 시도한다 — 실패 한 번에
+    # nmcli가 25초가량 걸려 후보를 다 돌면 버튼 반응이 몇 분씩 늦어진다.
+    targets = [HOTSPOT_CONNECTION] if switching_to_hotspot else _home_wifi_candidates()[:2]
 
-    print(f"[GPIO] Wi-Fi 전환 요청: {current or '(알 수 없음)'} → {target}")
     try:
-        result = subprocess.run(["nmcli", "connection", "up", target], check=False)
+        for target in targets:
+            print(f"[GPIO] Wi-Fi 전환 요청: {current or '(알 수 없음)'} → {target}")
+            result = subprocess.run(["nmcli", "connection", "up", target], check=False)
+            if result.returncode == 0:
+                break
+            print(f"[GPIO] '{target}' 연결 실패 (exit={result.returncode})")
 
         if result.returncode == 0:
             with transition_lock:

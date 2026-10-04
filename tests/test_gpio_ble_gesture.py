@@ -116,3 +116,67 @@ def test_led_ignores_stale_window_on_home_wifi(gc, monkeypatch):
     monkeypatch.setattr(mod, "_service_active", lambda: True)
     monkeypatch.setattr(mod, "_camera_pipeline_active", lambda: True)
     assert _kind(mod) == "home"
+
+
+# ------------------------------------------------------------------ 홈 Wi-Fi 복귀 프로필
+
+class _Run:
+    """subprocess.run 가짜 — nmcli 목록과 `connection up` 결과를 흉내 낸다."""
+    def __init__(self, listing, up_ok):
+        self.listing, self.up_ok, self.ups = listing, up_ok, []
+
+    def __call__(self, cmd, **kw):
+        if cmd[:3] == ["nmcli", "-t", "-f"]:
+            return types.SimpleNamespace(stdout=self.listing, returncode=0)
+        if cmd[:3] == ["nmcli", "connection", "up"]:
+            self.ups.append(cmd[3])
+            return types.SimpleNamespace(stdout="", returncode=0 if cmd[3] in self.up_ok else 4)
+        raise AssertionError(cmd)
+
+
+# 핫스팟 모드에서의 실제 목록 순서(실기기): 활성 AP가 먼저, 나머지는 이름순이라
+# 이 현장에 없는 204_WIFI가 지금 쓰는 enjoy보다 앞선다.
+_LISTING = "\n".join([
+    "VisionGuide-AP:802-11-wireless:1791101766",
+    "204_WIFI:802-11-wireless:1790929857",
+    "204_WIFI_5G:802-11-wireless:1782190734",
+    "enjoy:802-11-wireless:1791101802",
+    "Wired connection 1:802-3-ethernet:0",
+    r"my\:net:802-11-wireless:1",
+])
+
+
+def test_home_candidates_by_last_connected(gc, monkeypatch):
+    mod = gc[0]
+    monkeypatch.setattr(mod.subprocess, "run", _Run(_LISTING, set()))
+    assert mod._home_wifi_candidates() == ["enjoy", "204_WIFI", "204_WIFI_5G", "my:net"]
+
+
+def test_toggle_home_uses_most_recent_profile(gc, monkeypatch):
+    mod = gc[0]
+    import threading
+    run = _Run(_LISTING, {"enjoy"})
+    monkeypatch.setattr(mod.subprocess, "run", run)
+    mod._test_conn["now"] = "VisionGuide-AP"
+    mod.toggle_wifi(None, threading.Event(), {"kind": None, "until": 0.0}, threading.Lock())
+    assert run.ups == ["enjoy"]
+    assert mod._test_beeps[-1] == 1
+
+
+def test_toggle_home_falls_back_once(gc, monkeypatch):
+    mod = gc[0]
+    import threading
+    run = _Run(_LISTING, {"204_WIFI"})            # 최근 프로필이 실패하면 다음 하나만 더
+    monkeypatch.setattr(mod.subprocess, "run", run)
+    mod.toggle_wifi(None, threading.Event(), {"kind": None, "until": 0.0}, threading.Lock())
+    assert run.ups == ["enjoy", "204_WIFI"]
+
+
+def test_toggle_home_gives_up_after_two(gc, monkeypatch):
+    mod = gc[0]
+    import threading
+    run = _Run(_LISTING, set())
+    monkeypatch.setattr(mod.subprocess, "run", run)
+    mod.toggle_wifi(None, threading.Event(), {"kind": None, "until": 0.0}, threading.Lock())
+    assert run.ups == ["enjoy", "204_WIFI"]
+    assert mod._test_beeps[-1] == 3
