@@ -1,7 +1,7 @@
 """기기 Wi-Fi — roi_editor `/api/network/*` 중계 (이미 망에 있는 기기용).
 
 연결을 바꾸면 **그 순간 기기와의 연결이 끊긴다.** 새 망에서 IP가 바뀌어도 하트비트가
-출발 주소로 `device.ip`를 따라가므로(`devices._follow_device_ip`) 다시 붙지만, 새 망에서
+출발 주소로 `device.ip`를 따라가므로(`services/device_address.py`) 다시 붙지만, 새 망에서
 이 서버(`PUBLIC_BASE_URL`)에 닿지 않으면 기기는 대시보드에서 오프라인이 된다.
 
 AP 전환(`/api/network/ap`)은 중계하지 않는다 — 원격에서 누르면 기기가 망에서 사라져

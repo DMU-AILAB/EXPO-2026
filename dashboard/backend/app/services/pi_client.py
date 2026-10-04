@@ -270,6 +270,12 @@ class PiClient:
                                   json={"group_enabled": enabled, "group_priority": priority})
         return res.json()
 
+    async def put_rf_detection(self, rssi_threshold: int) -> dict:
+        """리모컨 감지 임계값(RSSI, 1~255). 낮을수록 먼 거리에서도 반응한다."""
+        res = await self._request("PUT", "/api/rf/detection",
+                                  json={"rssi_threshold": rssi_threshold})
+        return res.json()
+
     # ------------------------------------------------------------------ 통계
 
     async def get_timeseries(self, camera_id: Optional[str] = None,

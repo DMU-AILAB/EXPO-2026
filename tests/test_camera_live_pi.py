@@ -363,3 +363,52 @@ def test_수집_완료_결과가_남는다():
     st = srv.calibration_status()
     assert st["running"] is False
     assert st["result"] == {"candidates": 3, "frames": 120}
+
+
+def _read_mjpeg_frames(sock, seconds):
+    """seconds 동안 소켓에서 받은 완전한 JPEG 개수를 센다."""
+    import time as _t
+    sock.settimeout(0.1)
+    buf, count, end = b"", 0, _t.monotonic() + seconds
+    while _t.monotonic() < end:
+        try:
+            chunk = sock.recv(65536)
+        except OSError:
+            continue
+        if not chunk:
+            break
+        buf += chunk
+        while True:
+            s = buf.find(b"\xff\xd8")
+            e = buf.find(b"\xff\xd9", s + 2) if s >= 0 else -1
+            if s < 0 or e < 0:
+                break
+            count += 1
+            buf = buf[e + 2:]
+    return count
+
+
+def test_스트림은_새_프레임이_있을_때만_보낸다(tmp_path):
+    """회귀: 33ms마다 같은 JPEG을 다시 보내 10fps 카메라가 30fps로 나가며 Wi-Fi를 막았다."""
+    import socket as _socket
+    import numpy as np
+
+    srv = m.MJPEGServer(port=0, recordings_dir=tmp_path)
+    srv.start()
+    try:
+        port = srv._httpd.server_address[1]
+        frame = np.zeros((48, 64, 3), np.uint8)
+        srv.push(frame)
+        sock = _socket.create_connection(("127.0.0.1", port), timeout=2)
+        sock.sendall(b"GET /stream.mjpg HTTP/1.1\r\nHost: x\r\n\r\n")
+
+        assert _read_mjpeg_frames(sock, 0.5) == 1   # 접속 직후 최신 1장, 그 뒤엔 반복 없음
+
+        for _ in range(3):
+            srv.push(frame)
+            import time as _t
+            _t.sleep(0.05)
+        assert _read_mjpeg_frames(sock, 0.5) == 3   # push한 만큼만 나간다
+        sock.close()
+    finally:
+        srv.stop()

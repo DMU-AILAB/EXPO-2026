@@ -5,6 +5,7 @@ import * as api from '../api'
 import DeviceCard from '../components/DeviceCard'
 import { useApi } from '../hooks/useApi'
 import { useEventStream } from '../hooks/useEventStream'
+import { tempTone } from '../utils/temperature'
 
 /** 관제 화면이라 주기적으로 다시 읽는다. 5초면 배지·KPI가 충분히 최신이다. */
 const REFRESH_MS = 5000
@@ -124,7 +125,7 @@ export default function Overview() {
             </div>
           </div>
           <div>
-            <div className="text-[32px] font-black text-slate-900 tracking-tight leading-none">
+            <div className={`text-[32px] font-black tracking-tight leading-none ${avgTemp ? tempTone(avgTemp) : 'text-slate-900'}`}>
               {avgTemp ? `${avgTemp}°C` : '—'}
             </div>
           </div>

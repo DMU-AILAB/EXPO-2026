@@ -109,3 +109,24 @@ def test_put_rf_group_relays_to_pi(client, auth, device):
     assert res.status_code == 200
     assert json.loads(put.calls[0].request.content) == {"group_enabled": True, "group_priority": 2}
     assert res.json()["data"] == {"group_enabled": True, "group_priority": 2}
+
+
+@respx.mock
+def test_put_rf_detection_relays_to_pi(client, auth, device):
+    put = respx.put(f"{PI}/api/rf/detection").mock(return_value=httpx.Response(
+        200, json={"ok": True, "rssi_threshold": 80}))
+    res = client.put(f"/api/devices/{device.id}/rf/detection", headers=auth,
+                     json={"rssi_threshold": 80})
+    assert res.status_code == 200
+    assert json.loads(put.calls[0].request.content) == {"rssi_threshold": 80}
+    assert res.json()["data"] == {"rssi_threshold": 80}
+
+
+@respx.mock
+def test_put_rf_detection_rejects_out_of_range_without_calling_pi(client, auth, device):
+    put = respx.put(f"{PI}/api/rf/detection").mock(return_value=httpx.Response(200, json={}))
+    for bad in (0, 256):
+        res = client.put(f"/api/devices/{device.id}/rf/detection", headers=auth,
+                         json={"rssi_threshold": bad})
+        assert res.status_code == 400   # 명세 §16: 요청 바디 오류는 400 VALIDATION_ERROR
+    assert put.call_count == 0

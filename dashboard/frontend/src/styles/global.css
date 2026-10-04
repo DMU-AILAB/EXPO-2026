@@ -14,3 +14,10 @@
 .stream-cell:fullscreen img {
   object-fit: contain;
 }
+
+/* 전체화면에서는 4:3 고정과 높이 제한을 풀고 이름 표시줄 아래를 영상이 다 채운다 */
+.stream-cell:fullscreen .stream-frame {
+  flex: 1;
+  aspect-ratio: auto;
+  max-height: none;
+}

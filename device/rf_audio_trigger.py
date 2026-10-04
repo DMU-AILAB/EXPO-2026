@@ -46,6 +46,11 @@ class RFConfig:
     group_window_ms: float = 300.0
     group_turn_timeout_sec: float = 60.0
     group_device_id: str = ""
+    # False(기본): 리모컨 신호를 직접 감지한 기기끼리만 군집을 이뤄 재생한다. 같은 LAN의 먼 기기는
+    # 동료의 heard를 받아도 조용히 있는다 — 아무도 못 듣는 곳에서 울리지 않게 한다.
+    # True: 감지하지 못한 기기도 동료의 heard를 받으면 따라 재생한다(수신 감도 차이를 메우는 대신
+    # 멀리 있는 기기까지 울린다).
+    group_follow_peers: bool = False
     # BLE iBeacon — each device advertises so phones can detect proximity.
     ble_enabled: bool = False
     ble_uuid: str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -68,7 +73,7 @@ RADIO_FIELDS = (
     "detection_mode", "rssi_threshold", "min_burst_ms", "rssi_poll_ms",
     "pulse_tolerance", "expected_address", "valid_data_codes",
     "group_enabled", "group_priority", "group_port", "group_window_ms",
-    "group_turn_timeout_sec", "group_device_id",
+    "group_turn_timeout_sec", "group_device_id", "group_follow_peers",
 )
 
 
@@ -262,13 +267,14 @@ class RFAudioTrigger:
             device_id, self.config.group_priority, lambda msg: bus_ref[0].send(msg),
             window_s=self.config.group_window_ms / 1000.0,
             turn_timeout_s=self.config.group_turn_timeout_sec,
-            default_play=self._group_play,
+            default_play=self._group_play if self.config.group_follow_peers else None,
         )
         self.group_bus = self.group_bus_factory(self.group, self.config.group_port)
         bus_ref.append(self.group_bus)
         self.group_bus.start()
         print(f"[RF-GROUP] enabled id={device_id} priority={self.config.group_priority} "
-              f"udp={self.config.group_port}")
+              f"udp={self.config.group_port} window={self.config.group_window_ms:g}ms "
+              f"follow_peers={self.config.group_follow_peers}")
 
     def close(self) -> None:
         self._stop.set()

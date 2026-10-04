@@ -200,3 +200,7 @@ calibration_image_sample_data_*.npy
 # **test2/test3는 학습에 절대 쓰면 안 되는 평가 전용 영상**이라(누수 재발)
 # 저장소에 두지 않는 편이 실수를 줄인다. 원본은 별도로 보관할 것.
 datasets/videos/*.mp4
+
+# Claude Code local settings and lock files
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

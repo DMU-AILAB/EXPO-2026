@@ -10,7 +10,7 @@ Environment=PYTHONUNBUFFERED=1
 # Speaker power is intentionally left on; the service does not toggle USB VBUS.
 WorkingDirectory=/home/__USER__/visionguide
 ExecStartPre=-/usr/bin/amixer -c 2 sset 'PCM' 100%
-ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/camera_live_pi.py --headless --port 8080 --max-fps 10 --camera-config /home/__USER__/visionguide/camera_config.json --roi-config /home/__USER__/visionguide/rois.json --model-variant v10_320 --inference-backend tflite
+ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/camera_live_pi.py --headless --port 8080 --max-fps 10 --camera-config /home/__USER__/visionguide/camera_config.json --roi-config /home/__USER__/visionguide/rois.json --model-variant v10_320 --inference-backend auto --auto-hardware
 Restart=on-failure
 RestartSec=3
 

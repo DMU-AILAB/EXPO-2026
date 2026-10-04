@@ -324,8 +324,10 @@ Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세�
   있으므로 `PiClient(ip, camera.port)`다. 백엔드가 부르는 경로가 Pi에 실재하는지는
   `tests/test_dashboard_pi_routes.py`가 **소스를 읽어** 대조한다(respx 테스트는 흉내 낸 경로가
   실재하는지 모른다 — 과거 사고의 원인).
-- **기기 IP는 하트비트가 따라간다**(`devices._follow_device_ip`). 등록 때 IP가 고정이면 DHCP
-  재할당·Wi-Fi 변경 뒤 모든 중계가 옛 주소로 나간다. 리버스 프록시 뒤에 두면 이 가정이 깨진다.
+- **기기 IP는 하트비트가 따라간다**(`dashboard/backend/app/services/device_address.py`). 등록 때
+  IP가 고정이면 DHCP 재할당·Wi-Fi 변경 뒤 모든 중계가 옛 주소로 나간다. 서버가 그 주소로
+  **제어 키**를 보내므로 사설 IPv4만 받고, 다른 기기가 쓰는 IP로는 바꾸지 않는다.
+  리버스 프록시 뒤에 두면 이 가정(출발 주소 = 기기 주소)이 깨진다.
 - **원격 AP 전환은 중계하지 않는다** — 누르는 순간 기기가 망에서 사라져 원격으로 되돌릴 수 없다.
 - **망에 없는 기기의 첫 연결**은 대시보드로 해결할 수 없는 유일한 지점이다(서버가 닿지 않는다).
   ① 유선(유선 연결 중에는 `auto_ap.sh`가 핫스팟을 켜지 않는다) ② Wi-Fi 사전 저장
@@ -672,7 +674,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `ble_beacon.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
