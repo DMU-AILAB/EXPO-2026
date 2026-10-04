@@ -275,6 +275,22 @@ def test_bluez_objects_build_with_valid_signatures(tmp_path):
     assert json.loads(_call(type(info).ReadValue, info, {}))["product"] == "VisionGuide"
 
 
+def test_advertisement_is_discoverable(tmp_path):
+    # 검색 가능 플래그가 없으면 휴대폰 설정 화면·일부 스캐너가 광고를 숨긴다.
+    pytest.importorskip("dbus_next")
+    prov = bp.Provisioner(FakeNM(), window=tmp_path / "w")
+    loop = asyncio.new_event_loop()
+    try:
+        *_, adv, _ = bp._build_bluez_objects(prov, loop, "VG-abcd")
+    finally:
+        loop.close()
+    props = {p.name: p for p in adv._ServiceInterface__properties} \
+        if hasattr(adv, "_ServiceInterface__properties") else None
+    getter = type(adv).Discoverable.prop_getter if hasattr(type(adv).Discoverable, "prop_getter") else None
+    value = getter(adv) if getter else (props["Discoverable"].prop_getter(adv) if props else None)
+    assert value is True
+
+
 def test_command_write_refused_when_window_closed(tmp_path):
     pytest.importorskip("dbus_next")
     from dbus_next import DBusError

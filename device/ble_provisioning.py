@@ -429,6 +429,13 @@ def _build_bluez_objects(prov: Provisioner, loop: asyncio.AbstractEventLoop, loc
         def LocalName(self) -> "s":
             return local_name
 
+        # "LE General Discoverable" 플래그. 없으면 휴대폰 설정 화면·일부 스캐너가 광고를
+        # 목록에서 뺀다(실기기에서 아무 데도 안 보였다). 플래그 3바이트는 31바이트 계산에
+        # 이미 들어 있다. 이 속성을 모르는 구버전 BlueZ는 무시한다.
+        @dbus_property(access=PropertyAccess.READ)
+        def Discoverable(self) -> "b":
+            return True
+
         @method()
         def Release(self):
             pass
