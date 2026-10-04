@@ -249,3 +249,26 @@ def test_suggest_route_is_not_shadowed_by_scan_id(client, auth):
     res = client.get("/api/scan/suggest", headers=auth)
     assert res.status_code == 200
     assert "subnet" in res.json()["data"]
+
+
+# ------------------------------------------------------------------ 수동 확인(등록 여부)
+
+@respx.mock
+def test_verify_recognizes_registered_device_at_new_ip(client, auth, device):
+    # 블루투스로 Wi-Fi를 바꿔 IP가 달라졌지만 하트비트가 아직 안 온 경우 — device_id로 알아본다.
+    new = "http://192.168.0.77:5000"
+    respx.get(f"{new}/api/version").mock(return_value=httpx.Response(
+        200, json={"version": "1.0.0", "product": "VisionGuide", "registered": True, "device_id": "dev-1"}))
+    respx.get(f"{new}/api/cameras").mock(return_value=httpx.Response(200, json={"cameras": []}))
+    body = client.post("/api/scan/verify", headers=auth, json={"ip": "192.168.0.77"}).json()["data"]
+    assert body["reachable"] and body["already_registered"] is True
+
+
+@respx.mock
+def test_verify_unknown_device_is_not_registered(client, auth, device):
+    new = "http://192.168.0.78:5000"
+    respx.get(f"{new}/api/version").mock(return_value=httpx.Response(
+        200, json={"version": "1.0.0", "product": "VisionGuide", "registered": False, "device_id": None}))
+    respx.get(f"{new}/api/cameras").mock(return_value=httpx.Response(200, json={"cameras": []}))
+    body = client.post("/api/scan/verify", headers=auth, json={"ip": "192.168.0.78"}).json()["data"]
+    assert body["already_registered"] is False

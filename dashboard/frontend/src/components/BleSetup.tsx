@@ -54,7 +54,7 @@ type Phase =
   | { kind: 'scanning' }
   | { kind: 'connecting'; ssid: string }
   | { kind: 'registering'; ip: string }
-  | { kind: 'done'; ip: string }
+  | { kind: 'done'; ip: string; known?: boolean }
 
 const dec = new TextDecoder()
 const enc = new TextEncoder()
@@ -216,15 +216,19 @@ export default function BleSetup({ onRegister }: {
     const t0 = Date.now()
     while (Date.now() - t0 < REACH_TIMEOUT_MS) {
       try {
-        if ((await api.verifyDevice(ip)).reachable) {
-          if (await onRegister(ip)) { setPhase({ kind: 'done', ip }); return }
+        const v = await api.verifyDevice(ip)
+        if (v.reachable) {
+          // 이미 이 대시보드에 등록된 기기(Wi-Fi만 바꾼 경우)는 다시 등록하지 않는다 —
+          // 새로 만들면 "이미 등록된 디바이스"로 거부된다. 주소는 하트비트가 따라간다.
+          if (v.already_registered) { setPhase({ kind: 'done', ip, known: true }); return }
+          if (await onRegister(ip)) { setPhase({ kind: 'done', ip, known: false }); return }
           break
         }
       } catch { /* 아직 안 보인다 */ }
       await sleep(2000)
     }
     setError(`기기는 ${ip}로 연결됐지만 이 서버에서 닿지 않습니다. 같은 네트워크인지 확인한 뒤 위의 수동 추가로 등록하세요.`)
-    setPhase({ kind: 'done', ip })
+    setPhase({ kind: 'done', ip, known: false })
   }
 
   const busy = ['pairing', 'scanning', 'connecting', 'registering'].includes(phase.kind)
@@ -313,7 +317,10 @@ export default function BleSetup({ onRegister }: {
           )}
           {phase.kind === 'done' && !error && (
             <p className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
-              <CheckCircle2 className="w-4 h-4" />{phase.ip}로 연결하고 등록했습니다. 위의 API 키를 확인하세요.
+              <CheckCircle2 className="w-4 h-4" />
+              {phase.known
+                ? `${phase.ip}로 연결했습니다. 이미 등록된 기기라 연결만 갱신했습니다.`
+                : `${phase.ip}로 연결하고 등록했습니다. 위의 API 키를 확인하세요.`}
             </p>
           )}
           {phase.kind === 'done' && (

@@ -177,7 +177,11 @@ async def verify_device(payload: ScanVerifyRequest, db: Session = Depends(get_db
     except HTTPException:
         pass
 
+    # IP만 보면 안 된다 — Wi-Fi를 바꿔(블루투스 페어링 등) 주소가 달라진 기기가 하트비트로
+    # IP가 갱신되기 전이면 "새 기기"로 보인다. 기기가 스스로 밝힌 device_id도 대조한다.
     already = db.query(Device).filter(Device.ip == payload.ip).first() is not None
+    if not already and found.get("device_id"):
+        already = db.query(Device).filter(Device.id == found["device_id"]).first() is not None
     return {
         "data": {
             "reachable": True,
