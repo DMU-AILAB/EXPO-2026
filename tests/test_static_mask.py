@@ -224,3 +224,34 @@ def test_깨진_항목은_건너뛰고_나머지를_읽는다(tmp_path):
         {"bbox": [0.1, 0.2, 0.3, 0.4]},          # cls 없음
     ]}), encoding="utf-8")
     assert len(static_mask.load_mask_file(p)) == 1
+
+
+def test_클러스터_박스는_그_클러스터의_평균이다():
+    """썸네일은 이 박스로 자른다 — 예전엔 클러스터 번호로 탐지 목록을 인덱싱해
+    다른 물체가 썸네일에 찍힐 수 있었다."""
+    c = static_mask.MaskCollector()
+    c.add([det(100, 100, 140, 200)], W, H)
+    c.add([det(300, 50, 320, 90), det(102, 100, 142, 200)], W, H)
+    assert c.cluster_box(0) == pytest.approx([101 / W, 100 / H, 141 / W, 200 / H])
+    assert c.cluster_box(1) == pytest.approx([300 / W, 50 / H, 320 / W, 90 / H])
+
+
+def test_수집_하한과_기본선택_기준():
+    """하한 0은 모델이 내놓는 박스 전부, 기본 선택은 운영 기준에서 나올 수 있는 것만."""
+    assert static_mask.COLLECT_CONF_FLOOR == 0.0
+    assert 0.0 < static_mask.RECOMMEND_MIN_CONF < 0.6
+
+
+def test_한_프레임에_겹친_박스가_여러_개여도_한_번만_센다():
+    """하한 0에서는 같은 물체에 박스가 겹쳐 나온다. 중복으로 세면 hits가 frames를
+    넘고(기기 실측 604/600), 30% 미만인 물체가 후보 기준을 넘는다."""
+    c = static_mask.MaskCollector()
+    for i in range(10):
+        dets = [det(100, 100, 140, 200)]
+        if i < 2:                                       # 20% 프레임에서만 보이는 물체에
+            dets = [det(300, 300, 340, 400), det(302, 301, 341, 402),
+                    det(299, 299, 339, 399)] + dets     # 겹친 박스가 세 개씩
+        c.add(dets, W, H)
+    rows = c.finish()
+    assert all(r["hits"] <= r["frames"] for r in rows)
+    assert [r["bbox"][0] for r in rows] == [pytest.approx(100 / W)]   # 20%짜리는 빠진다
