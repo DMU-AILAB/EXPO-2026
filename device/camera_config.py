@@ -82,6 +82,14 @@ MODEL_VARIANTS = {
         "input_size": 320,
         "label": "white_cane_v11_yolo26n_320 (320, yolo26n 백본 — 비교용)",
     },
+    # v10 데이터에 자체 촬영 영상 14편(869장, train에만)을 더한 계보. 3시드 비교와
+    # INT8 재측정에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다
+    # (리포트 §17). 기기 실측 전이라 기본값은 아직 v10_320이다.
+    "v15_320": {
+        "weights_dir": "runs/white_cane_v15_vid_s2/weights",
+        "input_size": 320,
+        "label": "white_cane_v15_320 (320, 자체 촬영 영상 편입 — 배포 후보)",
+    },
 }
 # 기본값이 오랫동안 v2_640이었다 — 프레임 드랍의 원인이던 640 모델이라
 # camera_config.json 없이 뜬 Pi가 가장 느린 모델로 동작했다. 현행 권장으로 맞춘다.

@@ -162,8 +162,10 @@ datasets/
 | v7~v8 | `v7_yolo26n_*`, `v8_yolo11n_*` | 백본 탐색 (누수된 split) |
 | v9 | `v9_base`, `v9_augA~augE` | 증강 실험 6종 (`datasets/v2`) |
 | v10~v11 | `v10_v8n`, **`v10_nolkc`**, `v11_v11n`, `v11_v26n` | 데이터·백본 비교 |
+| v13~v14 | `v13_ped*`, `v14_base_s*`, `v14_ped*_s*` | pedcctv 비율 스윕·다중 시드 (리포트 §14·§15) |
+| v15 | `v15_vid`, `v15_vid_s1`, **`v15_vid_s2`** | 자체 촬영 영상 편입, 3시드 (리포트 §17) |
 
-**현행 권장은 `v10_nolkc`** (= `MODEL_VARIANTS["v10_320"]`).
+**현행 권장은 `v10_nolkc`** (= `MODEL_VARIANTS["v10_320"]`). 배포 후보로 `v15_vid_s2`(= `MODEL_VARIANTS["v15_320"]`, 리포트 §17)가 등록돼 있다.
 근거는 `docs/model_evaluation_report_v3.md`.
 
 `.gitignore`로 제외되는 것: `weights/best.onnx`, `weights/best_saved_model/`,

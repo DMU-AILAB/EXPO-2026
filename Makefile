@@ -83,7 +83,8 @@ DEPLOY_MODEL_DIRS = \
 	runs/white_cane_v5b_ft320/weights \
 	runs/white_cane_v6_ft320/weights \
 	runs/white_cane_v10_nolkc/weights \
-	runs/white_cane_v11_v26n/weights
+	runs/white_cane_v11_v26n/weights \
+	runs/white_cane_v15_vid_s2/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor check-time setup-ntp restart quick \
         install-edgetpu-py39 setup-pi-python310 install-service \
