@@ -289,3 +289,50 @@ export type WifiConnectResult = {
   /** `network_manager._do_connect`가 남긴 값. */
   result: { status: 'ok'; ip: string | null } | { status: 'error'; error: string } | null
 }
+
+// ---------------------------------------------------------------- 구조물 수집 (일괄·예약)
+
+/** 수집 대상 — 전체 / 모델별 / 선택한 기기. */
+export type CalibrationTargetMode = 'all' | 'model' | 'devices'
+
+/** 카메라 한 대에 수집을 시킨 기록. `ok`는 **시작 요청**의 결과다. */
+export type CalibrationRun = {
+  id?: number
+  batch_id?: string
+  schedule_id?: number | null
+  device_id: string
+  device_name: string
+  camera_id: string
+  model_variant: string | null
+  seconds?: number
+  started_at?: string
+  ok: boolean
+  error: string | null
+}
+
+export type CalibrationFleetDevice = {
+  id: string
+  name: string
+  location: string | null
+  status: DeviceStatus
+  cameras: {
+    id: string
+    port: number
+    model_variant: string | null
+    is_active: boolean
+    last_run: CalibrationRun | null
+  }[]
+}
+
+export type CalibrationSchedule = {
+  id: number
+  name: string
+  days: number[]
+  hour: number
+  minute: number
+  seconds: number
+  target_mode: CalibrationTargetMode
+  targets: string[]
+  is_enabled: boolean
+  display: string
+}

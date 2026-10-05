@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
+from ..services.calibration_service import invalidate_active_cache
 from ..services.pi_client import PiClient
 from .cameras import _get_camera, _get_device, get_current_user_or_query, validate_camera_id
 
@@ -52,13 +53,17 @@ async def calibration_start(device_id: str, payload: CalibrationStartRequest,
                             camera_id: str = Depends(validate_camera_id),
                             db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     client = _camera_port(db, device_id, camera_id)
-    return {"data": await client.calibration_start(payload.seconds), "ok": True}
+    result = await client.calibration_start(payload.seconds)
+    invalidate_active_cache()
+    return {"data": result, "ok": True}
 
 
 @router.post("/{device_id}/cameras/{camera_id}/calibration/cancel")
 async def calibration_cancel(device_id: str, camera_id: str = Depends(validate_camera_id),
                              db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return {"data": await _camera_port(db, device_id, camera_id).calibration_cancel(), "ok": True}
+    result = await _camera_port(db, device_id, camera_id).calibration_cancel()
+    invalidate_active_cache()
+    return {"data": result, "ok": True}
 
 
 # ------------------------------------------------------------------ 구조물 마스크

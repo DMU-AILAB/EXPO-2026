@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ChevronLeft, Activity, Thermometer, Clock, Wifi, Camera, Video,
   MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle,
@@ -1451,7 +1451,12 @@ const TABS: { key: Tab; label: string; icon: typeof MapPin }[] = [
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<Tab>('overview')
+  // `?tab=calibration`처럼 특정 탭으로 바로 들어올 수 있다 — 구조물 수집 화면이 후보 확인을
+  // 이 기기의 "오탐 관리" 탭으로 보낸다.
+  const [searchParams] = useSearchParams()
+  const initialTab = searchParams.get('tab')
+  const [tab, setTab] = useState<Tab>(
+    TABS.some((t) => t.key === initialTab) ? (initialTab as Tab) : 'overview')
 
   const fetcher = useCallback(() => api.getDevice(id!), [id])
   // 개요 탭만 폴링한다 — 편집 중에 폼이 밑에서 갈리면 곤란하다.

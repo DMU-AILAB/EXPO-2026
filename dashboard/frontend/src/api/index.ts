@@ -2,7 +2,8 @@
 
 import { qs, request, requestEnvelope, setToken } from './client'
 import type {
-  AudioFile, CalibrationStatus, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
+  AudioFile, CalibrationFleetDevice, CalibrationRun, CalibrationSchedule,
+  CalibrationStatus, CalibrationTargetMode, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
   FpHotspot, MaskCandidate, MaskHit, NetworkStatus, RecordingClip, RecordingStatus, ReplayStatus,
   ReplayVideo, RfAudioItem, RfState, Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
   WifiConnectResult, WifiNetwork,
@@ -287,3 +288,32 @@ export const connectWifi = (deviceId: string, ssid: string, password: string) =>
 
 export const getWifiConnectResult = (deviceId: string) =>
   request<WifiConnectResult>(`/api/devices/${deviceId}/network/connect-result`)
+
+// ---------------------------------------------------------------- 구조물 수집 (일괄·예약)
+
+type CalibrationTarget = { target_mode: CalibrationTargetMode; targets: string[] }
+type CalibrationScheduleBody = CalibrationTarget & {
+  name: string; days: number[]; hour: number; minute: number; seconds: number; is_enabled: boolean
+}
+
+export const getCalibrationTargets = () =>
+  request<{ devices: CalibrationFleetDevice[]; model_variants: string[] }>('/api/calibration/targets')
+
+/** 지금 수집 중인 기기 → {남은 시간, 카메라 수}. 서버가 기기에 직접 묻는다. */
+export const getActiveCalibrations = () =>
+  request<Record<string, { remaining_sec: number | null; cameras: number }>>('/api/calibration/active')
+
+export const listCalibrationRuns = (limit = 100) =>
+  request<CalibrationRun[]>(`/api/calibration/runs${qs({ limit })}`)
+
+export const listCalibrationSchedules = () =>
+  request<CalibrationSchedule[]>('/api/calibration/schedules')
+
+export const createCalibrationSchedule = (body: CalibrationScheduleBody) =>
+  request<CalibrationSchedule>('/api/calibration/schedules', { method: 'POST', body })
+
+export const updateCalibrationSchedule = (id: number, body: Partial<CalibrationScheduleBody>) =>
+  request<CalibrationSchedule>(`/api/calibration/schedules/${id}`, { method: 'PATCH', body })
+
+export const deleteCalibrationSchedule = (id: number) =>
+  request<void>(`/api/calibration/schedules/${id}`, { method: 'DELETE' })
