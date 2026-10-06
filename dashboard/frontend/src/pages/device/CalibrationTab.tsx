@@ -88,7 +88,7 @@ function CollectPanel({ deviceId, cameraId }: { deviceId: string; cameraId: stri
       )}
       {status.data?.result && !running && (
         <p className="mt-3 text-[11px] text-slate-500">
-          지난 수집이 끝났습니다. 오른쪽 후보 목록에서 적용할 것을 고르세요.
+          지난 수집이 끝났습니다. 오른쪽 후보 목록에서 오탐으로 제외할 것을 고르세요.
         </p>
       )}
     </Panel>
@@ -145,7 +145,7 @@ function MaskPanel({ deviceId, cameraId, className }: { deviceId: string; camera
            actions={
              confirmClear ? (
                <>
-                 <span className="text-[11px] font-semibold text-red-600">후보·적용·기록을 모두 지울까요?</span>
+                 <span className="text-[11px] font-semibold text-red-600">후보·제외·기록을 모두 지울까요?</span>
                  <button className={dangerBtn} disabled={busy}
                          onClick={() => run(() => api.clearMask(deviceId, cameraId), '초기화했습니다.')}>지우기</button>
                  <button className={secondaryBtn} onClick={() => setConfirmClear(false)}>취소</button>
@@ -176,7 +176,7 @@ function MaskPanel({ deviceId, cameraId, className }: { deviceId: string; camera
                       c.cls === 0 ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'}`}>
                       {CLASS_NAME[c.cls] ?? c.cls}
                     </span>
-                    {c.applied && <span className="text-[10px] font-bold text-emerald-600">적용 중</span>}
+                    {c.applied && <span className="text-[10px] font-bold text-emerald-600">제외 중</span>}
                   </div>
                   <p className="mt-1 text-slate-500">탐지 {c.hits}회 · 신뢰도 {c.max_conf.toFixed(2)}</p>
                   <p className="text-slate-400">이동량 {(c.max_disp * 100).toFixed(1)}%</p>
@@ -186,12 +186,17 @@ function MaskPanel({ deviceId, cameraId, className }: { deviceId: string; camera
           </div>
           <div className="mt-4 flex items-center justify-between gap-3">
             <p className="text-[11px] text-slate-400">
+              선택한 후보는 그 자리에 가만히 있는 동안 안내에서 제외됩니다. 움직이면 다시 탐지됩니다.
               사람 후보는 그 자리에 선 진짜 사람을 가릴 수 있어 기본으로 꺼져 있습니다.
             </p>
+            {/* 선택 상태로 **덮어쓴다** — 예전에 제외한 것을 선택 해제하고 누르면 제외가 풀린다. */}
             <button className={primaryBtn} disabled={busy || !dirty}
                     onClick={() => run(() => api.applyMask(deviceId, cameraId, [...selected]),
-                      `${selected.size}개를 적용했습니다. 기기에 몇 초 안에 반영됩니다.`)}>
-              <Shield className="w-3.5 h-3.5" />선택한 {selected.size}개 적용
+                      selected.size === 0
+                        ? '제외를 모두 해제했습니다. 기기에 몇 초 안에 반영됩니다.'
+                        : `${selected.size}개를 오탐으로 제외했습니다. 기기에 몇 초 안에 반영됩니다.`)}>
+              <Shield className="w-3.5 h-3.5" />
+              {selected.size === 0 ? '제외 모두 해제' : `선택한 ${selected.size}개 제외`}
             </button>
           </div>
         </>

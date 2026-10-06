@@ -288,3 +288,113 @@ def test_push_falls_back_to_annotated_when_raw_is_off(tmp_path):
     srv.push(annotated, fps=10.0, raw=np.zeros((60, 80, 3), dtype=np.uint8))
 
     assert written and int(written[0].mean()) == 200, "raw가 꺼졌는데 원본이 저장됐다"
+
+
+# --------------------------------------------------------------------- #
+# 구조물 수집 — 배포 기준값 아래의 탐지까지 모은다
+
+def test_backend_collect_floor_does_not_change_what_the_pipeline_sees(monkeypatch):
+    """하한을 켜도 `predict()`의 반환값은 비트 단위로 같아야 한다 — 탐지·안내 경로가
+    수집 중에 달라지면 그 시간대의 안내가 평소와 다르게 나간다."""
+    rng = np.random.default_rng(0)
+    out = rng.random((1, 6, 2100)).astype(np.float32)       # [1, 4+nc, N] — 정규화 좌표
+    out[0, :4] *= 0.3
+    out[0, 0] += 0.3
+    out[0, 1] += 0.3
+    monkeypatch.setattr(m, "set_input", lambda interp, frame, input_size: None)
+    monkeypatch.setattr(m, "get_output", lambda interp: out)
+
+    be = object.__new__(m._TFLiteBackend)
+    be.conf = m._normalize_conf({"white_cane": 0.6, "person": 0.8})
+    be.input_size = 320
+    be._interp = type("I", (), {"invoke": lambda self: None})()
+    be.collect_floor = None
+    be.last_collect_dets = []
+    frame = np.zeros((480, 640, 3), np.uint8)
+
+    before = be.predict(frame)
+    be.set_collect_floor(0.0)
+    during = be.predict(frame)
+    assert during == before
+    assert len(be.last_collect_dets) > len(during)
+    assert any(d["conf"] < 0.6 for d in be.last_collect_dets)
+    assert be.last_collect_dets is not during                 # 크롭 좌표 보정이 두 번 걸리지 않게
+
+    be.set_collect_floor(None)
+    assert be.predict(frame) == before and be.last_collect_dets == []
+
+
+class _FlickeringStructure(_WalkingScene):
+    """사람이 없는 시간, 구조물 하나를 기준값(0.6)을 사이에 두고 깜빡이며 오탐한다.
+
+    기기 실측과 같은 모양이다 — 휴대폰 거치대가 INT8 단계값 0.59 ↔ 0.675를 오갔고,
+    배포 기준값으로 모으던 시절에는 3,001프레임 수집에서 후보가 0개였다.
+    """
+
+    BOX = [24, 268, 176, 470]
+
+    def __init__(self, frames: int) -> None:
+        super().__init__(frames)
+        self.collect_floor = None
+        self.last_collect_dets: list = []
+
+    def read(self):
+        time.sleep(0.02)                         # 수집 마감(실시간)이 프레임 중에 오도록
+        return super().read()
+
+    def set_collect_floor(self, floor):
+        self.collect_floor = floor
+
+    def predict(self, frame):
+        self.predict_calls += 1
+        conf = 0.675 if self.predict_calls % 4 == 0 else 0.59    # 기준 이상은 25%뿐
+        raw = [{"bbox": list(self.BOX), "conf": conf, "class": 0, "label": "white_cane"}]
+        if self.collect_floor is not None:
+            self.last_collect_dets = [dict(d) for d in raw if d["conf"] >= self.collect_floor]
+        return [d for d in raw if d["conf"] > 0.6]
+
+
+def test_calibration_collects_a_structure_that_flickers_around_the_threshold(
+        tmp_path, monkeypatch, thread_exceptions):
+    import static_mask
+    scene = _FlickeringStructure(frames=120)
+    monkeypatch.setattr(m, "build_camera",
+                        lambda source, backend="auto", capture_preset="auto", tag="": scene)
+    monkeypatch.setattr(m, "build_backend",
+                        lambda conf, prefer="auto", weights_dir=None, input_size=640: scene)
+    original_init = m.MJPEGServer.__init__
+
+    def init_and_calibrate(self, *a, **kw):
+        original_init(self, *a, **kw)
+        self.start_calibration(1.0)              # 파이프라인이 뜨자마자 1초 수집
+
+    monkeypatch.setattr(m.MJPEGServer, "__init__", init_and_calibrate)
+    monkeypatch.chdir(tmp_path)                  # 녹화 폴더가 tmp 아래에 생기게
+    monkeypatch.setattr(m, "_BASE", tmp_path)    # 수집 썸네일(`_BASE/recordings/<tag>/calib`)도
+
+    db = str(tmp_path / "traffic.db")
+    shared = m.SharedResources(
+        audio_player=None, status_led=None,
+        led_heartbeat={"t": time.time()}, stop_event=threading.Event(),
+        announcements=m.AnnouncementRouter(None, m.log_event, outbox=m.queue_event),
+    )
+    profile = cc.CameraProfile(id="camC", source="C", port=18180, roi_config="",
+                               traffic_db=db, inference_backend="tflite")
+    pipe = m.CameraPipeline(profile, shared, base_conf=0.6, headless=True,
+                            disable_traffic_count=True)
+    pipe.start()
+    deadline = time.time() + 20
+    while pipe.is_alive() and time.time() < deadline:
+        time.sleep(0.05)
+    pipe.stop(timeout=5.0)
+
+    assert not thread_exceptions
+    rows = static_mask.read_candidates(db)
+    assert len(rows) == 1, "기준값 근처에서 깜빡이는 구조물이 후보에서 빠졌다"
+    assert rows[0]["cls"] == 0 and rows[0]["max_conf"] == pytest.approx(0.675)
+    assert rows[0]["hits"] == rows[0]["frames"]  # 하한 0이라 모든 프레임에서 잡힌다
+    assert scene.collect_floor is None           # 수집이 끝나면 하한을 끈다
+    thumbs = list((tmp_path / "recordings").rglob(rows[0]["thumb"] or "<none>"))
+    assert thumbs, "후보 썸네일이 저장되지 않았다"
+    crop = __import__("cv2").imread(str(thumbs[0]))
+    assert crop is not None and crop.shape[0] > 150    # 구조물 박스(높이 202px) 자리에서 잘렸다

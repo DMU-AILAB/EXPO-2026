@@ -351,7 +351,10 @@ async def get_static_mask_candidates(camera: str | None = None):
             for b in active.boxes)
         # 지팡이는 적용해도 위험이 거의 없지만(트리거는 지팡이 트랙만 순회) 사람은
         # 그 자리의 진짜 사람을 가릴 수 있다 — UI가 기본 선택을 다르게 하도록 알린다.
-        r["recommend"] = (r["cls"] == 0)
+        # 지팡이만 기본 선택하되, 운영 기준에서 나올 리 없는 허상 박스는 뺀다
+        # (`static_mask.RECOMMEND_MIN_CONF` — 수집 하한이 0이라 그런 것도 후보에 오른다).
+        r["recommend"] = (r["cls"] == 0
+                          and (r.get("max_conf") or 0.0) >= _static_mask.RECOMMEND_MIN_CONF)
     return {"candidates": rows}
 
 
