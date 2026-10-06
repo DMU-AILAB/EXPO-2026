@@ -1103,6 +1103,7 @@ const CAPTURE_PRESETS = [
 ]
 const MODEL_VARIANTS = [
   'v2_640', 'v3_320', 'v4_320', 'v5b_320', 'v6_320', 'v10_320', 'v11_yolo26n_320',
+  'v15_320',
 ]
 
 function camFormOf(cam?: CameraType) {

@@ -23,6 +23,7 @@ class ModelVariant(str, Enum):
     V6_320 = "v6_320"
     V10_320 = "v10_320"
     V11_YOLO26N_320 = "v11_yolo26n_320"
+    V15_320 = "v15_320"
 
 class CameraUpdate(BaseModel):
     capture_preset: Optional[CapturePreset] = None
