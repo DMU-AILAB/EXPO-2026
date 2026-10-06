@@ -13,6 +13,34 @@
 PC 방화벽에서 TCP 8000을 허용하고, Pi와 PC가 같은 LAN 또는 서로 접근 가능한
 VPN에 있어야 한다. `localhost`는 Pi가 PC를 가리키는 주소로 사용할 수 없다.
 
+### WSL2에서 실행할 때
+
+WSL2 기본(NAT) 모드에서는 Pi가 WSL 안의 백엔드에 닿지 못한다. Windows의
+`%USERPROFILE%\.wslconfig`에 다음을 넣고 `wsl --shutdown` 후 다시 연다.
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+관리자 PowerShell에서 백엔드 포트의 인바운드를 연다(Windows 방화벽 + Hyper-V 방화벽).
+
+```powershell
+New-NetFirewallRule -DisplayName "VisionGuide 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+New-NetFirewallHyperVRule -Name VisionGuide8000 -DisplayName "VisionGuide 8000" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8000
+```
+
+**mirrored 모드에서는 주소가 둘로 갈린다.** Pi는 PC의 LAN IP로 들어오지만,
+같은 PC의 Windows 브라우저는 자기 LAN IP로 WSL에 닿지 못하고 `localhost`로만
+닿는다. 그래서
+
+- 백엔드 `.env`의 `PUBLIC_BASE_URL`(Pi가 쓰는 주소) = `http://<pc-lan-ip>:8000`
+- 프론트 `.env`의 `VITE_API_BASE`(이 PC 브라우저가 쓰는 주소) = `http://localhost:8000`
+
+`VITE_API_BASE`를 LAN IP로 두면 로그인에서 "Failed to fetch"가 난다. 이 설정이면
+대시보드는 그 PC의 브라우저에서만 쓸 수 있다(다른 PC에서 쓰려면 LAN IP로 빌드).
+블루투스 페어링(Web Bluetooth)도 `localhost` 또는 HTTPS에서만 동작하므로 같은 제약이다.
+
 ## 백엔드 설정
 
 `dashboard/backend/.env.example`을 `.env`로 복사하고 PC의 LAN 주소와 운영용
@@ -74,6 +102,22 @@ PC와 같은 네트워크에 연결된 Pi는 대시보드의 Pi 검색 화면에
 - `PATCH /api/devices/me/heartbeat`
 
 API 키는 등록 성공 후 한 번만 화면에 표시된다.
+
+## Pi의 IP가 바뀌었을 때 (새 Wi-Fi, DHCP 임대 갱신)
+
+서버는 DB의 `Device.ip`로 Pi를 호출한다. Pi가 새 IP를 받으면 하트비트가 온 **출발지 주소**로
+이 값을 자동으로 갱신한다(`app/services/device_address.py`). 새 Wi-Fi로 옮기고 Pi가 하트비트를
+보내기 시작하면 별도 조작 없이 스트림과 설정 호출이 이어진다.
+
+- 하트비트 간격(약 15초) 안에 따라간다. 그 사이에는 대시보드에서 오프라인으로 보일 수 있다.
+- 사설 대역(10/8, 172.16/12, 192.168/16)과 링크 로컬(169.254/16)의 IPv4만 받는다.
+  서버가 이 주소로 제어 키(`X-Device-Key`)를 보내기 때문이다.
+- 다른 기기가 이미 쓰는 IP면 바꾸지 않고 서버 로그에 경고를 남긴다(낡은 항목이 주소를 쥐고 있는 경우).
+- `X-Forwarded-For`는 믿지 않는다. 서버 앞에 리버스 프록시를 두면 프록시 주소가 보여서 동작하지 않는다.
+
+이 기능은 **Pi → 서버** 방향이 살아 있어야 한다. 새 PC로 옮겼다면 Pi의 `server_url`
+(`device_identity.json`)이 여전히 이전 PC를 가리키므로, 새 PC의 `PUBLIC_BASE_URL`로 Pi를
+다시 등록해야 하트비트가 도착한다.
 
 ## 확인 순서
 

@@ -35,6 +35,50 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 
 ---
 
+## 대시보드 기준 온보딩 — 어떤 방법을 쓸까
+
+중앙 대시보드는 **같은 망에 있는 기기만** 다룰 수 있다. 처음 켠 기기는 아직 그 망에
+없으므로, 먼저 아래 중 하나로 망에 올린 뒤 대시보드의 "디바이스 탐색"에서 등록한다.
+
+| 방법 | 대시보드 한 화면에서 끝나는가 | 필요한 것 | 비고 |
+|---|---|---|---|
+| **유선(랜선)** | 등록까지는 예 | 랜선 | 가장 간단. 유선 연결 중에는 AP를 켜지 않는다(`auto_ap.sh`). Wi-Fi는 등록 후 기기 상세 → 네트워크 탭 |
+| **Wi-Fi 미리 저장** | 예 | 설치 전 Raspberry Pi Imager/`nmcli` | 현장 SSID를 알고 있을 때 |
+| **블루투스** | 예 | Wi-Fi 버튼 3초 + Chrome/Edge(`localhost` 또는 HTTPS) | 기기를 만질 수 있는 사람만(버튼 창 3분). iPhone Safari 미지원 |
+| 핫스팟(이 문서의 기본 흐름) | 아니요(폰으로 기기 화면) | 휴대폰 | 대시보드 서버가 없는 현장의 비상 경로 |
+
+이미 망에 있는 기기의 Wi-Fi 변경은 대시보드 네트워크 탭에서 한다. 원격 **AP 전환은
+대시보드에 없다** — 누르는 순간 기기가 망에서 사라져 원격으로 되돌릴 수 없다.
+
+---
+
+## 블루투스 페어링 (대시보드에서)
+
+1. 기기의 **Wi-Fi 버튼을 3초** 누른다 → 부저가 길게 한 번 울리고 LED가 0.5초 간격으로
+   고르게 깜빡인다(3분간 페어링 창). 짧게 누르면 지금처럼 홈 Wi-Fi ↔ 핫스팟 전환이다.
+   **홈 Wi-Fi에 연결된 상태면 창이 열리지 않고 짧게 3번 울린다** — 연결된 기기는 광고하지
+   않으므로 "켜졌다"는 신호를 주지 않는다. 먼저 짧게 눌러 핫스팟으로 바꾼 뒤 3초 누른다.
+2. 대시보드를 띄운 PC의 **Chrome/Edge에서 `http://localhost:5173`** → 디바이스 탐색 →
+   "블루투스로 설정" → 주변 기기 찾기 → `VG-xxxx` 선택.
+3. Wi-Fi를 고르고 비밀번호를 넣는다 → 기기가 연결되면 새 IP를 알려주고, 대시보드가
+   그 IP로 **등록(신원 주입)까지** 한다. 성공하면 창이 바로 닫힌다.
+
+| 증상 | 원인 |
+|---|---|
+| 기기 목록에 `VG-xxxx`가 없다 | 창이 안 열렸거나(3분 경과, LED가 0.5초 점멸이 아님) 기기가 홈 Wi-Fi에 연결돼 있다 |
+| "블루투스를 지원하지 않습니다" | iPhone Safari, 또는 `localhost`·HTTPS가 아닌 주소로 연 대시보드 |
+| 연결은 됐는데 "서버에서 닿지 않습니다" | 기기가 붙은 Wi-Fi가 대시보드 PC와 다른 망이다 |
+| "기기가 요청을 거절했습니다"(GATT operation not permitted) | 창이 닫혔다 — 버튼 3초로 다시 열고 같은 버튼을 다시 누른다. 명령을 보낼 때마다 창이 3분 연장된다 |
+| Wi-Fi 목록이 비거나 원하는 네트워크가 없다 | 숨김 네트워크 등 — SSID를 직접 입력한다. 핫스팟 중에는 검색할 때 핫스팟이 몇 초 꺼졌다 켜진다(정상) |
+| 브라우저 목록에 안 보이는데 기기는 광고 중인지 모르겠다 | 휴대폰 기본 설정 화면은 이런 BLE 기기를 잘 안 보여준다 — **nRF Connect** 앱의 Scanner로 `VG-xxxx`를 확인한다 |
+
+서비스: `visionguide-ble`(`device/ble_provisioning.py`). 테스트용으로 버튼 없이 창을 열려면
+Pi에서 `python ~/visionguide/ble_provisioning.py --open-window 180`(root 서비스가 만든 창 파일이
+있으면 같은 사용자 권한으로 실행). BLE 구간에는 앱 수준 암호화가 없으니 근처에 낯선
+사람이 없을 때 설정한다.
+
+---
+
 ## 구성 요소
 
 | 파일 | 역할 |
@@ -47,6 +91,8 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 | `deploy/visionguide-network.sudoers` | ailab 유저가 nmcli/iptables를 NOPASSWD로 실행하는 sudoers 규칙 |
 | `deploy/visionguide-avahi.service` | Avahi mDNS 광고 — `raspberrypi.local:5000` 자동 노출 |
 | `discover.py` | PC에서 실행 — 서브넷 전체를 스캔해 VisionGuide Pi URL 탐색 |
+| `device/ble_provisioning.py` + `deploy/visionguide-ble.service` | 블루투스 페어링(버튼 3초 창) |
+| `dashboard/frontend/src/components/BleSetup.tsx` | 대시보드의 Web Bluetooth 화면 |
 
 ---
 
@@ -62,6 +108,7 @@ Pi가 처음 켜지거나 저장된 Wi-Fi가 없는 환경에서는 자동으로
 wlan0 연결 상태 확인
   ├─ 연결됨(station) → 아무것도 하지 않음
   ├─ 이미 VisionGuide-AP → iptables + dnsmasq 재적용
+  ├─ 연결 없음 + 유선(eth0) 연결됨 → AP를 켜지 않음(대시보드가 유선으로 닿는다)
   └─ 연결 없음 → nmcli connection up VisionGuide-AP
                   → iptables HTTP(80→5000) 리다이렉트 설정
                   → dnsmasq에 captive conf 작성 (모든 DNS → 192.168.4.1)

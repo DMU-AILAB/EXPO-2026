@@ -2,8 +2,10 @@
 
 import { qs, request, requestEnvelope, setToken } from './client'
 import type {
-  AudioFile, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
-  RfAudioItem, RfState, Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
+  AudioFile, CalibrationStatus, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
+  FpHotspot, MaskCandidate, MaskHit, NetworkStatus, RecordingClip, RecordingStatus, ReplayStatus,
+  ReplayVideo, RfAudioItem, RfState, Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
+  WifiConnectResult, WifiNetwork,
 } from '../types'
 
 // ---------------------------------------------------------------- 인증
@@ -155,6 +157,12 @@ export const setRfGroup = (deviceId: string, groupEnabled: boolean, groupPriorit
     method: 'PUT', body: { group_enabled: groupEnabled, group_priority: groupPriority },
   })
 
+/** 리모컨 감지 임계값(RSSI 1~255). 낮을수록 먼 거리에서도 반응하지만 오반응 위험이 커진다. */
+export const setRfDetection = (deviceId: string, rssiThreshold: number) =>
+  request<{ rssi_threshold: number }>(`/api/devices/${deviceId}/rf/detection`, {
+    method: 'PUT', body: { rssi_threshold: rssiThreshold },
+  })
+
 /** group_enabled인 모든 기기를 priority 오름차순으로 반환. 상대적 순위 계산용. */
 export const getGroupOverview = () =>
   request<{ id: string; name: string; priority: number; group_enabled: boolean; online: boolean }[]>(
@@ -180,8 +188,102 @@ export const deleteSchedule = (deviceId: string, id: number) =>
 export const startScan = (subnet: string, port = 5000) =>
   request<{ scan_id: string; status: string }>('/api/scan/network', { method: 'POST', body: { subnet, port } })
 
+/** 서버 주소(`PUBLIC_BASE_URL`)가 속한 /24 — 탐색 서브넷의 기본값. */
+export const getSuggestedSubnet = () => request<{ subnet: string | null }>('/api/scan/suggest')
+
 export const getScan = (scanId: string) => request<ScanResult>(`/api/scan/${scanId}`)
 
 export const verifyDevice = (ip: string, port = 5000) =>
   request<{ reachable: boolean; version?: string | null; camera_count?: number | null; already_registered?: boolean }>(
     '/api/scan/verify', { method: 'POST', body: { ip, port } })
+
+// ---------------------------------------------------------------- 녹화 (카메라 포트 중계)
+
+const camBase = (deviceId: string, cameraId: string) => `/api/devices/${deviceId}/cameras/${cameraId}`
+
+export const getRecordingStatus = (deviceId: string, cameraId: string) =>
+  request<RecordingStatus>(`${camBase(deviceId, cameraId)}/recording`)
+
+/** `raw`=학습용 촬영(오버레이 없는 원본). */
+export const startRecording = (deviceId: string, cameraId: string, raw = false) =>
+  request<{ ok: boolean; clip_id?: string }>(
+    `${camBase(deviceId, cameraId)}/recording/start${qs({ raw: raw || undefined })}`, { method: 'POST' })
+
+export const stopRecording = (deviceId: string, cameraId: string) =>
+  request<{ ok: boolean; clip_id?: string; duration_sec?: number }>(
+    `${camBase(deviceId, cameraId)}/recording/stop`, { method: 'POST' })
+
+export const listRecordings = (deviceId: string, cameraId: string) =>
+  request<RecordingClip[]>(`${camBase(deviceId, cameraId)}/recording/clips`)
+
+// ---------------------------------------------------------------- 검증 재생
+
+export const listReplayVideos = (deviceId: string) =>
+  request<ReplayVideo[]>(`/api/devices/${deviceId}/replay/videos`)
+
+export const startReplay = (deviceId: string, body: {
+  video: string; conf?: number; model_variant?: string; require_person?: boolean
+  speed?: number; loop?: boolean; debug_gates?: boolean
+}) => request<{ ok: boolean; video: string; rois: number }>(
+  `/api/devices/${deviceId}/replay/start`, { method: 'POST', body })
+
+/** `paused`를 비우면 토글. */
+export const pauseReplay = (deviceId: string, paused?: boolean) =>
+  request<{ paused: boolean }>(`/api/devices/${deviceId}/replay/pause`,
+    { method: 'POST', body: { paused: paused ?? null } })
+
+export const stepReplay = (deviceId: string) =>
+  request<{ ok: boolean }>(`/api/devices/${deviceId}/replay/step`, { method: 'POST' })
+
+export const stopReplay = (deviceId: string) =>
+  request<{ ok: boolean }>(`/api/devices/${deviceId}/replay/stop`, { method: 'POST' })
+
+export const getReplayStatus = (deviceId: string) =>
+  request<ReplayStatus>(`/api/devices/${deviceId}/replay/status`)
+
+// ---------------------------------------------------------------- 오탐 관리
+
+export const getCalibration = (deviceId: string, cameraId: string) =>
+  request<CalibrationStatus>(`${camBase(deviceId, cameraId)}/calibration`)
+
+export const startCalibration = (deviceId: string, cameraId: string, seconds: number) =>
+  request<{ ok: boolean; error?: string }>(`${camBase(deviceId, cameraId)}/calibration/start`,
+    { method: 'POST', body: { seconds } })
+
+export const cancelCalibration = (deviceId: string, cameraId: string) =>
+  request<{ ok: boolean }>(`${camBase(deviceId, cameraId)}/calibration/cancel`, { method: 'POST' })
+
+export const listMaskCandidates = (deviceId: string, cameraId: string) =>
+  request<MaskCandidate[]>(`${camBase(deviceId, cameraId)}/static-mask`)
+
+/** **선택한 것만 남는다** — 빈 목록이면 마스크를 모두 끈다. */
+export const applyMask = (deviceId: string, cameraId: string, ids: number[]) =>
+  request<{ ok: boolean; applied: number }>(`${camBase(deviceId, cameraId)}/static-mask`,
+    { method: 'PUT', body: { ids } })
+
+export const clearMask = (deviceId: string, cameraId: string) =>
+  request<{ ok: boolean }>(`${camBase(deviceId, cameraId)}/static-mask`, { method: 'DELETE' })
+
+export const getMaskHits = (deviceId: string, cameraId: string) =>
+  request<MaskHit[]>(`${camBase(deviceId, cameraId)}/static-mask/hits`)
+
+export const listFpHotspots = (deviceId: string, cameraId: string, minCount = 30) =>
+  request<FpHotspot[]>(`${camBase(deviceId, cameraId)}/fp-hotspots${qs({ min_count: minCount })}`)
+
+export const clearFpHotspots = (deviceId: string, cameraId: string) =>
+  request<{ ok: boolean }>(`${camBase(deviceId, cameraId)}/fp-hotspots`, { method: 'DELETE' })
+
+// ---------------------------------------------------------------- 네트워크
+
+export const getNetwork = (deviceId: string) =>
+  request<NetworkStatus>(`/api/devices/${deviceId}/network`)
+
+export const scanWifi = (deviceId: string) =>
+  request<WifiNetwork[]>(`/api/devices/${deviceId}/network/scan`)
+
+export const connectWifi = (deviceId: string, ssid: string, password: string) =>
+  request<{ ok: boolean; delay_seconds: number }>(`/api/devices/${deviceId}/network/connect`,
+    { method: 'POST', body: { ssid, password } })
+
+export const getWifiConnectResult = (deviceId: string) =>
+  request<WifiConnectResult>(`/api/devices/${deviceId}/network/connect-result`)

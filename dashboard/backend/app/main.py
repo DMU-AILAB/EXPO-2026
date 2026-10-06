@@ -7,6 +7,7 @@ import logging
 from .config import settings
 from .errors import register_error_handlers
 from .routers import auth, devices, cameras, rois, events, ws, stats, audio, schedules, scan, rf
+from .routers import recording, replay, calibration, network
 from .services.heartbeat_service import bulk_flush_heartbeats
 from .services.monitor_service import broadcast_camera_alerts, sweep_offline_devices
 from .services.foot_traffic_puller import PULL_INTERVAL_SEC, pull_once
@@ -89,6 +90,10 @@ app.include_router(schedules.router)
 app.include_router(scan.router)
 app.include_router(rf.router)
 app.include_router(rf.group_router)
+app.include_router(recording.router)
+app.include_router(replay.router)
+app.include_router(calibration.router)
+app.include_router(network.router)
 
 @app.get("/")
 def read_root():

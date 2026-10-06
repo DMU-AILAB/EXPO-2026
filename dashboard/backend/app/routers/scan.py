@@ -129,6 +129,30 @@ async def scan_network(payload: ScanNetworkRequest, background_tasks: Background
     return {"data": {"scan_id": scan_id, "status": "running"}, "ok": True}
 
 
+def suggest_subnet(public_base_url: str) -> Optional[str]:
+    """서버 자신의 주소(`PUBLIC_BASE_URL`)가 속한 /24 대역. 사설 IPv4가 아니면 None.
+
+    기기는 이 주소로 서버에 보고하므로 같은 망에 있을 가능성이 가장 높다 — 운영자가
+    대역을 매번 손으로 맞추지 않게 탐색 화면의 기본값으로 쓴다.
+    """
+    from urllib.parse import urlsplit
+    host = urlsplit(public_base_url).hostname or ""
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if addr.version != 4 or not addr.is_private or addr.is_loopback:
+        return None
+    return str(ipaddress.ip_network(f"{addr}/24", strict=False))
+
+
+# ★ "/{scan_id}"보다 먼저 등록해야 한다 — 뒤에 두면 "suggest"가 scan_id로 잡힌다.
+@router.get("/suggest")
+async def get_suggested_subnet(current_user=Depends(get_current_user)):
+    from ..config import settings
+    return {"data": {"subnet": suggest_subnet(settings.public_base_url)}, "ok": True}
+
+
 @router.get("/{scan_id}")
 async def get_scan_status(scan_id: str, current_user=Depends(get_current_user)):
     result = _scan_results.get(scan_id)
@@ -153,7 +177,11 @@ async def verify_device(payload: ScanVerifyRequest, db: Session = Depends(get_db
     except HTTPException:
         pass
 
+    # IP만 보면 안 된다 — Wi-Fi를 바꿔(블루투스 페어링 등) 주소가 달라진 기기가 하트비트로
+    # IP가 갱신되기 전이면 "새 기기"로 보인다. 기기가 스스로 밝힌 device_id도 대조한다.
     already = db.query(Device).filter(Device.ip == payload.ip).first() is not None
+    if not already and found.get("device_id"):
+        already = db.query(Device).filter(Device.id == found["device_id"]).first() is not None
     return {
         "data": {
             "reachable": True,

@@ -33,3 +33,4 @@ python-multipart>=0.0.6  # 오디오 업로드(/api/audio/upload)용. make deps-
 #   tflite_runtime==2.5.0.post1  (Coral 공식, libedgetpu v16.0 전용 호환)
 #   numpy<2                      (tflite_runtime 2.5.0 은 NumPy 1.x 로 빌드됨)
 #   opencv-python-headless>=4.8.0
+dbus-next>=0.2.3     # BLE Wi-Fi 페어링(ble_provisioning.py) — 순수 파이썬, 네이티브 빌드 없음

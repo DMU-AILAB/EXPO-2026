@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models.audio import AudioDeployment
-from ..models.camera import Device
+from ..models.device import Device
 from ..services.pi_client import PiClient
 from .cameras import _get_device, ensure_audio_on_pi
 
@@ -97,6 +97,20 @@ async def update_rf_group(device_id: str, body: RfGroupUpdate, db: Session = Dep
     result = await PiClient(device.ip).put_rf_group(body.group_enabled, body.group_priority)
     return {"data": {"group_enabled": result.get("group_enabled", body.group_enabled),
                      "group_priority": result.get("group_priority", body.group_priority)},
+            "ok": True}
+
+
+class RfDetectionUpdate(BaseModel):
+    rssi_threshold: int = Field(ge=1, le=255)
+
+
+@router.put("/{device_id}/rf/detection", response_model=dict)
+async def update_rf_detection(device_id: str, body: RfDetectionUpdate, db: Session = Depends(get_db),
+                              current_user=Depends(get_current_user)):
+    """리모컨 감지 임계값(RSSI). 낮을수록 먼 거리에서도 반응하지만 오반응 위험이 커진다."""
+    device = _get_device(db, device_id)
+    result = await PiClient(device.ip).put_rf_detection(body.rssi_threshold)
+    return {"data": {"rssi_threshold": result.get("rssi_threshold", body.rssi_threshold)},
             "ok": True}
 
 

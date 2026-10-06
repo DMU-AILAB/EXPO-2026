@@ -20,6 +20,8 @@ camera_config.json
 rois.json
 rois.*.json
 device_identity.json
+# BLE 페어링 창(gpio_controls ↔ ble_provisioning) — Pi 로컬 런타임 파일
+ble_window.json
 device_pairing_token
 
 # ★ 기기 신원 — **api_key가 평문으로 들어 있다.** roi_editor를 로컬에서 띄우고
@@ -198,3 +200,7 @@ calibration_image_sample_data_*.npy
 # **test2/test3는 학습에 절대 쓰면 안 되는 평가 전용 영상**이라(누수 재발)
 # 저장소에 두지 않는 편이 실수를 줄인다. 원본은 별도로 보관할 것.
 datasets/videos/*.mp4
+
+# Claude Code local settings and lock files
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

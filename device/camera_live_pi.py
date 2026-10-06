@@ -32,6 +32,7 @@ import json
 import platform
 import re
 import signal
+import socket
 import struct
 import subprocess
 import threading
@@ -61,7 +62,8 @@ import cv2
 import numpy as np
 
 from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
-                           load_camera_config, validate_camera_config)
+                           load_camera_config, validate_camera_config,
+                           adapt_profiles_to_hardware, coral_present)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 import static_mask as _static_mask
 # 게이트 순서·상수·연관 로직의 단일 출처. 배포/평가/재생검증이 같은 것을 써야 한다.
@@ -848,6 +850,13 @@ def _route_recording(method: str, path: str) -> tuple[str, str] | None:
 
 # ── MJPEG HTTP 스트리밍 서버 ───────────────────────────────────────
 
+# 스트림 소켓 송신 버퍼 상한. 기본값은 커널 자동 조정(수 MB)이라 Wi-Fi가 밀리면 옛 프레임이
+# 수십 장 쌓여 화면이 몇 초씩 늦어진다. 리눅스는 이 값을 2배로 잡으므로 실효 128KB, 프레임
+# 30~50KB 기준 2~4장이다. 더 줄이면 RTT가 긴 링크(실측 최대 200ms)에서 처리량이
+# 프레임 생산량(카메라당 ~0.5MB/s)을 밑돌게 된다.
+_STREAM_SNDBUF = 64 * 1024
+
+
 class MJPEGServer:
     """스레드 안전 MJPEG 스트리밍 서버. 녹화 제어(`/recording/*`)도 같은 포트에서
     처리한다 — 브라우저가 이미 이 포트로 `/stream.mjpg`에 직접 접속하는 기존 구조와
@@ -856,9 +865,11 @@ class MJPEGServer:
     def __init__(self, port: int = 8080, recordings_dir: Path | None = None) -> None:
         self._port  = port
         self._jpeg: bytes = b""
+        self._seq = 0  # push()마다 증가 — 스트림 핸들러가 같은 프레임을 다시 보내지 않게 한다
         self._frame_shape: tuple[int, int] | None = None
         self._fps_samples: list[float] = []
         self._lock  = threading.Lock()
+        self._frame_cond = threading.Condition(self._lock)
         self._httpd: ThreadingHTTPServer | None = None
         # 구조물 수집(새벽 캘리브레이션) 상태. 탐지 루프가 매 프레임 확인하고
         # 여기에 누적한다 — 서버는 시작/취소 신호와 진행 상황만 들고 있다.
@@ -925,6 +936,8 @@ class MJPEGServer:
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         with self._lock:
             self._jpeg = buf.tobytes()
+            self._seq += 1
+            self._frame_cond.notify_all()
             self._frame_shape = frame.shape[:2]
             if fps and fps > 0:
                 self._fps_samples.append(fps)
@@ -1029,20 +1042,32 @@ class MJPEGServer:
                     "Content-Type",
                     "multipart/x-mixed-replace; boundary=frame",
                 )
+                self.send_header("Cache-Control", "no-cache, no-store")
                 self.end_headers()
                 try:
+                    self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, _STREAM_SNDBUF)
+                except OSError:
+                    pass
+                # 새 프레임이 들어왔을 때만 보낸다. 예전엔 33ms마다 최신 JPEG을 무조건 다시
+                # 보내서, 10fps 카메라가 30fps(같은 프레임 3번)로 나가 Wi-Fi 대역폭의 2/3를
+                # 중복 전송에 썼고 그만큼 지연이 쌓였다(실측: 89번 두 카메라 합계 2.4MB/s).
+                last_seq = -1
+                try:
                     while True:
-                        with srv._lock:
-                            data = srv._jpeg
-                        if data:
-                            self.wfile.write(
-                                b"--frame\r\n"
-                                b"Content-Type: image/jpeg\r\n"
-                                + f"Content-Length: {len(data)}\r\n\r\n".encode()
-                                + data + b"\r\n"
-                            )
-                            self.wfile.flush()
-                        time.sleep(0.033)
+                        with srv._frame_cond:
+                            srv._frame_cond.wait_for(lambda: srv._seq != last_seq, timeout=1.0)
+                            seq, data = srv._seq, srv._jpeg
+                        if seq == last_seq or not data:
+                            continue
+                        last_seq = seq
+                        self.wfile.write(
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            + f"Content-Length: {len(data)}\r\n\r\n".encode()
+                            + data + b"\r\n"
+                        )
+                        self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # 클라이언트가 연결을 끊은 경우
 
@@ -1339,6 +1364,9 @@ def _parse_args() -> argparse.Namespace:
                    help="유동인구(사람 트래킹) 집계 비활성화")
     p.add_argument("--inference-backend", choices=("auto", "tflite", "pytorch"), default="auto",
                    help="레거시 단일 카메라의 추론 백엔드 (기본값: auto, TPU 미사용 시 tflite)")
+    p.add_argument("--auto-hardware", action="store_true",
+                   help="Coral Edge TPU 감지 여부에 따라 카메라 프로필을 자동 조정 "
+                        "(감지: 주 카메라 edgetpu + 듀얼 카메라 모드 / 미감지: 단일 카메라)")
     p.add_argument("--rf-config", default=None, metavar="PATH",
                    help="SI4432/KICS RF config JSON (defaults to rf_config.json when present)")
     p.add_argument("--disable-rf", action="store_true",
@@ -1881,6 +1909,16 @@ class CameraPipeline:
             print(f"[INFO][{tag}] 파이프라인 종료 완료")
 
 
+def _apply_auto_hardware(profiles: list[CameraProfile]) -> list[CameraProfile]:
+    """--auto-hardware: Coral 감지 결과로 프로필을 보정하고 변경 사항을 로그로 남긴다."""
+    coral = coral_present()
+    adapted, notes = adapt_profiles_to_hardware(profiles, coral)
+    print(f"[INFO] 하드웨어 감지: Coral Edge TPU {'있음' if coral else '없음'}")
+    for note in notes:
+        print(f"[INFO] {note}")
+    return adapted
+
+
 def _reconcile_pipelines(pipelines: dict[str, CameraPipeline], new_profiles: list[CameraProfile],
                           shared: SharedResources, base_conf: float | dict[str, float], headless: bool,
                           disable_traffic_count: bool) -> None:
@@ -2029,6 +2067,8 @@ def main() -> None:
     cfg_path = Path(args.camera_config) if args.camera_config else None
     profiles = load_camera_config(cfg_path) if cfg_path is not None else []
     if profiles:
+        if args.auto_hardware:
+            profiles = _apply_auto_hardware(profiles)
         errors = validate_camera_config(profiles)
         if errors:
             for e in errors:
@@ -2041,6 +2081,8 @@ def main() -> None:
             port=args.port, traffic_db=args.traffic_db, model_variant=args.model_variant,
             require_person_for_trigger=args.require_person,
         )]
+        if args.auto_hardware:
+            profiles = _apply_auto_hardware(profiles)
 
     pipelines: dict[str, CameraPipeline] = {}
     for profile in profiles:
@@ -2073,6 +2115,8 @@ def main() -> None:
                 if mtime is not None and mtime != cfg_mtime:
                     cfg_mtime = mtime
                     new_profiles = load_camera_config(cfg_path)
+                    if args.auto_hardware:
+                        new_profiles = _apply_auto_hardware(new_profiles)
                     errors = validate_camera_config(new_profiles)
                     if errors:
                         for e in errors:

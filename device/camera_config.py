@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 _VALID_BACKENDS = {"auto", "picamera2", "opencv"}
@@ -237,3 +238,91 @@ def validate_camera_config(profiles: list[CameraProfile]) -> list[str]:
         )
 
     return errors
+
+
+# ── 하드웨어 적응 ────────────────────────────────────────────────────────────
+# 같은 코드·같은 camera_config.json을 Coral이 있는 Pi와 없는 Pi에 그대로 배포하기 위한
+# 런타임 보정. camera_live_pi.py가 --auto-hardware일 때만 호출한다 — 항상 켜 두면
+# 대시보드/ROI 에디터에서 바꾼 enabled가 조용히 덮어써진다.
+
+# (vendor, product): 펌웨어 로드 전 / 후. 처음 연결되면 1a6e:089a로 보이다가 델리게이트가
+# 올라간 뒤 18d1:9302로 다시 열거된다 — 둘 다 Coral이다.
+_CORAL_USB_IDS = {("1a6e", "089a"), ("18d1", "9302")}
+
+
+def coral_present(usb_root: str | Path = "/sys/bus/usb/devices",
+                  apex_dir: str | Path = "/dev") -> bool:
+    """Coral Edge TPU(USB 동글 또는 PCIe/M.2)가 연결돼 있는지 하드웨어 수준에서만 판단한다.
+    pycoral/libedgetpu 같은 소프트웨어 준비 여부는 보지 않는다 — 그건 build_backend()가
+    초기화 실패 시 TFLite로 폴백하는 것으로 처리한다."""
+    try:
+        for dev in Path(usb_root).iterdir():
+            try:
+                vid = (dev / "idVendor").read_text().strip().lower()
+                pid = (dev / "idProduct").read_text().strip().lower()
+            except OSError:
+                continue
+            if (vid, pid) in _CORAL_USB_IDS:
+                return True
+    except OSError:
+        pass
+    try:
+        return any(Path(apex_dir).glob("apex_*"))
+    except OSError:
+        return False
+
+
+def _source_available(profile: CameraProfile) -> bool:
+    """보조 카메라의 장치가 실제로 있는지. 숫자 인덱스를 /dev/videoN으로 확인할 수 있는
+    경우(Linux, OpenCV 경로)에만 검사하고, picamera2(CSI)나 URL/파일 소스는 설정을 믿는다."""
+    if profile.backend == "picamera2":
+        return True
+    if profile.source.isdigit() and sys.platform.startswith("linux"):
+        return Path(f"/dev/video{profile.source}").exists()
+    return True
+
+
+def adapt_profiles_to_hardware(profiles: list[CameraProfile], coral: bool,
+                               source_available=_source_available,
+                               ) -> tuple[list[CameraProfile], list[str]]:
+    """감지된 하드웨어에 맞춰 프로필을 보정해 (새 목록, 안내 메시지)를 반환한다.
+
+    - Coral 있음: 첫 카메라(주 카메라)는 edgetpu, 나머지 카메라는 활성화(듀얼 카메라 모드)하되
+      tflite로 고정한다 — validate_camera_config()가 물리 Coral 1개를 두 카메라가 동시에
+      여는 것을 막기 때문이다. 보조 카메라 장치가 실제로 없으면 단일 모드로 남는다.
+      듀얼 모드에서 backend가 "auto"인 카메라는 주=picamera2(CSI), 보조=opencv(USB)로 고정한다 —
+      "auto"는 숫자 source면 둘 다 picamera2부터 시도해 CSI 카메라를 서로 가로채고, 진 쪽이
+      raw unicam 노드(/dev/video0)로 폴백해 영영 못 연다. CSI + USB 구성을 전제로 한다.
+    - Coral 없음: 보조 카메라는 비활성화(단일 카메라 모드), 명시적 edgetpu는 auto로 내려
+      TFLite로 폴백하게 한다.
+    입력 목록은 바꾸지 않는다.
+    """
+    if not profiles:
+        return [], []
+
+    notes: list[str] = []
+    primary, *rest = profiles
+    out: list[CameraProfile] = []
+
+    if coral:
+        primary_out = replace(primary, inference_backend="edgetpu")
+        out.append(primary_out)
+        for p in rest:
+            if source_available(p):
+                if p.backend == "auto":
+                    p = replace(p, backend="opencv")
+                    if primary_out.backend == "auto":
+                        primary_out = out[0] = replace(primary_out, backend="picamera2")
+                out.append(replace(p, enabled=True, inference_backend="tflite"))
+                notes.append(f"Coral 감지 — 듀얼 카메라 모드: '{p.id}' 활성화 (tflite)")
+            else:
+                out.append(replace(p, enabled=False))
+                notes.append(f"Coral 감지됐으나 '{p.id}' 장치(source={p.source})가 없어 단일 카메라 유지")
+    else:
+        backend = "auto" if primary.inference_backend == "edgetpu" else primary.inference_backend
+        out.append(replace(primary, inference_backend=backend))
+        for p in rest:
+            out.append(replace(p, enabled=False))
+            if p.enabled:
+                notes.append(f"Coral 미감지 — 단일 카메라 모드: '{p.id}' 비활성화")
+    return out, notes

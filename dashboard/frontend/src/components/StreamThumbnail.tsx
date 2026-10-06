@@ -29,7 +29,7 @@ function OnlineStream({ deviceId, camera }: { deviceId: string; camera: CameraTy
 
   if (stream.failed) {
     return (
-      <div className="relative w-full aspect-video rounded-xl bg-slate-900/95 border border-slate-300/40 overflow-hidden flex flex-col items-center justify-center">
+      <div className="relative w-full aspect-[4/3] rounded-xl bg-slate-900/95 border border-slate-300/40 overflow-hidden flex flex-col items-center justify-center">
         <VideoOff className="w-5 h-5 text-slate-400 mb-1.5" />
         <span className="text-[11px] font-semibold text-slate-400">스트림 연결을 재시도하는 중입니다</span>
       </div>
@@ -37,20 +37,21 @@ function OnlineStream({ deviceId, camera }: { deviceId: string; camera: CameraTy
   }
 
   return (
-    <div className={`relative w-full aspect-video rounded-xl overflow-hidden transition-all duration-500 ${
+    <div className={`relative w-full aspect-[4/3] rounded-xl overflow-hidden bg-black transition-all duration-500 ${
       hasAlert
         ? 'border border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.20)]'
         : 'border border-emerald-500/55 shadow-[0_0_20px_rgba(16,185,129,0.20)]'
     }`}>
+      {/* 4:3 Pi 프레임을 잘리지 않게 contain으로 — LiveStreams와 같은 이유. 화면을 어둡게 하던
+          스캔라인 장식도 걷어냈다. */}
       <img
         src={stream.src}
         alt=""
         onError={stream.onError}
         onLoad={stream.onLoad}
-        className="absolute inset-0 w-full h-full object-cover bg-slate-900"
+        className="absolute inset-0 w-full h-full object-contain bg-black"
         draggable={false}
       />
-      <div className="absolute inset-0 stream-scanlines opacity-25 pointer-events-none" />
 
       <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-full bg-red-600/90 backdrop-blur-sm text-white text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-sm">
         <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
@@ -68,7 +69,7 @@ function OnlineStream({ deviceId, camera }: { deviceId: string; camera: CameraTy
 
 function OfflineStream({ reason }: { reason: string }) {
   return (
-    <div className="relative w-full aspect-video rounded-xl bg-slate-900/95 border border-red-300/40 overflow-hidden flex flex-col items-center justify-center shadow-inner">
+    <div className="relative w-full aspect-[4/3] rounded-xl bg-slate-900/95 border border-red-300/40 overflow-hidden flex flex-col items-center justify-center shadow-inner">
       <div className="w-12 h-12 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mb-2 shadow-md">
         <Unlink className="w-5 h-5" />
       </div>

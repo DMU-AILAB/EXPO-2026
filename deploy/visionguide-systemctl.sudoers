@@ -18,4 +18,5 @@ __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-device, /usr/
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-roi-editor, /usr/bin/systemctl stop visionguide-roi-editor, /usr/bin/systemctl restart visionguide-roi-editor, /usr/bin/systemctl status visionguide-roi-editor
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-controls, /usr/bin/systemctl stop visionguide-controls, /usr/bin/systemctl restart visionguide-controls, /usr/bin/systemctl status visionguide-controls
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-fan, /usr/bin/systemctl stop visionguide-fan, /usr/bin/systemctl restart visionguide-fan, /usr/bin/systemctl status visionguide-fan
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start visionguide-ble, /usr/bin/systemctl stop visionguide-ble, /usr/bin/systemctl restart visionguide-ble, /usr/bin/systemctl status visionguide-ble
 __USER__ ALL=(root) NOPASSWD: /usr/sbin/reboot

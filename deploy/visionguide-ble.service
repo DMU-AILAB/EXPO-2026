@@ -1,0 +1,20 @@
+[Unit]
+Description=VisionGuide BLE Wi-Fi pairing (advertises only while the button window is open)
+# 대시보드 화면(Web Bluetooth)이 망에 없는 기기에 Wi-Fi를 알려주는 경로.
+# 평소에는 광고하지 않는다 — Wi-Fi 버튼 3초 → 3분 창이 열렸을 때만(device/ble_provisioning.py).
+After=bluetooth.service NetworkManager.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+# BlueZ D-Bus 접근은 bluetooth 그룹으로 연다(make install-service가 추가). nmcli는
+# visionguide-network sudoers로 roi_editor와 같은 권한을 쓴다.
+User=__USER__
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/__USER__/visionguide
+ExecStart=__PI_PYTHON__ /home/__USER__/visionguide/ble_provisioning.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

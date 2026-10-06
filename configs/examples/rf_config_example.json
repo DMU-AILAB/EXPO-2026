@@ -2,7 +2,7 @@
   "enabled": false,
   "frequency_mhz": 358.5,
   "detection_mode": "kics",
-  "rssi_threshold": 110,
+  "rssi_threshold": 80,
   "min_burst_ms": 150,
   "audio_file": "audio/rf_voice_guide.mp3",
   "audio_files": [],
@@ -21,6 +21,7 @@
   "group_enabled": false,
   "group_priority": 100,
   "group_port": 47600,
-  "group_window_ms": 300,
+  "group_window_ms": 600,
+  "group_follow_peers": false,
   "group_turn_timeout_sec": 60
 }

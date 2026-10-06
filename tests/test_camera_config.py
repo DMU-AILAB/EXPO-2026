@@ -5,6 +5,8 @@ from pathlib import Path
 
 from camera_config import (
     CameraProfile,
+    adapt_profiles_to_hardware,
+    coral_present,
     load_camera_config,
     save_camera_config,
     validate_camera_config,
@@ -130,3 +132,102 @@ def test_validate_ignores_disabled_profiles_for_port_and_edgetpu_checks():
         CameraProfile(id="cam1", port=8080, inference_backend="edgetpu", enabled=False),
     ]
     assert validate_camera_config(profiles) == []
+
+
+# ── 하드웨어 적응 (--auto-hardware) ──────────────────────────────────────────
+
+def _two_cams(cam1_enabled=False):
+    return [
+        CameraProfile(id="cam0", port=8080, inference_backend="auto"),
+        CameraProfile(id="cam1", port=8081, enabled=cam1_enabled, source="2",
+                      inference_backend="tflite"),
+    ]
+
+
+def test_coral_enables_dual_camera_mode_and_passes_validation():
+    adapted, notes = adapt_profiles_to_hardware(_two_cams(), coral=True,
+                                                source_available=lambda p: True)
+    assert [p.enabled for p in adapted] == [True, True]
+    assert adapted[0].inference_backend == "edgetpu"
+    assert adapted[1].inference_backend == "tflite"
+    assert validate_camera_config(adapted) == []
+    assert any("듀얼" in n for n in notes)
+
+
+def test_coral_keeps_single_camera_when_secondary_device_missing():
+    adapted, notes = adapt_profiles_to_hardware(_two_cams(cam1_enabled=True), coral=True,
+                                                source_available=lambda p: False)
+    assert [p.enabled for p in adapted] == [True, False]
+    assert adapted[0].inference_backend == "edgetpu"
+    assert validate_camera_config(adapted) == []
+    assert any("단일" in n for n in notes)
+
+
+def test_no_coral_forces_single_camera_and_drops_explicit_edgetpu():
+    profiles = _two_cams(cam1_enabled=True)
+    profiles[0] = CameraProfile(id="cam0", port=8080, inference_backend="edgetpu")
+    adapted, _ = adapt_profiles_to_hardware(profiles, coral=False)
+    assert [p.enabled for p in adapted] == [True, False]
+    assert adapted[0].inference_backend == "auto"  # build_backend가 TFLite로 폴백
+    assert validate_camera_config(adapted) == []
+
+
+def test_adapt_does_not_mutate_input_and_handles_empty():
+    profiles = _two_cams()
+    adapt_profiles_to_hardware(profiles, coral=True, source_available=lambda p: True)
+    assert profiles == _two_cams()
+    assert adapt_profiles_to_hardware([], coral=True) == ([], [])
+
+
+def test_picamera2_secondary_is_trusted_without_device_node():
+    profiles = _two_cams()
+    profiles[1] = CameraProfile(id="cam1", port=8081, enabled=False, backend="picamera2",
+                                source="1", inference_backend="tflite")
+    adapted, _ = adapt_profiles_to_hardware(profiles, coral=True)
+    assert adapted[1].enabled is True
+
+
+def _fake_usb(root, vid, pid):
+    dev = root / "2-1"
+    dev.mkdir()
+    (dev / "idVendor").write_text(vid + "\n")
+    (dev / "idProduct").write_text(pid + "\n")
+
+
+def test_coral_present_detects_both_usb_ids(tmp_path):
+    for i, (vid, pid) in enumerate([("18d1", "9302"), ("1a6e", "089a")]):
+        root = tmp_path / f"usb{i}"
+        root.mkdir()
+        _fake_usb(root, vid, pid)
+        assert coral_present(root, tmp_path / "nodev") is True
+
+
+def test_coral_present_false_for_other_usb_and_missing_paths(tmp_path):
+    _fake_usb(tmp_path, "046d", "082d")
+    assert coral_present(tmp_path, tmp_path / "nodev") is False
+    assert coral_present(tmp_path / "missing", tmp_path / "missing") is False
+
+
+def test_coral_present_detects_pcie_apex_node(tmp_path):
+    usb = tmp_path / "usb"
+    usb.mkdir()
+    dev = tmp_path / "dev"
+    dev.mkdir()
+    (dev / "apex_0").write_text("")
+    assert coral_present(usb, dev) is True
+
+
+def test_dual_mode_pins_auto_backends_so_cameras_do_not_fight_over_csi():
+    adapted, _ = adapt_profiles_to_hardware(_two_cams(), coral=True,
+                                            source_available=lambda p: True)
+    assert adapted[0].backend == "picamera2"   # 주: CSI
+    assert adapted[1].backend == "opencv"      # 보조: USB
+
+
+def test_dual_mode_respects_explicit_backends():
+    profiles = _two_cams()
+    profiles[1] = CameraProfile(id="cam1", port=8081, enabled=False, backend="picamera2",
+                                source="1", inference_backend="tflite")
+    adapted, _ = adapt_profiles_to_hardware(profiles, coral=True)
+    assert adapted[0].backend == "auto"        # 보조가 auto가 아니면 건드리지 않는다
+    assert adapted[1].backend == "picamera2"

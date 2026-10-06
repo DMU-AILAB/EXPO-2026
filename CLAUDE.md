@@ -42,12 +42,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `replay_engine.py` | 저장된 영상을 **배포와 같은 경로**로 재생하며 주석 프레임을 만든다 — roi_editor의 "검증" 탭이 MJPEG로 띄운다. 오디오는 재생하지 않고 발사 시점만 기록 |
 | `device_identity.py` | 서버가 발급한 `device_id`·`api_key`·`server_url` 보관. **값의 주인은 서버** — 등록 시 `POST /api/identity`로 심긴다. `rois.json`과 같은 Pi 로컬 런타임 파일(rsync·git 대상 아님) |
 | `event_logger.py` | Pi → 서버 아웃바운드 2종 — `EventSender`(감지 이벤트 outbox, 실패해도 보관) · `HeartbeatSender`(살아있음+상태, 실패하면 **버리고** 다음 주기에 최신값). 탐지 루프는 sqlite 한 줄만 쓰고 전송은 `roi_editor`의 스레드가 맡는다. `urllib`만 써서 Pi 의존성을 늘리지 않는다 |
-| `dashboard/backend/` + `dashboard/frontend/` | PC에서 실행하는 중앙 관리자 대시보드 — 여러 Pi 등록, 이벤트·하트비트 집계, Pi API 중계, 스트림 프록시, 개별 재시작·재부팅 |
+| `dashboard/backend/` + `dashboard/frontend/` | PC에서 실행하는 중앙 관리자 대시보드 — 여러 Pi 등록, 이벤트·하트비트 집계(하트비트 출발 주소로 기기 IP 갱신), Pi API 중계, 스트림 프록시, 개별 재시작·재부팅. 기기 상세 탭: 개요·ROI(폴리곤 편집 `RoiCanvas.tsx`)·**검증 재생·오탐 관리·녹화·네트워크**·리모컨·설정 — Pi `:5000` 화면에서만 하던 일을 한 곳에서 한다(아래 '대시보드 단일화'). 탐색 화면에 **블루투스로 설정**(Web Bluetooth) |
 | `device_status.py` | `/proc`·`/sys`만으로 읽는 가동시간·CPU온도·부하·메모리 + **CPU 사용률**(두 시점 차이). psutil 미사용 |
 | `device_metrics.py` | 탐지 루프의 추론 시간·프레임 시간·스트리밍 여부를 sqlite로 `roi_editor`에 넘긴다 — 하트비트가 쓰는 값이 탐지 프로세스에만 있기 때문 |
 | `foot_traffic_counter.py` | 유동인구 sqlite 집계 — `FootTrafficCounter`(트랙 소멸 기반 카운팅) + 조회 함수 `read_daily_totals`/`read_hourly_breakdown`(0~23시 0-채움)/`read_range_daily_totals`(N일 일별 합계, 0-채움). ROI별 집계는 스키마상 불가(카메라 단위 시간별 합계만 기록) |
 | `detection_events.py` | 최근 감지/안내 이벤트 로그(카메라별 sqlite, `foot_traffic_counter.py`와 같은 db 파일에 별도 테이블) — `log_event()`(ROI 트리거 시점마다 1건 기록, 오래된 건 자동 정리) / `read_recent_events()`(최신순 N건) |
-| `gpio_controls.py` | GPIO 재시작 버튼 — 라즈베리파이 재부팅이 아니라 `visionguide-device` 서비스만 재시작 |
+| `gpio_controls.py` | Wi-Fi 버튼(GPIO17) — **짧게 누름(뗄 때)** = 홈 Wi-Fi ↔ 핫스팟 전환, **3초 누름** = 블루투스 페어링 창 3분(`ble_window.json`, 홈 Wi-Fi 연결 중이면 열지 않고 짧게 3번 — 광고할 수 없는데 켜진 것처럼 보이면 안 된다. LED 페어링 패턴도 광고 가능할 때만) · 통합 상태 LED · 부저 |
+| `ble_provisioning.py` | **BLE Wi-Fi 페어링** — 대시보드(Web Bluetooth)가 망에 없는 기기에 SSID·비밀번호를 건넨다. Wi-Fi 미연결 + 버튼 창이 열렸을 때만 광고(`VG-xxxx`). GATT: info/command/result(+순번 `n`)/event. Wi-Fi 조작은 `roi_editor/network_manager.py` 재사용, `dbus-next` |
 | `rois_example.json` | ROI 설정 파일 예시 |
 | `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v10_320`** (= `runs/white_cane_v10_nolkc/weights`). v10은 **누수 없는 재분할(`datasets/v2`) 위에서 처음부터 학습한 계보**이고, 실영상 탐지율이 v9 계열 최고 수준이다(`docs/model_evaluation_report_v3.md`). `v11_yolo26n_320`은 백본 비교용으로 남겨둔 것이지 권장이 아니다(실영상 35.3% vs v10 73.2%). **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
 | `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/v1/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
@@ -71,7 +72,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - GPIO 릴레이 트리거 (`gpiozero`)
 - 헬스 워치독 (`watchdog.py`)
-- 폴리곤 편집기(대시보드) — 현재 ROI 모양은 기기의 `roi_editor`(포트 5000)에서만 그린다
 
 > **설정 폴링(`config_syncer.py`)은 만들지 않는다.** 명세 §13.0의 소유권 결정(Pi가 원본)과
 > 충돌한다 — 서버가 설정을 내려보내면 작성자가 둘이 되고, Pi의 변경 감지가 mtime뿐이라
@@ -313,6 +313,44 @@ Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세�
 - **신원이 바뀌면 백오프를 리셋한다.** 잘못된 주소로 실패해 백오프가 최대치까지 늘어난 뒤
   주소를 고쳐도 리셋하지 않으면 최대 2분을 더 기다린다 — 등록 직후 "왜 연동이 안 되지?"가
   되는 지점이라 실제 테스트에서 걸렸다.
+
+## 대시보드 단일화 — 설계 결정
+
+중앙 대시보드 한 페이지에서 기기 관리 전부를 한다. Pi `:5000`은 **대시보드 서버가 없는
+현장의 비상 경로**로 남긴다(배포 유닛은 `--api-only`라 `/pairing`과 API만 연다).
+
+- **중계 원칙은 그대로**: Pi 호출은 `dashboard/backend/app/services/pi_client.py`에만 둔다.
+  녹화·구조물 수집(`/recording/*`·`/calibrate/*`)은 roi_editor가 아니라 **카메라 MJPEG 포트**에
+  있으므로 `PiClient(ip, camera.port)`다. 백엔드가 부르는 경로가 Pi에 실재하는지는
+  `tests/test_dashboard_pi_routes.py`가 **소스를 읽어** 대조한다(respx 테스트는 흉내 낸 경로가
+  실재하는지 모른다 — 과거 사고의 원인).
+- **기기 IP는 하트비트가 따라간다**(`dashboard/backend/app/services/device_address.py`). 등록 때
+  IP가 고정이면 DHCP 재할당·Wi-Fi 변경 뒤 모든 중계가 옛 주소로 나간다. 서버가 그 주소로
+  **제어 키**를 보내므로 사설 IPv4만 받고, 다른 기기가 쓰는 IP로는 바꾸지 않는다.
+  리버스 프록시 뒤에 두면 이 가정(출발 주소 = 기기 주소)이 깨진다.
+- **원격 AP 전환은 중계하지 않는다** — 누르는 순간 기기가 망에서 사라져 원격으로 되돌릴 수 없다.
+- **망에 없는 기기의 첫 연결**은 대시보드로 해결할 수 없는 유일한 지점이다(서버가 닿지 않는다).
+  ① 유선(유선 연결 중에는 `auto_ap.sh`가 핫스팟을 켜지 않는다) ② Wi-Fi 사전 저장
+  ③ **블루투스**(`ble_provisioning.py` + 대시보드 `BleSetup.tsx`).
+- **블루투스 페어링은 버튼 3초로 연 3분 창 + Wi-Fi 미연결일 때만** 광고한다(사용자 결정 —
+  반경 10m 누구나 Wi-Fi를 바꾸지 못하게). 창 파일은 root(버튼 서비스)가 쓰고 ailab(BLE
+  서비스)이 읽으므로 **0644여야 한다**. BLE 구간에 앱 수준 암호화는 없다(데모 범위에서 수용).
+  - 광고 이름이 `VG-xxxx`로 짧은 이유: 광고 패킷 31바이트 = 플래그 3 + 128비트 UUID 18 + 이름.
+  - 결과는 notify가 아니라 read로 준다(notify는 MTU-3=20바이트). 결과 JSON의 순번 `n`이
+    명령 전후로 **달라진** 것만 이번 결과로 본다 — 직전의 `failed`를 오인하지 않게.
+  - **핫스팟(AP)인 동안 wlan0은 새로 검색하지 못한다**(`--rescan yes`도 예전 기록). 기록이
+    몇 분 뒤 사라져 목록에 자기 자신만 남고 연결이 "network could not be found"로 실패했다
+    (실기기 실험). 블루투스 경로는 스캔·연결 직전에 `device disconnect`로 칩을 비우고 다시
+    검색한다(`network_manager.scan_networks_fresh`, `connect_wifi(release_ap=True)`), 실패하면
+    핫스팟으로 되돌린다. **Pi 화면(:5000) 경로는 휴대폰이 그 핫스팟에 붙어 있어 쓰면 안 된다.**
+  - 창은 명령이 올 때마다 3분으로 다시 연장된다 — 버튼은 새 연결을 받아들이는 증명이고,
+    설정하는 도중에 닫혀 'GATT operation not permitted'로 끊기면 안 된다.
+  - 광고에 `Discoverable`(LE General Discoverable 플래그)이 없으면 휴대폰·브라우저 목록에서
+    빠진다. 진단은 휴대폰 기본 설정 화면이 아니라 BLE 스캐너 앱(nRF Connect)으로 할 것.
+  - `ble_beacon.py`(iBeacon)를 켜게 되면 같은 칩의 광고를 쓰므로 `pairing_window_open()`
+    동안은 비콘을 멈춰야 한다.
+  - **Web Bluetooth는 `localhost` 또는 HTTPS에서만** 동작한다. 다른 PC에서 LAN IP로 대시보드를
+    열면 쓸 수 없다(HTTPS 구성은 범위 밖).
 
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
@@ -645,7 +683,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `gpio_controls.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` | Pi에 배포할 Python 소스 **25개**. 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `ble_beacon.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
@@ -753,7 +791,9 @@ pip install -r requirements.txt
 python -m app.db.init_db
 
 # 개발 서버. ★ --workers 금지 (명세 §1.3: 인메모리 하트비트 버퍼 + APScheduler)
-uvicorn app.main:app --reload --port 8000
+# --timeout-graceful-shutdown: 없으면 --reload가 열린 MJPEG/WebSocket 연결이 끝나기를
+# 영원히 기다려("Waiting for connections to close") 코드 변경 후 서버가 멈춘다(실제로 겪음).
+uvicorn app.main:app --reload --port 8000 --timeout-graceful-shutdown 3
 
 # 테스트
 python -m pytest tests/ -v

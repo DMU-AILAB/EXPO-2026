@@ -23,3 +23,4 @@ httpx>=0.24.0
 # apps/label_tool/server.py의 OpenAI 자동 제안 기능(선택 기능)은 여기 포함하지
 # 않는다 — 코드가 자체적으로 ImportError를 잡아 `pip install openai`를
 # 안내하므로 필요한 사람만 따로 설치한다.
+dbus-next>=0.2.3     # BLE 페어링 테스트(tests/test_ble_provisioning.py)가 D-Bus 서명을 검증한다
