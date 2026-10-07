@@ -83,8 +83,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 25개 — Makefile의 DEPLOY_PY와 정확히 일치한다
-tools/      PC 전용 스크립트 (data/ 데이터준비 · eval/ 평가 · dev/ 개발보조)
+device/     Pi에서 실행되는 런타임 34개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+tools/      PC 개발 도구와 외부 장치 소스 (dev/에 ESP32 릴레이 Arduino 펌웨어 포함)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  PC 중앙 관리자 대시보드(backend + frontend) + 디자인 자료(mockups · demo)
 configs/ deploy/ tests/ docs/ datasets/ runs/ weights/

@@ -8,7 +8,7 @@ from .config import settings
 from .errors import register_error_handlers
 from .routers import auth, devices, cameras, rois, events, ws, stats, audio, schedules, scan, rf
 # [녹화 비활성] 개인정보 보호 — recording 라우터는 등록하지 않는다(Pi도 /recording/* 에 404)
-from .routers import replay, calibration, calibration_fleet, network
+from .routers import replay, calibration, calibration_fleet, network, esp32
 from .services.heartbeat_service import bulk_flush_heartbeats
 from .services.monitor_service import broadcast_camera_alerts, sweep_offline_devices
 from .services.foot_traffic_puller import PULL_INTERVAL_SEC, pull_once
@@ -98,6 +98,7 @@ app.include_router(replay.router)
 app.include_router(calibration.router)
 app.include_router(calibration_fleet.router)
 app.include_router(network.router)
+app.include_router(esp32.router)
 
 @app.get("/")
 def read_root():

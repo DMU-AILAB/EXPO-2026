@@ -105,6 +105,8 @@ export type Device = {
   npu_ms: number | null
   today_detections: number
   cameras: CameraBrief[]
+  esp32?: Esp32Status | null
+  esp32_binding?: string | null
 }
 
 export type DeviceDetail = Omit<Device, 'cameras'> & {
@@ -112,6 +114,33 @@ export type DeviceDetail = Omit<Device, 'cameras'> & {
   rois: Roi[]
   recent_events: RecentEvent[]
   etag: string
+}
+
+export type Esp32Candidate = { device_id: string; name: string; rssi: number | null }
+export type Esp32CommandStatus = {
+  id: string
+  state: 'queued' | 'delivered' | 'ok' | 'failed' | 'expired'
+  ssid: string
+  expires_at?: number
+  updated_at?: number
+  message?: string
+}
+export type Esp32Status = {
+  state: 'unpaired' | 'scanning' | 'connecting' | 'online' | 'offline' | 'error'
+  device_id?: string | null
+  wifi_connected?: boolean
+  wifi_ssid?: string | null
+  ip?: string | null
+  relay_state?: 'on' | 'off' | null
+  last_error?: string | null
+  last_seen?: number | null
+  candidates?: Esp32Candidate[]
+}
+export type Esp32Overview = {
+  binding: string | null
+  status: Esp32Status | null
+  command: Esp32CommandStatus | null
+  stale: boolean
 }
 
 export type DetectionParams = {

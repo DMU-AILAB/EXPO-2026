@@ -17,12 +17,20 @@ def ensure_columns() -> None:
     """
     from sqlalchemy import inspect, text
     insp = inspect(engine)
-    if "cameras" not in insp.get_table_names():
-        return
-    have = {c["name"] for c in insp.get_columns("cameras")}
-    if "privacy_mask" not in have:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE cameras ADD COLUMN privacy_mask BOOLEAN DEFAULT 1"))
+    tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        if "cameras" in tables:
+            have = {c["name"] for c in insp.get_columns("cameras")}
+            if "privacy_mask" not in have:
+                conn.execute(text("ALTER TABLE cameras ADD COLUMN privacy_mask BOOLEAN DEFAULT 1"))
+        if "devices" in tables:
+            have = {c["name"] for c in insp.get_columns("devices")}
+            if "esp32_device_id" not in have:
+                conn.execute(text("ALTER TABLE devices ADD COLUMN esp32_device_id VARCHAR"))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_devices_esp32_device_id "
+                "ON devices (esp32_device_id)"
+            ))
 
 
 def get_db():

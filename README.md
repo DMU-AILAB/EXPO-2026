@@ -159,7 +159,7 @@ expo/
 │   ├── detect.py              #   WhiteCaneDetector (PyTorch fallback)
 │   ├── edgetpu_infer.py       #   Coral EdgeTPU 서브프로세스 워커
 │   └── …                      #   트래킹·오디오·GPIO·RF 등
-├── tools/                     # PC 전용 스크립트
+├── tools/                     # PC 개발 도구와 ESP32 펌웨어 원본
 │   ├── data/                  #   데이터 준비 (resplit_dataset, prepare_*, fetch_*)
 │   ├── eval/                  #   평가 (eval_video_recall, eval_background_fp)
 │   └── dev/                   #   개발 보조 (camera_live, discover, seed_dummy_traffic)

@@ -263,6 +263,8 @@ async def get_device(device_id: str, db: Session = Depends(get_db), current_user
     data = build_device_summary(db, device, buffered,
                                 today_detections=_today_detections(db, device_id),
                                 cameras=cameras_data)
+    data["esp32"] = (buffered or {}).get("esp32")
+    data["esp32_binding"] = device.esp32_device_id
     data["rois"] = rois_data
     data["recent_events"] = events_data
     data["etag"] = device.config_etag
@@ -293,6 +295,8 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
     
     # Step 2 방어: 삭제 시점에 버퍼에서도 명시적으로 제거하여 팬텀 기기 참조 무결성(FK) 오류 방지
     await remove_device_from_buffer(device_id)
+    from ..services.esp32_control import clear_device
+    clear_device(device_id)
     
     db.delete(device)
     db.commit()
@@ -324,6 +328,7 @@ class HeartbeatPayload(BaseModel):
     latency_ms: Optional[int] = None
     npu_ms: Optional[int] = None
     cameras: List[dict] = []
+    esp32: Optional[Dict[str, Any]] = None
 
 @router.patch("/me/heartbeat")
 async def heartbeat(payload: HeartbeatPayload, request: Request,
