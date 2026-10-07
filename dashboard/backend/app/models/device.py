@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, DateTime, Float, Integer
+from sqlalchemy import Column, String, DateTime, Float, Integer, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..database import Base
@@ -20,11 +20,15 @@ class Device(Base):
     # 비대칭이며, 저장은 평문이다. 그래서 `provision`으로 심을 때만 채워지고, 노출
     # 범위는 서버 DB 파일 하나로 제한된다(조회 API로 돌려주지 않는다).
     control_key = Column(String)
+    # 승인된 ESP32의 펌웨어 고유 ID. 주소가 바뀌어도 같은 보드를 다시 찾는다.
+    esp32_device_id = Column(String, nullable=True)
     # **빈 문자열이면 안 된다.** 변경 API가 If-Match를 요구하는데 갓 등록한 기기의
     # etag가 ''이면 클라이언트가 보낼 값이 없어 첫 ROI 저장부터 400이 난다.
     config_etag = Column(String, nullable=False, default=lambda: uuid.uuid4().hex)
     last_seen = Column(DateTime)
     created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (Index("ux_devices_esp32_device_id", "esp32_device_id", unique=True),)
     
     cameras = relationship("Camera", back_populates="device", cascade="all, delete")
     rois = relationship("Roi", back_populates="device", cascade="all, delete")

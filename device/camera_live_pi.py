@@ -37,6 +37,7 @@ import struct
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -86,6 +87,7 @@ from pedestrian_entity import (
     cane_user_person_ids,      # 유동인구 래치 전달
     virtual_cane_boxes,        # 디버그 오버레이의 가상 박스 표시
 )
+from esp32_relay import Esp32RelayController, RoiEntryPulseTracker
 
 try:
     from simulator.roi_manager import ROIManager
@@ -1513,6 +1515,7 @@ class SharedResources:
     led_heartbeat: dict
     stop_event: threading.Event
     announcements: "AnnouncementRouter | None" = None
+    esp32_controller: "Esp32RelayController | None" = None
     # 3중 게이트 진단 오버레이(--debug-gates). CameraPipeline 생성자가 아니라 여기 둔 이유는
     # 파이프라인 생성 지점이 세 곳(최초 기동/설정 변경 감지/크래시 재시작)이라 생성자 인자를
     # 늘리면 세 곳을 모두 고쳐야 하고, 한 곳만 빠뜨려도 재시작 후 조용히 꺼지기 때문이다.
@@ -1665,6 +1668,7 @@ class CameraPipeline:
 
             roi_manager = None
             dispatcher = None
+            relay_entry_tracker = RoiEntryPulseTracker()
             if profile.roi_config:
                 if not _TRIGGER_AVAILABLE:
                     print(f"[WARN][{tag}] roi_config 지정됐으나 ROI 모듈 로드 실패 — 무시")
@@ -1672,6 +1676,7 @@ class CameraPipeline:
                     try:
                         roi_manager, debounce, cooldown, conf = _load_rois(profile.roi_config)
                         dispatcher = StandaloneDispatcher(debounce, cooldown)
+                        relay_entry_tracker = RoiEntryPulseTracker()
                         if conf is not None:
                             backend.update_conf(conf)
                             print(f"[INFO][{tag}] 신뢰도 임계값: {backend.conf} (rois.json 설정값 적용)")
@@ -1941,6 +1946,7 @@ class CameraPipeline:
                         try:
                             roi_manager, debounce, cooldown, conf = _load_rois(profile.roi_config)
                             dispatcher = StandaloneDispatcher(debounce, cooldown)
+                            relay_entry_tracker = RoiEntryPulseTracker()
                             roi_crop_dirty = True   # 구역이 바뀌면 크롭 박스도 다시 잡는다
                             if conf is not None:
                                 backend.update_conf(conf)
@@ -1977,6 +1983,15 @@ class CameraPipeline:
                     for r in roi_manager.rois:
                         if r.zone_type == "exclude":
                             continue
+                        if relay_entry_tracker.update(
+                                r.name, bool(present.get(r.name)), now, debounce):
+                            controller = self.shared.esp32_controller
+                            if controller is not None:
+                                event_id = uuid.uuid4().hex
+                                if not controller.enqueue_pulse(event_id, r.name):
+                                    print(f"[WARN][{tag}] ESP32 펄스 대기열에 넣지 못함: ROI={r.name}")
+                                else:
+                                    print(f"[ESP32][{tag}] ROI 진입 펄스 대기: ROI={r.name} event={event_id}")
                         subject = dispatcher.update(r.name, present.get(r.name, ()), now)
                         if subject is None:
                             continue
@@ -2179,9 +2194,13 @@ def main() -> None:
             led_watchdog_thread.start()
 
     stop_event = threading.Event()
+    relay_controller = Esp32RelayController(
+        _BASE / "device_identity.json", _BASE / "esp32_status.json")
+    relay_controller.start()
     shared = SharedResources(audio_player=audio_player, status_led=status_led,
                              led_heartbeat=led_heartbeat, stop_event=stop_event,
                              announcements=announcements,
+                             esp32_controller=relay_controller,
                              debug_gates=args.debug_gates)
 
     def _on_sigint(sig, frame):
@@ -2304,6 +2323,7 @@ def main() -> None:
 
             stop_event.wait(0.5)
     finally:
+        relay_controller.stop()
         for pipeline in pipelines.values():
             pipeline.stop()
         if rf_trigger is not None:

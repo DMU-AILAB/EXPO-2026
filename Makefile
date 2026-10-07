@@ -57,6 +57,7 @@ DEPLOY_PY = \
 	device/rf_sweep.py \
 	device/gpio_controls.py \
 	device/ble_provisioning.py \
+	device/esp32_relay.py \
 	device/fan_controller.py \
 	device/yolo_postprocess.py \
 	device/simple_tracker.py \
@@ -199,7 +200,7 @@ sync-roi-editor:
 deps:
 	@echo "[DEPS] 카메라 앱 의존성 설치..."
 	ssh $(PI_USER)@$(PI) "sudo apt-get install -y python3-picamera2 fonts-nanum mpg123 uhubctl || true"
-	ssh $(PI_USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio dbus-next"
+	ssh $(PI_USER)@$(PI) "$(PI_PIP) install --break-system-packages -q ai-edge-litert spidev opencv-python-headless numpy shapely pillow gpiozero lgpio dbus-next bleak"
 
 ## Pi에 ROI 에디터 의존성 설치 (fastapi + uvicorn + 오디오 업로드용 python-multipart)
 deps-roi-editor:

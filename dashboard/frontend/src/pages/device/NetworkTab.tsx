@@ -15,6 +15,7 @@ import { AlertTriangle, CheckCircle2, Loader2, Lock, RefreshCw, Wifi, XCircle } 
 import * as api from '../../api'
 import { useApi } from '../../hooks/useApi'
 import type { WifiNetwork } from '../../types'
+import Esp32Panel from './Esp32Panel'
 import { type Ctx, ErrorBox, Panel, inputCls, labelCls, primaryBtn, secondaryBtn } from './shared'
 
 const MODE_LABEL = { station: 'Wi-Fi 연결됨', ap: '핫스팟(AP) 모드', disconnected: '연결 없음' } as const
@@ -85,6 +86,7 @@ export default function NetworkTab({ device, reload }: Ctx) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      <Esp32Panel device={device} reload={reload} />
       <Panel title="현재 연결" className="lg:col-span-2"
              actions={<button className={secondaryBtn} onClick={status.reload}><RefreshCw className="w-3.5 h-3.5" /></button>}>
         <ErrorBox error={status.error} />

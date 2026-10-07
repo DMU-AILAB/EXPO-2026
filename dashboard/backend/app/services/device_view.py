@@ -111,6 +111,8 @@ def build_device_summary(db: Session, device: Device, buffered: Optional[dict],
         "npu_ms": src.get("npu_ms"),
         "today_detections": today_detections,
         "cameras": cameras if cameras is not None else [],
+        "esp32": (buffered or {}).get("esp32"),
+        "esp32_binding": device.esp32_device_id,
     }
 
 

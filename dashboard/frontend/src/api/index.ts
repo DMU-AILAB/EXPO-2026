@@ -6,7 +6,7 @@ import type {
   CalibrationStatus, CalibrationTargetMode, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
   FpHotspot, MaskCandidate, MaskHit, NetworkStatus, RecordingClip, RecordingStatus, ReplayStatus,
   ReplayVideo, RfAudioItem, RfState, Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
-  WifiConnectResult, WifiNetwork,
+  WifiConnectResult, WifiNetwork, Esp32Overview,
 } from '../types'
 
 // ---------------------------------------------------------------- 인증
@@ -293,6 +293,24 @@ export const connectWifi = (deviceId: string, ssid: string, password: string) =>
 
 export const getWifiConnectResult = (deviceId: string) =>
   request<WifiConnectResult>(`/api/devices/${deviceId}/network/connect-result`)
+
+// ---------------------------------------------------------------- ESP32 BLE 출력 장치
+
+export const getEsp32 = (deviceId: string) =>
+  request<Esp32Overview>(`/api/devices/${deviceId}/esp32`)
+
+export const bindEsp32 = (deviceId: string, esp32Id: string) =>
+  request<{ binding: string }>(`/api/devices/${deviceId}/esp32/binding`, {
+    method: 'POST', body: { esp32_id: esp32Id },
+  })
+
+export const unbindEsp32 = (deviceId: string) =>
+  request<{ binding: null }>(`/api/devices/${deviceId}/esp32/binding`, { method: 'DELETE' })
+
+export const configureEsp32Wifi = (deviceId: string, ssid: string, password: string) =>
+  request<Esp32Overview['command']>(`/api/devices/${deviceId}/esp32/wifi`, {
+    method: 'POST', body: { ssid, password },
+  })
 
 // ---------------------------------------------------------------- 구조물 수집 (일괄·예약)
 

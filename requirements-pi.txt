@@ -34,3 +34,4 @@ python-multipart>=0.0.6  # 오디오 업로드(/api/audio/upload)용. make deps-
 #   numpy<2                      (tflite_runtime 2.5.0 은 NumPy 1.x 로 빌드됨)
 #   opencv-python-headless>=4.8.0
 dbus-next>=0.2.3     # BLE Wi-Fi 페어링(ble_provisioning.py) — 순수 파이썬, 네이티브 빌드 없음
+bleak>=1.0            # BLE 중앙(client)으로 ESP32 출력 보드 검색·제어 및 명시적 bonding

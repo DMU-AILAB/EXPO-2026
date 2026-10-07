@@ -397,7 +397,16 @@ class HeartbeatSender(threading.Thread):
             "latency_ms": round(lat) if lat else None,
             "npu_ms": round(npu) if npu else None,
             "cameras": cams,
+            "esp32": self._esp32_status(),
         }
+
+    def _esp32_status(self) -> dict:
+        """BLE state is shared from the camera process through a local JSON snapshot."""
+        try:
+            from esp32_relay import read_status_snapshot
+            return read_status_snapshot(self.identity_path.parent / "esp32_status.json")
+        except Exception:                         # noqa: BLE001 — heartbeat remains best effort
+            return {"state": "unpaired", "candidates": []}
 
     def _today_detections(self) -> int:
         try:

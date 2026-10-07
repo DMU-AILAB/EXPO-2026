@@ -27,10 +27,11 @@
 ```
 expo/
 ├── device/            Pi에서 실행되는 런타임 25개 ★ Makefile의 DEPLOY_PY와 정확히 일치
-├── tools/             PC 전용 스크립트 17개
+├── tools/             PC 개발 도구와 외부 장치용 펌웨어 원본
 │   ├── data/            데이터 준비 10 + lookalike_exclude.txt
 │   ├── eval/            평가 4 (eval_video_recall · eval_background_fp · render_entity_overlay · build_pseudo_videos)
-│   └── dev/             개발 보조 3 (camera_live · discover · seed_dummy_traffic)
+│   └── dev/             개발 보조 + ESP32 릴레이 펌웨어 원본
+│       └── esp32_relay/   Arduino 스케치 (Pi 배포 대상 아님)
 ├── apps/              사람이 띄워 쓰는 앱
 │   ├── roi_editor/      Pi 로컬 웹 UI (:5000) — 실제 운영 대시보드
 │   ├── simulator/       PC Streamlit 시뮬레이터
@@ -76,7 +77,7 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 `DEPLOY_PY`에도 추가**한다 — 둘이 어긋나면 기기에서 ImportError가 나거나, 더 나쁘게는
 구버전 파일이 조용히 남는다. PC에서만 쓰면 `tools/` 아래 용도별 디렉터리에 넣는다.
 
-## 2-1. `device/` — Pi 런타임 25개 (= `DEPLOY_PY`)
+## 2-1. `device/` — Pi 런타임 34개 (= `DEPLOY_PY`)
 
 | 파일 | 역할 |
 |---|---|
@@ -97,15 +98,18 @@ import가 `try/except ImportError`로 감싸여 있어, 경로가 틀리면 예�
 | `foot_traffic_counter.py` · `detection_events.py` · `fp_hotspots.py` | 유동인구 · 이벤트 로그 · 오탐지 핫스팟 |
 | `gpio_controls.py` · `fan_controller.py` | Wi-Fi 버튼(짧게=전환 · 3초=BLE 페어링 창)·LED·부저 · 냉각팬 |
 | `ble_provisioning.py` | BLE Wi-Fi 페어링 — 대시보드 Web Bluetooth의 상대(`visionguide-ble.service`) |
-| `si4432_radio.py` · `kics_protocol.py` · `rf_audio_trigger.py` | Si4432 수신 · KICS 디코더 · RF 트리거 |
+| `esp32_relay.py` | BLE로 승인된 ESP32 S8050 출력을 제어하고 ROI 진입 펄스를 전달 |
+| `ble_beacon.py` | BLE 기기 검색·비콘 |
+| `si4432_radio.py` · `kics_protocol.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` | Si4432 수신 · KICS 디코더 · RF 트리거·그룹·시험·진단 |
+| `static_mask.py` · `privacy_mask.py` | 정적·개인정보 마스크 적용 |
 
-## 2-2. `tools/` — PC 전용 17개
+## 2-2. `tools/` — PC 개발 도구와 ESP32 펌웨어 원본
 
 | 하위 | 파일 |
 |---|---|
 | `data/` | `resplit_dataset.py`(누수 없는 재분할) · `dataset_prep.py` · `merge_person_dataset.py` · `prepare_{background,lookalike,stick_cctv,night_eval}_*.py` · `fetch_{lvis,openimages}_lookalikes.py` · `make_stratum_variant.py`(층 비율 변형 — split 유지) · `autolabel_videos.py`(영상 → 프레임 + 1차 오토 라벨) · `add_source_variant.py`(검수된 소스를 train에만 더한 변형 — split 유지) · `lookalike_exclude.txt` |
 | `eval/` | `eval_video_recall.py`(**모델 채택 1차 기준**) · `eval_background_fp.py`(배경/유사물 오탐) · `render_entity_overlay.py`(엔티티 ON/OFF 대조 시각화) · `build_pseudo_videos.py`(AIHub 연속 촬영 프레임 → 의사 영상 5편, 평가 표본 1편 → 6편) |
-| `dev/` | `camera_live.py`(PC 뷰어) · `discover.py`(Pi 탐색) · `seed_dummy_traffic.py` |
+| `dev/` | `camera_live.py`(PC 뷰어) · `discover.py`(Pi 탐색) · `seed_dummy_traffic.py` · `esp32_relay/`(ESP32에 별도 업로드하는 Arduino 스케치) |
 
 ## 3. 애플리케이션 디렉터리 (`apps/`)
 

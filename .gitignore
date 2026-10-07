@@ -73,6 +73,8 @@ datasets/staging/
 !.env.example
 *.env
 rf_config.json
+/tools/dev/esp32_relay/secrets.h
+esp32_status.json
 
 # Local dashboard runtime logs
 dashboard/backend/*.log
