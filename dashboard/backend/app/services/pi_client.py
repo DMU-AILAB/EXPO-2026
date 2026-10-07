@@ -15,6 +15,7 @@ Pi 쪽 실제 계약 (apps/roi_editor/server.py):
 | ROI 저장 | `POST /api/rois?camera=<id>` ← `{rois, conf, cooldown, debounce}` — **전체 치환** |
 | 신원 심기 | `POST /api/identity` |
 | 오디오 업로드 | `POST /api/audio/upload` (multipart, 필드명 `file`) → `{"ok":true,"path":"<절대경로>"}` |
+| 코드 업데이트 | `POST /api/update` (multipart `file`, `X-Device-Key`) · `POST /api/update/rollback` · `GET /api/update/status` |
 | 기기 판별 | `GET /api/version` → `{version, product:"VisionGuide", ...}` |
 | 검증 재생 | `/api/replay/{videos,start,pause,step,stop,status,stream.mjpg}` — 세션은 기기에 하나 |
 | 오탐 관리 | `/api/static-mask/{candidates,apply,hits,thumb}`·`DELETE /api/static-mask`·`/api/fp-hotspots` (`?camera=`) |
@@ -152,6 +153,38 @@ class PiClient:
         headers = {"X-Device-Key": current_key} if current_key else None
         res = await self._request("POST", "/api/identity", json=payload, headers=headers)
         return res.json()
+
+    # ------------------------------------------------------------------ 업데이트
+
+    async def post_update(self, bundle: bytes, device_key: str, include_models: bool = False) -> dict:
+        """코드 번들(tar.gz)을 기기에 올린다. 기기는 검증·적용 뒤 **응답을 먼저 주고** 재시작한다.
+
+        `X-Device-Key`가 필요하다 — 코드를 받아 적용하는 경로다. 번들이 수십 MB(모델 포함)일
+        수 있어 타임아웃을 넉넉히 잡는다. 422는 번들 검증 실패(문법·해시 등)이고 이때 기기는
+        그대로다.
+        """
+        files = {"file": ("bundle.tar.gz", bundle, "application/gzip")}
+        try:
+            res = await self._request(
+                "POST", "/api/update", params={"include_models": str(include_models).lower()},
+                files=files, headers={"X-Device-Key": device_key},
+                timeout=httpx.Timeout(connect=5.0, read=120.0, write=120.0, pool=5.0),
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise HTTPException(
+                    status_code=502,
+                    detail="기기에 업데이트 기능이 없습니다 — 처음 한 번은 make sync로 배포하세요",
+                ) from exc
+            raise
+        return res.json()
+
+    async def get_update_status(self) -> dict:
+        """`{bundle_id, has_backup}` — 적용된 번들. 업데이트 기능이 없는 기기는 404."""
+        return await self._get_json("/api/update/status")
+
+    async def post_rollback(self, device_key: str) -> dict:
+        return await self.post_control("/api/update/rollback", device_key)
 
     # ------------------------------------------------------------------ 제어
 

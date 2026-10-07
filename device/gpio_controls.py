@@ -310,6 +310,27 @@ def open_ble_pairing(buzzer: "Buzzer") -> None:
     print("[GPIO] 블루투스 페어링 창 열림 (3분)")
 
 
+TAKEOVER_POLL_SEC = 1.0
+
+
+def _takeover_beep_loop(buzzer: "Buzzer", stop: threading.Event) -> None:
+    """신원이 기존 키 없이 덮어써지면(인수) 부저를 한 번 길게 울린다.
+
+    `roi_editor`가 남긴 신호 파일을 집어간다 — 부저(GPIO25)는 이 프로세스가 단독
+    소유라 `roi_editor`가 직접 울릴 수 없다. 페어링 창(길게 1회 0.8초)과 같은 소리지만
+    버튼을 누르지 않았는데 울리므로 구분된다.
+    """
+    try:
+        from device_identity import consume_takeover
+    except ImportError:
+        print("[GPIO] device_identity 모듈이 없어 인수 알림을 쓰지 않습니다")
+        return
+    while not stop.wait(TAKEOVER_POLL_SEC):
+        if consume_takeover(_HERE):
+            print("[GPIO] 기기 신원 인수 감지 — 부저 알림")
+            _beep(buzzer, 1, on_time=0.8, gap=0.0)
+
+
 def main() -> None:
     # 짧게 누름 = 놓을 때 Wi-Fi 전환, 3초 누름 = 블루투스 페어링 창.
     # 누르는 순간 전환하면 길게 누르려던 사람도 전환이 먼저 일어나므로, 판정을
@@ -328,6 +349,8 @@ def main() -> None:
         name="status-led", daemon=True,
     )
     status_thread.start()
+    threading.Thread(target=_takeover_beep_loop, args=(buzzer, stop),
+                     name="takeover-beep", daemon=True).start()
     gesture = {"held": False}
 
     def _pressed() -> None:

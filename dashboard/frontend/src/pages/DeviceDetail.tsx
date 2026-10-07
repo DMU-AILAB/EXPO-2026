@@ -12,6 +12,8 @@ import { ApiError } from '../api/client'
 import { describe } from './device/shared'
 import CalibrationTab from './device/CalibrationTab'
 import NetworkTab from './device/NetworkTab'
+import DeviceUpdatePanel from '../components/DeviceUpdatePanel'
+import DeviceProvisionPanel from '../components/DeviceProvisionPanel'
 // [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다. 다시 켜려면 이 표시를 grep해 주석을 풀 것.
 // import RecordingTab from './device/RecordingTab'
 import ReplayTab from './device/ReplayTab'
@@ -1033,6 +1035,11 @@ function SettingsTab({ device, reload }: Ctx) {
             )}
           </div>
         </div>
+
+        <DeviceProvisionPanel deviceId={device.id} provisioned={device.provisioned}
+          offline={device.status === 'offline'} onDone={reload} />
+
+        <DeviceUpdatePanel deviceId={device.id} offline={device.status === 'offline'} />
 
         {/* 예약 재부팅 */}
         <div className="glass-panel p-5">

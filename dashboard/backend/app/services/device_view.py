@@ -100,6 +100,8 @@ def build_device_summary(db: Session, device: Device, buffered: Optional[dict],
         "name": device.name,
         "ip": device.ip,
         "location": device.location,
+        # 기기에 신원이 심어졌는가 — 없으면 재시작·업데이트 같은 원격 제어를 할 수 없다.
+        "provisioned": bool(device.control_key),
         "status": effective_status(device, buffered),
         "last_seen": device.last_seen or src.get("updated_at"),
         "cpu": src.get("cpu_percent"),

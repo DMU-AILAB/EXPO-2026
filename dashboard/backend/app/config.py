@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     
     cors_origins: str = "http://localhost:5173"
+
+    # 기기 업데이트 번들을 만들 **저장소 루트**. 비우면 이 파일 기준 상위 4단계(저장소 루트).
+    # 번들 목록은 이 루트의 `Makefile` DEPLOY_PY가 단일 출처다.
+    repo_root: str = ""
     
     initial_admin_username: str = "admin"
     initial_admin_password: str = "admin"

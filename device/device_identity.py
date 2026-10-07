@@ -26,7 +26,7 @@ from pathlib import Path
 
 __all__ = [
     "APP_VERSION", "DeviceIdentity", "load_identity", "save_identity",
-    "clear_identity", "default_path",
+    "clear_identity", "default_path", "signal_takeover", "consume_takeover",
 ]
 
 # 기기가 스스로 밝히는 버전. 서버의 기기 탐색(`GET /api/scan/{id}`)이 `version`
@@ -35,6 +35,9 @@ __all__ = [
 APP_VERSION = "1.0.0"
 
 _FILENAME = "device_identity.json"
+# 인수(기존 키 없이 신원이 덮어써짐)가 일어났다는 신호 파일. `roi_editor`가 만들고
+# GPIO를 쥔 `gpio_controls`가 집어가 부저를 울린다 — 둘은 다른 프로세스라 파일로 넘긴다.
+_TAKEOVER_FLAG = "takeover.flag"
 
 
 @dataclass
@@ -107,6 +110,26 @@ def clear_identity(path: Path) -> bool:
     """등록 해제. 파일이 없으면 False."""
     try:
         Path(path).unlink()
+        return True
+    except OSError:
+        return False
+
+
+def signal_takeover(base: Path) -> None:
+    """인수가 일어났음을 알린다 — 부저를 울릴 프로세스가 집어간다. 실패해도 조용히 넘어간다.
+
+    부저는 부가 알림이라, 이 신호를 못 남긴다고 신원 저장이 실패해선 안 된다.
+    """
+    try:
+        (Path(base) / _TAKEOVER_FLAG).write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def consume_takeover(base: Path) -> bool:
+    """신호가 있으면 지우고 True. 한 번의 인수에 한 번만 참이다."""
+    try:
+        (Path(base) / _TAKEOVER_FLAG).unlink()
         return True
     except OSError:
         return False

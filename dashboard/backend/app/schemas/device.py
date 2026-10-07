@@ -13,6 +13,15 @@ class DeviceCreate(BaseModel):
 class ProvisionDeviceRequest(BaseModel):
     pass
 
+class UpdateRequest(BaseModel):
+    include_models: bool = False
+
+
+class BulkUpdateRequest(BaseModel):
+    device_ids: list[str]
+    include_models: bool = False
+
+
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     location: Optional[str] = None

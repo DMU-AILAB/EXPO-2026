@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+import asyncio
 import hashlib
 import json
 import logging
@@ -12,10 +13,13 @@ from ..models import Device
 from ..models.camera import Camera
 from ..models.event import DetectionEvent
 from ..models.roi import Roi
-from ..schemas.device import DeviceCreate, DeviceUpdate, ProvisionDeviceRequest
+from ..schemas.device import (
+    BulkUpdateRequest, DeviceCreate, DeviceUpdate, ProvisionDeviceRequest, UpdateRequest,
+)
 from ..deps import get_current_user
 from ..services.device_address import adopt_peer_ip, peer_ipv4
 from ..services.device_view import build_device_summary, build_status_payload, is_stale
+from ..services.bundle_builder import Bundle, BundleError, build_bundle
 from ..services.pi_client import PiClient
 from ..services.heartbeat_service import get_buffered_cameras, get_buffered_status
 from ..utils.timeutil import kst_day_bounds_utc, utcnow
@@ -208,6 +212,123 @@ async def provision_device(device_id: str, db: Session = Depends(get_db),
     db.commit()
 
     return {"data": {"id": device.id, "api_key": raw_api_key, "provisioned": True}, "ok": True}
+
+# --------------------------------------------------------------------------- 코드 업데이트
+#
+# SSH 없이 대시보드에서 Pi 코드를 올린다. 번들은 `Makefile` DEPLOY_PY 그대로
+# (`bundle_builder`), Pi는 `device/self_update.py`가 검증·적용한다. **`/update-info`와
+# `/update`는 `/{device_id}`보다 먼저 선언해야 한다** — 아니면 경로 변수로 먹힌다.
+
+# 재시작한 기기가 새 번들로 돌아올 때까지 기다리는 시간. 테스트가 줄여 쓴다.
+_UPDATE_FIRST_WAIT_SEC = 3.0
+_UPDATE_POLL_SEC = 2.0
+_UPDATE_WAIT_SEC = 60.0
+
+
+def _bundle_or_503(include_models: bool) -> Bundle:
+    try:
+        return build_bundle(include_models)
+    except BundleError as exc:
+        raise HTTPException(status_code=503, detail=f"번들을 만들 수 없습니다: {exc}") from exc
+
+
+async def _wait_for_bundle(client: PiClient, bundle_id: str) -> bool:
+    """기기가 재시작을 끝내고 `bundle_id`를 보고할 때까지 기다린다. 못 돌아오면 False."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _UPDATE_WAIT_SEC
+    await asyncio.sleep(_UPDATE_FIRST_WAIT_SEC)       # 기기는 응답 1초 뒤에 재시작한다
+    while True:
+        try:
+            if (await client.get_update_status()).get("bundle_id") == bundle_id:
+                return True
+        except HTTPException:
+            pass                                       # 재시작 중이라 연결이 안 된다
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(_UPDATE_POLL_SEC)
+
+
+async def _update_one(db: Session, device: Device, bundle: Bundle, include_models: bool) -> dict:
+    key = await _device_key(db, device)
+    client = PiClient(device.ip)
+    result = await client.post_update(bundle.data, key, include_models)
+    came_back = await _wait_for_bundle(client, bundle.bundle_id)
+    return {"device_id": device.id, "ok": True, "bundle_id": bundle.bundle_id,
+            "applied": result.get("applied"), "came_back": came_back}
+
+
+def _error_text(exc: HTTPException) -> str:
+    d = exc.detail
+    return d.get("message", str(d)) if isinstance(d, dict) else str(d)
+
+
+@router.get("/update-info")
+async def get_update_info(current_user = Depends(get_current_user)):
+    """서버가 지금 올릴 번들의 id — 기기가 보고한 `bundle_id`와 비교해 최신 여부를 안다."""
+    bundle = _bundle_or_503(False)
+    return {"data": {"bundle_id": bundle.bundle_id, "file_count": bundle.file_count}, "ok": True}
+
+
+@router.post("/update")
+async def update_devices(req: BulkUpdateRequest, db: Session = Depends(get_db),
+                         current_user = Depends(get_current_user)):
+    """여러 기기에 같은 번들을 올린다. **기기별 결과를 따로** 돌려주고 한 대가 실패해도
+    나머지는 계속한다. 기기들은 서로 독립이라 동시에 진행한다."""
+    bundle = _bundle_or_503(req.include_models)
+
+    async def run(device_id: str) -> dict:
+        device = db.query(Device).filter(Device.id == device_id).first()
+        if not device:
+            return {"device_id": device_id, "ok": False, "error": "디바이스를 찾을 수 없습니다"}
+        try:
+            return await _update_one(db, device, bundle, req.include_models)
+        except HTTPException as exc:
+            logger.warning("기기 업데이트 실패 (%s): %s", device_id, exc.detail)
+            return {"device_id": device_id, "ok": False, "error": _error_text(exc)}
+
+    results = await asyncio.gather(*(run(i) for i in req.device_ids))
+    return {"data": {"bundle_id": bundle.bundle_id, "results": list(results)}, "ok": True}
+
+
+@router.post("/{device_id}/update")
+async def update_device_code(device_id: str, req: UpdateRequest | None = None,
+                             db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
+    include_models = bool(req and req.include_models)
+    bundle = _bundle_or_503(include_models)
+    return {"data": await _update_one(db, device, bundle, include_models), "ok": True}
+
+
+@router.get("/{device_id}/update-status")
+async def get_device_update_status(device_id: str, db: Session = Depends(get_db),
+                                   current_user = Depends(get_current_user)):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
+    latest = _bundle_or_503(False).bundle_id
+    try:
+        status = await PiClient(device.ip).get_update_status()
+    except HTTPException as exc:
+        # 업데이트 기능이 없는 옛 기기(404)나 꺼진 기기 — 버전을 모른다고만 답한다.
+        return {"data": {"bundle_id": "", "has_backup": False, "latest": latest,
+                         "up_to_date": False, "error": _error_text(exc)}, "ok": True}
+    current = status.get("bundle_id", "")
+    return {"data": {"bundle_id": current, "has_backup": bool(status.get("has_backup")),
+                     "latest": latest, "up_to_date": current == latest}, "ok": True}
+
+
+@router.post("/{device_id}/update/rollback")
+async def rollback_device_update(device_id: str, db: Session = Depends(get_db),
+                                 current_user = Depends(get_current_user)):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
+    key = await _device_key(db, device)
+    result = await PiClient(device.ip).post_rollback(key)
+    return {"data": result, "ok": True}
+
 
 @router.get("/{device_id}")
 async def get_device(device_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
