@@ -51,6 +51,7 @@ import static_mask as _static_mask  # noqa: E402
 from camera_config import (  # noqa: E402
     MODEL_VARIANTS, CAPTURE_PRESETS, CameraProfile,
     _DEFAULT_MODEL_VARIANT, _DEFAULT_REQUIRE_PERSON, _DEFAULT_ROI_CROP_INFERENCE,
+    _DEFAULT_PRIVACY_MASK, _DEFAULT_PRIVACY_MASK_RATIO,
     load_camera_config, save_camera_config, validate_camera_config,
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
@@ -549,6 +550,8 @@ class CameraProfilePayload(BaseModel):
     # 기본값으로 되돌아간다(require_person_for_trigger가 실제로 그 상태였다).
     require_person_for_trigger: bool = _DEFAULT_REQUIRE_PERSON
     roi_crop_inference: bool = _DEFAULT_ROI_CROP_INFERENCE
+    privacy_mask: bool = _DEFAULT_PRIVACY_MASK
+    privacy_mask_ratio: float = _DEFAULT_PRIVACY_MASK_RATIO
 
 
 class CamerasPayload(BaseModel):

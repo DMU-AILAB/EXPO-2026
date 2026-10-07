@@ -712,7 +712,8 @@ main {
     <button class="tab-btn active" data-tab="monitoring">모니터링</button>
     <button class="tab-btn" data-tab="roi">ROI 편집</button>
     <button class="tab-btn" data-tab="stats">통계</button>
-    <button class="tab-btn" data-tab="recordings">녹화</button>
+    <!-- [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다(Pi가 /recording/* 에 404). 다시 켜려면 이 표시를 grep해 주석을 풀 것. -->
+    <!-- <button class="tab-btn" data-tab="recordings">녹화</button> -->
     <button class="tab-btn" data-tab="replay">검증</button>
   </nav>
 </header>
@@ -834,7 +835,7 @@ main {
     </div>
     <div class="roi-body">
       <div id="viewer">
-        <button id="recordBtn"><span class="rec-dot"></span><span id="recordBtnLabel">녹화 시작</span></button>
+        <!-- [녹화 비활성] <button id="recordBtn"><span class="rec-dot"></span><span id="recordBtnLabel">녹화 시작</span></button> -->
         <div id="canvas-wrap">
           <img id="stream" alt="">
           <canvas id="canvas"></canvas>
@@ -907,6 +908,12 @@ main {
           <div class="cam-enabled-row">
             <input type="checkbox" id="camRoiCrop"> <span>안내 구역만 잘라서 인식 (먼 곳의 지팡이 인식률 향상 — 구역 밖 사람은 유동인구 집계에서 빠짐)</span>
           </div>
+          <div class="cam-enabled-row">
+            <input type="checkbox" id="camPrivacyMask"> <span>얼굴 모자이크 (기본 켜짐 — 화면에 나가는 영상에서만 가리며 탐지·안내에는 영향 없음. 구역만 잘라서 인식과 같이 쓰면 전체 화면 사람 탐지를 한 번 더 돌려 느려질 수 있음)</span>
+          </div>
+          <label for="camPrivacyRatio">모자이크 범위 — 사람 키의 위쪽 <span id="camPrivacyRatioVal">25</span>%</label>
+          <input type="range" id="camPrivacyRatio" min="10" max="60" step="5" value="25"
+                 oninput="document.getElementById('camPrivacyRatioVal').textContent=this.value">
           <div class="form-btns">
             <button class="btn btn-save" id="btnSaveCamera">저장</button>
             <button class="btn btn-danger" id="btnDeleteCamera">삭제</button>
@@ -1025,6 +1032,7 @@ main {
     </div>
   </div>
 
+  <!-- [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다(Pi가 /recording/* 에 404). 다시 켜려면 이 표시를 grep해 주석을 풀 것.
   <div class="page" id="page-recordings">
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
       <div class="page-title" style="margin-bottom:0">🎬 녹화 목록</div>
@@ -1035,7 +1043,7 @@ main {
     <div id="clipList"><div class="roi-meta">불러오는 중...</div></div>
   </div>
 
-  <!-- 녹화 영상 모달 플레이어 -->
+  <!-- 녹화 영상 모달 플레이어 --&gt;
   <div id="clipModal" onclick="if(event.target===this)closeClipModal()">
     <div id="clipModalInner">
       <div id="clipModalHeader">
@@ -1049,6 +1057,7 @@ main {
       </div>
     </div>
   </div>
+  -->
 
   <!-- ============================================================
        검증 — 저장된 영상을 배포와 같은 경로로 돌려 눈으로 확인한다.
@@ -1316,7 +1325,7 @@ async function loadCameras() {
   }
   renderCameraSelector();
   renderMonitoringView();
-  populateRecordingsCameraFilter();
+  // [녹화 비활성] populateRecordingsCameraFilter();
   if (cameras.length > 0) {
     const preferred = cameras.find(c => c.id === activeCameraId) || cameras.find(c => c.enabled) || cameras[0];
     switchCamera(preferred.id);
@@ -1396,6 +1405,8 @@ async function addCameraFromScan(num, model) {
     swap_rb: false,
     require_person_for_trigger: true,
     roi_crop_inference: false,
+    privacy_mask: true,
+    privacy_mask_ratio: 0.25,
     model_variant: 'v2_640',
   };
 
@@ -1461,9 +1472,7 @@ function _cameraCellsHtml(list) {
   return list.map(c => `
     <div class="dual-cell" data-cam="${escAttr(c.id)}" data-port="${c.port}">
       <div class="dual-label">${escHtml(c.label || c.id)}${c.enabled === false ? ' (비활성)' : ''}</div>
-      <button class="cell-record-btn" onclick="toggleCellRecording(${c.port}, this)">
-        <span class="rec-dot"></span><span class="cell-record-label">녹화 시작</span>
-      </button>
+      ${'' /* [녹화 비활성] 녹화 버튼 제거 — 개인정보 보호 */}
       <img src="${streamUrlFor(c.port)}" alt="${escAttr(c.id)}"
            onload="this.closest('.dual-cell').style.display=''"
            onerror="this.closest('.dual-cell').style.display='none'">
@@ -1538,6 +1547,11 @@ function fillCameraForm() {
   document.getElementById('camSwapRb').checked = !!cam.swap_rb;
   document.getElementById('camRequirePerson').checked = !!cam.require_person_for_trigger;
   document.getElementById('camRoiCrop').checked = !!cam.roi_crop_inference;
+  // 필드가 없는 기존 설정은 코드 기본값(켬)과 같게 보여 준다
+  document.getElementById('camPrivacyMask').checked = cam.privacy_mask !== false;
+  const _pr = Math.round((cam.privacy_mask_ratio ?? 0.25) * 100);
+  document.getElementById('camPrivacyRatio').value = _pr;
+  document.getElementById('camPrivacyRatioVal').textContent = _pr;
   document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
   document.getElementById('camCapturePreset').value = cam.capture_preset || 'auto';
 }
@@ -1574,6 +1588,8 @@ document.getElementById('btnSaveCamera').addEventListener('click', async () => {
   cam.swap_rb             = document.getElementById('camSwapRb').checked;
   cam.require_person_for_trigger = document.getElementById('camRequirePerson').checked;
   cam.roi_crop_inference  = document.getElementById('camRoiCrop').checked;
+  cam.privacy_mask        = document.getElementById('camPrivacyMask').checked;
+  cam.privacy_mask_ratio  = (parseInt(document.getElementById('camPrivacyRatio').value, 10) || 25) / 100;
   cam.model_variant       = document.getElementById('camModelVariant').value;
   cam.capture_preset      = document.getElementById('camCapturePreset').value;
 
@@ -1810,7 +1826,7 @@ document.querySelectorAll('input[name="fZoneType"]').forEach(radio => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (document.getElementById('clipModal').classList.contains('active')) { closeClipModal(); return; }
+    if (document.getElementById('clipModal')?.classList.contains('active')) { closeClipModal(); return; }
     cancelDrawing();
   }
 });
@@ -2480,11 +2496,13 @@ function formatElapsed(sec) {
 }
 
 function setRecordButtonState(recording, elapsedSec) {
+  if (!recordBtn) return;      // [녹화 비활성] 버튼이 없다
   recordBtn.classList.toggle('recording', recording);
   recordBtnLabel.textContent = recording ? `녹화 중지 ${formatElapsed(elapsedSec || 0)}` : '녹화 시작';
 }
 
 async function refreshRecordButton() {
+  if (!recordBtn) return;      // [녹화 비활성] 없는 경로(/recording/*)를 부르지 않는다
   clearInterval(recordElapsedTimer);
   try {
     const res  = await fetch(recordingUrlFor(currentPort, '/recording/status'));
@@ -2503,7 +2521,7 @@ async function refreshRecordButton() {
   }
 }
 
-recordBtn.addEventListener('click', async () => {
+if (recordBtn) recordBtn.addEventListener('click', async () => {
   const wasRecording = recordBtn.classList.contains('recording');
   try {
     const res  = await fetch(
@@ -2645,7 +2663,7 @@ async function loadClipList() {
   }
 }
 
-document.getElementById('recordingsCameraFilter').addEventListener('change', loadClipList);
+document.getElementById('recordingsCameraFilter')?.addEventListener('change', loadClipList);
 
 function playClip(clipId, port, dateLabel) {
   const url = recordingUrlFor(port, `/recording/clips/${clipId}.mp4`);

@@ -73,6 +73,7 @@ DEPLOY_PY = \
 	device/detection_events.py \
 	device/fp_hotspots.py \
 	device/static_mask.py \
+	device/privacy_mask.py \
 	device/ble_beacon.py
 
 # Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.

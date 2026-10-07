@@ -66,6 +66,12 @@ from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
                            adapt_profiles_to_hardware, coral_present)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 import static_mask as _static_mask
+from privacy_mask import PrivacyMasker, mask_box as _mask_box
+
+# 크롭 추론 + 모자이크를 같이 쓸 때 전체 프레임 person 탐지를 몇 프레임마다 한 번 돌리는가.
+# 크롭 밖의 사람은 본 추론에 안 보이므로 별도 패스가 있어야 "찍히는 모든 영역"이 가려진다.
+# 사이 프레임은 PrivacyMasker의 유지 시간(초)과 박스 마진이 메운다.
+PRIVACY_FULLFRAME_EVERY = 3
 # 게이트 순서·상수·연관 로직의 단일 출처. 배포/평가/재생검증이 같은 것을 써야 한다.
 # 상수는 여기서 재수출한다 — `eval_video_recall.py`가 camera_live_pi에서 import해 왔다.
 from gate_chain import (  # noqa: F401  (재수출)
@@ -665,6 +671,12 @@ def _apply_channel_swap(frame: np.ndarray, enabled: bool) -> np.ndarray:
 
 # ── 영상 녹화 (수동 시작/중지 클립) ───────────────────────────────────
 #
+# ★ 배포에서는 비활성이다(개인정보 보호). 아래 `ClipRecorder`·`_route_recording`은 순수
+#   코드로 남겨 두었지만, 실제로 쓰는 지점 — MJPEGServer의 인스턴스 생성, push()의 write,
+#   `/recording/*` HTTP 분기, 오버레이 이전 프레임 복사 — 은 전부 주석 처리했다.
+#   다시 켜려면 아래 `[녹화 비활성]` 표시를 grep해 주석을 풀 것. 영상 파일에는 얼굴이
+#   모자이크 없이 남을 수 있으므로(raw 녹화는 특히) 켜기 전에 정책을 재검토해야 한다.
+#
 # 개인정보 정책 예외: 대시보드 설계 문서(원본 영상 저장 금지, BBox/통계만 저장)는 상용
 # 배치 기준이며, 이번 데모 범위에서는 사용자 승인으로 예외 적용한다(CLAUDE.md 참고).
 # 그래서 별도 raw 프레임 캡처 경로 없이 MJPEGServer.push()가 받는, 이미 회전/탐지
@@ -939,7 +951,8 @@ class MJPEGServer:
         # 여기에 누적한다 — 서버는 시작/취소 신호와 진행 상황만 들고 있다.
         self._calib: dict | None = None
         self._calib_result: dict | None = None
-        self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
+        # [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다.
+        # self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
 
     # ── 구조물 수집 (새벽 캘리브레이션) ───────────────────────────
     #
@@ -1007,8 +1020,9 @@ class MJPEGServer:
                 self._fps_samples.append(fps)
                 if len(self._fps_samples) > 30:
                     self._fps_samples.pop(0)
-        self.recorder.write(raw if (raw is not None and self.recorder.wants_raw)
-                            else frame)
+        # [녹화 비활성] 개인정보 보호
+        # self.recorder.write(raw if (raw is not None and self.recorder.wants_raw)
+        #                     else frame)
 
     def _avg_fps(self) -> float:
         with self._lock:
@@ -1066,33 +1080,36 @@ class MJPEGServer:
                         self._write_json(200, srv.calibration_status())
                     return True
 
-                route = _route_recording(method, self.path)
-                if route is None:
-                    return False
-                action, clip_id = route
-                if action == "status":
-                    self._write_json(200, srv.recorder.status())
-                elif action == "start":
-                    # ?raw=1 이면 오버레이 없는 원본을 저장한다(학습용 촬영).
-                    raw = parse_qs(urlsplit(self.path).query).get(
-                        "raw", ["0"])[0] not in ("0", "", "false")
-                    with srv._lock:
-                        shape = srv._frame_shape
-                    if shape is None:
-                        self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
-                    else:
-                        result = srv.recorder.start(shape, srv._avg_fps(), raw=raw)
-                        self._write_json(200 if result.get("ok") else 409, result)
-                elif action == "stop":
-                    result = srv.recorder.stop()
-                    self._write_json(200 if result.get("ok") else 409, result)
-                elif action == "list":
-                    self._write_json(200, {"clips": srv.recorder.list_clips()})
-                elif action == "clip_video":
-                    self._serve_clip_file(srv.recorder.clip_path(clip_id, "video"), "video/mp4")
-                elif action == "clip_thumb":
-                    self._serve_clip_file(srv.recorder.clip_path(clip_id, "thumb"), "image/jpeg")
-                return True
+                # [녹화 비활성] 개인정보 보호 — `/recording/*`은 라우트가 없으므로
+                # 호출하면 do_GET/do_POST의 기본 404로 떨어진다.
+                # route = _route_recording(method, self.path)
+                # if route is None:
+                #     return False
+                # action, clip_id = route
+                # if action == "status":
+                #     self._write_json(200, srv.recorder.status())
+                # elif action == "start":
+                #     # ?raw=1 이면 오버레이 없는 원본을 저장한다(학습용 촬영).
+                #     raw = parse_qs(urlsplit(self.path).query).get(
+                #         "raw", ["0"])[0] not in ("0", "", "false")
+                #     with srv._lock:
+                #         shape = srv._frame_shape
+                #     if shape is None:
+                #         self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
+                #     else:
+                #         result = srv.recorder.start(shape, srv._avg_fps(), raw=raw)
+                #         self._write_json(200 if result.get("ok") else 409, result)
+                # elif action == "stop":
+                #     result = srv.recorder.stop()
+                #     self._write_json(200 if result.get("ok") else 409, result)
+                # elif action == "list":
+                #     self._write_json(200, {"clips": srv.recorder.list_clips()})
+                # elif action == "clip_video":
+                #     self._serve_clip_file(srv.recorder.clip_path(clip_id, "video"), "video/mp4")
+                # elif action == "clip_thumb":
+                #     self._serve_clip_file(srv.recorder.clip_path(clip_id, "thumb"), "image/jpeg")
+                # return True
+                return False
 
             def do_GET(self):
                 if self._handle_recording_route("GET"):
@@ -1443,6 +1460,12 @@ def _parse_args() -> argparse.Namespace:
                         "선/기둥/나뭇가지 오탐지 억제). 끄려면 --no-require-person. "
                         "--camera-config 미지정 시에만 사용 — 다중 카메라는 카메라별 "
                         "require_person_for_trigger 설정")
+    p.add_argument("--privacy-mask", action=argparse.BooleanOptionalAction, default=True,
+                   help="스트림 출력에서 사람 얼굴(박스 상단)을 모자이크 (기본 켜짐 — 탐지는 "
+                        "원본 프레임으로 한다). --camera-config 미지정 시에만 사용 — 다중 "
+                        "카메라는 카메라별 privacy_mask 설정")
+    p.add_argument("--privacy-mask-ratio", type=float, default=0.25,
+                   help="사람 박스 높이 중 모자이크할 상단 비율 (0.05~0.6, 기본 0.25)")
     return p.parse_args()
 
 
@@ -1632,6 +1655,11 @@ class CameraPipeline:
             roi_crop: tuple[int, int, int, int] | None = None
             roi_crop_dirty = True
 
+            # 얼굴 모자이크 — 추론·게이트가 끝난 뒤 출력 프레임에만 적용한다.
+            masker = (PrivacyMasker(profile.privacy_mask_ratio)
+                      if getattr(profile, "privacy_mask", False) else None)
+            privacy_frame_no = 0
+
             if _TRAFFIC_AVAILABLE and not self.disable_traffic_count:
                 foot_counter = FootTrafficCounter(profile.traffic_db)
 
@@ -1718,6 +1746,20 @@ class CameraPipeline:
                         and getattr(backend, "collect_floor", None) != collect_floor):
                     backend.set_collect_floor(collect_floor)
 
+                # 모자이크 전용 전체 프레임 패스 — 크롭 추론 중에는 크롭 밖의 사람이 본
+                # 추론에 안 보인다. 결과는 **마스크에만** 쓰고 게이트·트래커·유동인구에는
+                # 넣지 않는다(크롭 모드의 집계 범위 의미 유지). 본 추론보다 **먼저** 돌려야
+                # `backend.last_collect_dets`가 본 추론의 것으로 남아 구조물 수집이 안 깨진다.
+                privacy_extra: list = []
+                if masker is not None and roi_crop:
+                    if privacy_frame_no % PRIVACY_FULLFRAME_EVERY == 0:
+                        try:
+                            privacy_extra = [d["bbox"] for d in backend.predict(frame)
+                                             if d.get("class") == PERSON_CLASS_ID]
+                        except Exception as e:      # noqa: BLE001
+                            print(f"[WARN][{tag}] 모자이크용 전체 프레임 탐지 실패: {e}")
+                    privacy_frame_no += 1
+
                 try:
                     if roi_crop:
                         cx0, cy0, cx1, cy1 = roi_crop
@@ -1736,6 +1778,14 @@ class CameraPipeline:
                 except Exception as e:
                     print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
                     break
+
+                # 모자이크 대상은 **제외구역 필터 이전**의 사람 탐지다. 이후 값을 쓰면
+                # 제외구역·구조물 마스크 안에 선 사람의 얼굴이 그대로 나간다.
+                if masker is not None:
+                    masker.update(
+                        privacy_extra + [d["bbox"] for d in dets
+                                         if d.get("class") == PERSON_CLASS_ID],
+                        time.time())
 
                 # 지형지물 오탐지 방지용 제외구역 — 트래킹 이전에 raw detection 단계에서
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
@@ -1769,6 +1819,15 @@ class CameraPipeline:
                                 crop = frame[max(0, y1 - pad):y2 + pad,
                                              max(0, x1 - pad):x2 + pad]
                                 if crop.size:
+                                    if masker is not None:
+                                        # 후보 썸네일은 디스크에 남는다 — 사람 후보를 잘라
+                                        # 저장하면 얼굴이 파일로 남으므로 여기서도 가린다.
+                                        ox, oy = max(0, x1 - pad), max(0, y1 - pad)
+                                        crop = crop.copy()
+                                        for bx1, by1, bx2, by2 in masker.boxes():
+                                            _mask_box(crop, (bx1 - ox, by1 - oy,
+                                                             bx2 - ox, by2 - oy),
+                                                      masker.ratio)
                                     name = f"c{ci:03d}.jpg"
                                     cv2.imwrite(str(calib_dir / name), crop)
                                     calib.set_thumb(ci, name)
@@ -1796,13 +1855,18 @@ class CameraPipeline:
                 g      = gates.step(dets, frame.shape[:2], now)
                 tracks = g.tracks
 
-                # 학습용 촬영(raw 녹화) 중에만 오버레이 이전 원본을 떠 둔다.
-                # 아래 그리기 함수들이 frame을 **제자리에서** 고치므로, 여기서
-                # 복사하지 않으면 원본이 남지 않는다. raw가 꺼져 있으면 복사하지
-                # 않는다 — 1080p 한 장 복사가 Pi에서 1~2ms다.
-                raw_frame = (frame.copy()
-                             if (mjpeg is not None and mjpeg.recorder.wants_raw)
-                             else None)
+                # [녹화 비활성] 개인정보 보호 — raw 녹화용 오버레이 이전 프레임 복사.
+                # raw_frame = (frame.copy()
+                #              if (mjpeg is not None and mjpeg.recorder.wants_raw)
+                #              else None)
+
+                # 추론·게이트·ROI 판정이 모두 끝났으므로 제자리 모자이크가 안전하다.
+                # 박스·ROI·HUD는 그 위에 그려져 선이 뭉개지지 않는다. 트래커가 들고 있는
+                # coasting 사람 박스도 합친다(탐지가 끊긴 프레임을 메운다).
+                if masker is not None:
+                    masker.update([t["bbox"] for t in tracks
+                                   if t.get("class") == PERSON_CLASS_ID], now)
+                    masker.apply(frame)
 
                 _draw_detections(frame, tracks)
 
@@ -1969,7 +2033,7 @@ class CameraPipeline:
 
                 if self.headless:
                     assert mjpeg is not None
-                    mjpeg.push(frame, fps, raw=raw_frame)
+                    mjpeg.push(frame, fps)
                 else:
                     cv2.imshow(f"VisionGuide — {tag}", frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -2163,6 +2227,8 @@ def main() -> None:
             rotation=0, inference_backend=args.inference_backend, roi_config=args.roi_config or "",
             port=args.port, traffic_db=args.traffic_db, model_variant=args.model_variant,
             require_person_for_trigger=args.require_person,
+            privacy_mask=args.privacy_mask,
+            privacy_mask_ratio=args.privacy_mask_ratio,
         )]
         if args.auto_hardware:
             profiles = _apply_auto_hardware(profiles)

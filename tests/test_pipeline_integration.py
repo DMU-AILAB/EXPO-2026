@@ -90,8 +90,8 @@ class _WalkingScene:
 
 
 def _run_pipeline(tmp_path, monkeypatch, *, frames=60, with_roi=True,
-                  traffic=True, port=18100):
-    scene = _WalkingScene(frames)
+                  traffic=True, port=18100, scene_cls=None, **profile_kw):
+    scene = (scene_cls or _WalkingScene)(frames)
     monkeypatch.setattr(m, "build_camera",
                         lambda source, backend="auto", capture_preset="auto", tag="":
                         scene)
@@ -117,7 +117,7 @@ def _run_pipeline(tmp_path, monkeypatch, *, frames=60, with_roi=True,
     )
     profile = cc.CameraProfile(id="camI", source="I", port=port,
                                roi_config=roi_path, traffic_db=db,
-                               inference_backend="tflite")
+                               inference_backend="tflite", **profile_kw)
     pipe = m.CameraPipeline(profile, shared, base_conf=0.5, headless=True,
                             disable_traffic_count=not traffic)
     pipe.start()
@@ -257,6 +257,10 @@ def test_raw_flag_is_recorded_in_the_sidecar(tmp_path):
     assert json.loads(sidecars[0].read_text())["raw"] is True
 
 
+_RECORDING_OFF = pytest.mark.skip(reason="[녹화 비활성] 개인정보 보호 — MJPEGServer가 recorder를 만들지 않는다")
+
+
+@_RECORDING_OFF
 def test_push_records_raw_but_streams_annotated(tmp_path):
     """★ 핵심 계약 — 화면/스트리밍은 오버레이, **녹화만** 원본.
 
@@ -279,6 +283,7 @@ def test_push_records_raw_but_streams_annotated(tmp_path):
         assert srv._jpeg, "스트리밍 프레임이 만들어지지 않았다"
 
 
+@_RECORDING_OFF
 def test_push_falls_back_to_annotated_when_raw_is_off(tmp_path):
     srv = m.MJPEGServer(port=18198, recordings_dir=tmp_path)
     written = []
@@ -398,3 +403,115 @@ def test_calibration_collects_a_structure_that_flickers_around_the_threshold(
     assert thumbs, "후보 썸네일이 저장되지 않았다"
     crop = __import__("cv2").imread(str(thumbs[0]))
     assert crop is not None and crop.shape[0] > 150    # 구조물 박스(높이 202px) 자리에서 잘렸다
+
+
+# --------------------------------------------------------------------- #
+# 얼굴 모자이크 — 추론은 원본, 출력만 가린다
+
+class _TexturedScene(_WalkingScene):
+    """균일한 검정이면 모자이크 전후를 구분할 수 없어 고정 노이즈 프레임을 쓴다.
+    백엔드가 **받은** 프레임의 해시를 모아 "추론에는 원본이 들어갔는가"를 확인한다."""
+
+    def __init__(self, frames: int = 60) -> None:
+        super().__init__(frames)
+        rng = np.random.default_rng(7)
+        self.base = rng.integers(0, 256, (self.H, self.W, 3), dtype=np.uint8)
+        self.seen_frames: list[np.ndarray] = []
+
+    def read(self):
+        if self.i >= self.total:
+            return False, None
+        self.i += 1
+        return True, self.base.copy()
+
+    def predict(self, frame):
+        self.seen_frames.append(frame.copy())
+        return super().predict(frame)
+
+
+def _capture_pushed(monkeypatch) -> list:
+    pushed: list = []
+    original = m.MJPEGServer.push
+
+    def spy(self, frame, fps=None, raw=None):
+        pushed.append(frame.copy())
+        return original(self, frame, fps)
+
+    monkeypatch.setattr(m.MJPEGServer, "push", spy)
+    return pushed
+
+
+def test_모자이크는_출력만_바꾸고_추론에는_원본이_들어간다(tmp_path, monkeypatch,
+                                                  thread_exceptions):
+    pushed = _capture_pushed(monkeypatch)
+    scene, _ = _run_pipeline(tmp_path, monkeypatch, scene_cls=_TexturedScene,
+                             port=18110, privacy_mask=True, with_roi=False)
+    assert not thread_exceptions
+    assert scene.seen_frames and pushed
+    # 추론에 들어간 프레임은 원본 그대로
+    assert all(np.array_equal(f, scene.base) for f in scene.seen_frames)
+    # 출력 프레임: 사람 머리 영역(박스 상단)은 바뀌고, 사람과 먼 아래쪽 구석은 그대로
+    out = pushed[-1]
+    x = 40 + scene.predict_calls * 8
+    head = (slice(162, 190), slice(x + 15, x + 75))   # 박스 테두리·라벨을 피한 안쪽
+    assert not np.array_equal(out[head], scene.base[head]), "머리 영역이 가려지지 않았다"
+    corner = (slice(440, 470), slice(0, 60))
+    assert np.array_equal(out[corner], scene.base[corner]), "사람과 무관한 영역이 변했다"
+
+
+def test_모자이크를_끄면_출력이_원본과_같다(tmp_path, monkeypatch, thread_exceptions):
+    pushed = _capture_pushed(monkeypatch)
+    scene, _ = _run_pipeline(tmp_path, monkeypatch, scene_cls=_TexturedScene,
+                             port=18111, privacy_mask=False, with_roi=False)
+    assert not thread_exceptions
+    x = 40 + scene.predict_calls * 8
+    head = (slice(162, 190), slice(x + 15, x + 75))   # 박스 테두리·라벨을 피한 안쪽
+    assert np.array_equal(pushed[-1][head], scene.base[head])
+
+
+class _CropScene(_TexturedScene):
+    """크롭 추론 중 본 추론은 사람이 안 보이고, 전체 프레임 패스에서만 보이는 장면 —
+    크롭 밖의 사람을 흉내 낸다."""
+
+    def predict(self, frame):
+        self.seen_frames.append(frame.copy())
+        self.predict_calls += 1
+        if frame.shape[:2] == (self.H, self.W):        # 전체 프레임 패스
+            return [{"bbox": [20, 100, 110, 400], "conf": 0.9, "class": 1,
+                     "label": "person"}]
+        return []                                       # 크롭 본 추론: 아무것도 못 봄
+
+
+def test_크롭추론과_모자이크를_같이_쓰면_크롭_밖_사람도_가려진다(tmp_path, monkeypatch,
+                                                       thread_exceptions):
+    pushed = _capture_pushed(monkeypatch)
+    # trigger 구역을 프레임 오른쪽 아래의 작은 사각형으로 — 크롭이 충분히 작아야 활성된다
+    roi = tmp_path / "rois.json"
+    roi.write_text(
+        '{"debounce": 0.0, "cooldown": 10.0, "rois": [{"name": "z",'
+        ' "points": [[0.7,0.6],[0.95,0.6],[0.95,0.95],[0.7,0.95]], "priority": 1,'
+        ' "announcement_text": "a", "audio_file": "", "zone_type": "trigger"}]}',
+        encoding="utf-8")
+    scene = _CropScene(30)
+    monkeypatch.setattr(m, "build_camera", lambda *a, **k: scene)
+    monkeypatch.setattr(m, "build_backend", lambda *a, **k: scene)
+    shared = m.SharedResources(
+        audio_player=None, status_led=None, led_heartbeat={"t": time.time()},
+        stop_event=threading.Event(),
+        announcements=m.AnnouncementRouter(None, m.log_event, outbox=m.queue_event))
+    profile = cc.CameraProfile(id="camC", source="C", port=18112, roi_config=str(roi),
+                               traffic_db=str(tmp_path / "t.db"), inference_backend="tflite",
+                               roi_crop_inference=True, privacy_mask=True)
+    pipe = m.CameraPipeline(profile, shared, base_conf=0.5, headless=True,
+                            disable_traffic_count=True)
+    pipe.start()
+    deadline = time.time() + 20
+    while pipe.is_alive() and time.time() < deadline:
+        time.sleep(0.05)
+    pipe.stop(timeout=5.0)
+
+    assert not thread_exceptions
+    head = (slice(100, 140), slice(25, 105))
+    assert pushed, "프레임이 push되지 않았다"
+    assert not np.array_equal(pushed[-1][head], scene.base[head]), \
+        "크롭 밖 사람의 머리가 가려지지 않았다"

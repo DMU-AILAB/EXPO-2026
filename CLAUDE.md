@@ -58,6 +58,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `prepare_lookalike_dataset.py` + `dataset_prep.py` | 로컬 전용 1회성 데이터 준비 — 흰지팡이 **유사물**(등산스틱·우산·목발·난간·나뭇가지) 사진을 네거티브로 편입. `datasets/sources/lookalike_lvis_oi/{solo,with_person}/<카테고리>/` 구조를 받아 solo는 빈 라벨, with_person은 COCO yolov8n으로 person만 자동 라벨링(`--review` 컨택트시트로 검수). `dataset_prep.py`는 `prepare_background_dataset.py`와 공유하는 정규화/층화 헬퍼 |
 | `static_mask.py` | **현장 고정 구조물을 객체 단위로 기억**해 오탐을 막는다. 폐장 시간에 몇 분 관측하면 (사람이 없으니) 탐지되는 것이 전부 오탐이라 라벨링 없이 그 현장의 네거티브가 생긴다. 제외구역과 달리 **중심점이 아니라 박스(IoU + 클래스)** 로 판정해, 기둥 앞에 선 사람을 같이 지우지 않는다. 표준 라이브러리만 사용 |
 | `fp_hotspots.py` | 오탐지 다발 지점 누적(카메라별 sqlite, `detection_events.py`와 같은 db 파일에 별도 테이블) — 정지 억제로 걸러낸 지팡이 트랙 위치를 32×32 그리드 셀로 집계. `roi_editor`가 이걸 읽어 제외구역을 **제안**한다(자동 생성하지 않음) |
+| `privacy_mask.py` | **얼굴 모자이크** — 사람 박스 상단 N%(기본 25%, 카메라별 `privacy_mask`·`privacy_mask_ratio`)를 픽셀화한다. **추론·게이트·ROI 판정이 끝난 뒤** 출력 프레임에만 적용하므로 탐지 성능에 영향이 없다. 대상은 제외구역 필터 **이전**의 사람 탐지 + 트래커 coasting 박스이고, 탐지에서 끊긴 박스(이번 프레임의 박스와 겹치지 않는 것)만 마지막 위치에 0.5초(`HOLD_SEC`) 유지하고, 겹치는 지난 박스는 현재 박스로 교체해 걷는 사람 뒤에 꼬리가 남지 않게 한다. `roi_crop_inference`와 함께 켜면 크롭 밖 사람이 안 보이므로 전체 프레임 person 탐지를 3프레임마다 한 번 더 돌려 **마스크에만** 쓴다(`PRIVACY_FULLFRAME_EVERY`). 적용 지점: MJPEG 스트림 · 검증 재생(`replay_engine`) · 구조물 수집 썸네일 |
 | `eval_video_recall.py` | 로컬 전용 — **실영상 기준 지팡이 탐지/트리거 벤치마크. 모델 채택의 1차 기준.** `camera_live_pi.py`의 백엔드·게이트 상수·연관 로직을 그대로 import해 배포와 같은 경로로 잰다(복붙 금지). `--gt`로 정답 구간을 주면 재현율과 오탐지를 분리 집계한다(`datasets/videos/video_gt.json`) |
 | `resplit_dataset.py` + `tests/test_resplit_dataset.py` | 로컬 전용 1회성 — 누수 없는 **그룹 단위 재분할**(`datasets/v2/`, 하드링크). 증강 해시/AIHub 세션을 그룹으로 묶고 층별 md5로 배정한다. `--relabel-person`으로 cane_only의 누락 사람 라벨도 보완. 테스트가 split 쌍의 그룹키 교집합이 공집합인지 검증한다 |
 | `build_pseudo_videos.py` | 로컬 전용 — `datasets/v2/test`의 AIHub **연속 촬영 프레임**을 의사 영상 5편(417프레임)으로 복원해 평가 표본을 1편 → 6편으로 늘린다. 본체는 **좌우 반전 정렬**이다: Roboflow export라 무증강 원본이 0장이고 인덱스마다 있는 1~2장이 사실상 전부 서로의 반전본이라(73/73 등) 그냥 이으면 매 프레임 뒤집힌다. 복사본을 고르는 전역 DP는 팬 구간에서 약 10%를 뒤집으므로, **복사본은 고정하고 방향만 히스테리시스로 정렬**한다. 절대 방향은 무의미하다(`fliplr=0.5`로 학습됨). 세션 전체가 test 전용이라 누수가 없다 |
@@ -466,6 +467,13 @@ outbox 코드가 한 줄도 실행되지 않는다. 사람과 지팡이가 실�
 
 ## 영상 녹화 (설계 결정)
 
+> **★ 배포에서는 비활성이다(개인정보 보호).** `MJPEGServer`의 `ClipRecorder` 생성, `push()`의
+> write, `/recording/*` HTTP 분기, raw 프레임 복사를 주석 처리했다(`[녹화 비활성]`으로 grep).
+> 클래스·`_route_recording`은 남아 있어 테스트는 그대로 돈다. UI도 같은 표시로 주석 처리했다 —
+> roi_editor(탭·녹화 버튼·목록 페이지), 대시보드(기기 상세 "녹화" 탭, `recording` 라우터 등록).
+> 이에 묶인 대시보드 중계 테스트(`test_relays.py`의 `test_recording_*`)는 skip이다.
+> 아래는 다시 켤 때를 위한 기록이다.
+
 - **개인정보 정책 예외**: `docs/시각장애인_음성안내시스템_통합_기능명세서_v2.0.md`(대시보드
   설계 문서, 미구현)의 리스크 항목은 "공공장소 영상의 개인정보 보호를 위해 원본 영상 저장 금지,
   BBox/통계만 저장"을 명시하고 있다. `camera_live_pi.py`의 `ClipRecorder`는 이 정책과 정면으로
@@ -707,7 +715,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `ble_beacon.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
