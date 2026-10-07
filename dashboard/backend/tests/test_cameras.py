@@ -237,3 +237,96 @@ async def test_get_cameras_exposes_running_legacy_camera(client, auth, db_sessio
     body = res.json()
     assert body["data"][0]["id"] == "legacy"
     assert body["data"][0]["is_streaming"] is True
+
+
+# ---------------------------------------------------------------------------
+# 얼굴 모자이크 — 기기 단위 토글 + 카메라 필드 + 기존 DB 마이그레이션
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_privacy_mask_toggle_changes_only_that_field_for_every_camera(client, auth, device,
+                                                                      db_session):
+    """목록의 토글은 기기의 **모든 카메라**에 `privacy_mask`만 바꿔 되돌려 쓴다."""
+    respx.get(f"{PI}/api/cameras").mock(return_value=httpx.Response(200, json={"cameras": [
+        _pi_profile(privacy_mask=True, privacy_mask_ratio=0.3),
+        _pi_profile(id="dev-cam1", port=8081, roi_config="rois.cam1.json",
+                    traffic_db="ft1.db", privacy_mask=True, privacy_mask_ratio=0.3,
+                    inference_backend="tflite"),
+    ]}))
+    post = respx.post(f"{PI}/api/cameras").mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    res = client.put("/api/devices/cam-entrance-01/privacy-mask", json={"enabled": False},
+                     headers=auth)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["cameras"] == 2
+    sent = json.loads(post.calls[0].request.content)["cameras"]
+    assert [c["privacy_mask"] for c in sent] == [False, False]
+    # 다른 필드(비율 포함)는 Pi 값 그대로 — 낡은 값으로 덮으면 안 된다
+    assert all(c["privacy_mask_ratio"] == 0.3 for c in sent)
+    assert sent[0]["label"] == "정문" and sent[1]["port"] == 8081
+
+    cam = db_session.query(Camera).filter(Camera.id == "dev-cam0").first()
+    db_session.refresh(cam)
+    assert cam.privacy_mask is False
+
+
+@respx.mock
+def test_privacy_mask_toggle_does_not_need_if_match(client, auth, device):
+    """목록 화면은 etag가 없다 — 읽고-병합-쓰기라 낡은 값으로 덮지 않으므로 요구하지 않는다."""
+    respx.get(f"{PI}/api/cameras").mock(return_value=httpx.Response(
+        200, json={"cameras": [_pi_profile()]}))
+    respx.post(f"{PI}/api/cameras").mock(return_value=httpx.Response(200, json={"ok": True}))
+    res = client.put("/api/devices/cam-entrance-01/privacy-mask", json={"enabled": True},
+                     headers=auth)
+    assert res.status_code == 200
+
+
+@respx.mock
+def test_privacy_mask_toggle_leaves_cache_alone_when_pi_rejects(client, auth, device,
+                                                                db_session):
+    respx.get(f"{PI}/api/cameras").mock(return_value=httpx.Response(
+        200, json={"cameras": [_pi_profile()]}))
+    respx.post(f"{PI}/api/cameras").mock(return_value=httpx.Response(500, json={"detail": "x"}))
+    res = client.put("/api/devices/cam-entrance-01/privacy-mask", json={"enabled": False},
+                     headers=auth)
+    assert res.status_code >= 400
+    cam = db_session.query(Camera).filter(Camera.id == "dev-cam0").first()
+    db_session.refresh(cam)
+    assert cam.privacy_mask is not False
+
+
+@respx.mock
+def test_camera_patch_sends_privacy_mask_to_pi(client, auth, device):
+    respx.get(f"{PI}/api/cameras").mock(return_value=httpx.Response(
+        200, json={"cameras": [_pi_profile()]}))
+    post = respx.post(f"{PI}/api/cameras").mock(return_value=httpx.Response(200, json={"ok": True}))
+    client.patch("/api/devices/cam-entrance-01/cameras/dev-cam0",
+                 json={"privacy_mask": False}, headers={**auth, "If-Match": "etag-1"})
+    sent = json.loads(post.calls[0].request.content)["cameras"][0]
+    assert sent["privacy_mask"] is False
+
+
+def test_device_list_exposes_privacy_mask_per_camera(client, auth, device):
+    res = client.get("/api/devices", headers=auth)
+    cams = res.json()["data"][0]["cameras"]
+    assert cams and cams[0]["privacy_mask"] is True
+
+
+def test_ensure_columns_adds_privacy_mask_to_an_old_database(tmp_path, monkeypatch):
+    """★ 기존 운영 DB에는 컬럼이 없다 — 안 채우면 카메라 조회가 전부 실패한다."""
+    from sqlalchemy import create_engine, text
+    import app.database as database
+
+    old = create_engine(f"sqlite:///{tmp_path/'old.db'}")
+    with old.begin() as c:
+        c.execute(text("CREATE TABLE cameras (id TEXT, device_id TEXT, port INTEGER)"))
+        c.execute(text("INSERT INTO cameras VALUES ('c0','d0',8080)"))
+    monkeypatch.setattr(database, "engine", old)
+
+    database.ensure_columns()
+    database.ensure_columns()          # 두 번 불러도 안전해야 한다
+
+    with old.begin() as c:
+        row = c.execute(text("SELECT privacy_mask FROM cameras")).fetchone()
+    assert row[0] == 1                 # 기존 행은 켜짐(안전한 쪽)

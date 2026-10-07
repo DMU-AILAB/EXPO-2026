@@ -69,7 +69,7 @@ from pathlib import Path
 from typing import Iterable, Union
 
 __all__ = [
-    "IOU_MATCH", "IOU_CLUSTER", "MIN_HIT_RATIO",
+    "IOU_MATCH", "IOU_CLUSTER", "MIN_HIT_RATIO", "COLLECT_CONF_FLOOR", "RECOMMEND_MIN_CONF",
     "StaticMask", "MaskCollector",
     "save_candidates", "read_candidates", "clear_candidates",
     "log_mask_hit", "read_mask_hits", "clear_mask_hits",
@@ -88,6 +88,19 @@ IOU_CLUSTER = 0.5
 # 수집한 프레임 중 이 비율 이상에서 보여야 후보로 올린다. 한두 번 스쳐간 것을
 # 구조물로 굳히지 않기 위한 하한이다.
 MIN_HIT_RATIO = 0.3
+
+# 수집 중에는 배포 기준값과 무관하게 **이 신뢰도 이상 전부**를 모은다(0 = 모델이 내놓는
+# 모든 박스). 배포 기준으로 모으면 기준값을 사이에 두고 깜빡이는 오탐이 30%를 못 넘어
+# 빠진다 — 실측: 휴대폰 거치대가 INT8 단계값 0.59 ↔ 0.675를 오가며(기준 0.6) 3,001프레임
+# 수집에서 후보 0개였다. 그런 오탐은 트랙을 끊었다 이으며 정지 억제를 리셋하는 가장
+# 위험한 종류다. 마스크는 IoU+클래스로 판정하므로 낮은 신뢰도로 모은 후보도 운영 중의
+# 높은 신뢰도 탐지를 막는다.
+COLLECT_CONF_FLOOR = 0.0
+
+# 하한을 0으로 두면 운영 기준에서 **절대 나오지 않을** 허상 박스(실측 conf 0.01 수준)도
+# 후보에 오른다. 그런 것은 막아도 얻는 것이 없으므로 **기본 선택만** 하지 않는다 —
+# 목록에는 보이고 운영자가 켤 수 있다. 0.1은 실영상 평가 스윕의 가장 낮은 임계값이다.
+RECOMMEND_MIN_CONF = 0.1
 
 _FILENAME = "static_mask.json"
 
@@ -204,6 +217,10 @@ class MaskCollector:
         """
         self.frames += 1
         new: list[int] = []
+        # 한 프레임에서 클러스터는 **한 번만** 센다. 같은 물체에 박스가 여러 개 겹쳐
+        # 나오면(신뢰도 하한 0에서 흔하다) 중복으로 세어 hits가 frames를 넘었고
+        # (실측 604/600), 실제로는 30% 미만인 물체가 후보 기준을 넘을 수 있었다.
+        seen: set[int] = set()
         for d in dets:
             try:
                 box = _norm_box(d, frame_w, frame_h)
@@ -212,6 +229,8 @@ class MaskCollector:
             except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 continue
             idx = self._find(cls, box)
+            if idx is not None and idx in seen:
+                continue                      # 이번 프레임에 이미 센 구조물의 겹친 박스
             if idx is None:
                 cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
                 self._clusters.append({
@@ -220,7 +239,9 @@ class MaskCollector:
                     "thumb": None,
                 })
                 new.append(len(self._clusters) - 1)
+                seen.add(len(self._clusters) - 1)
             else:
+                seen.add(idx)
                 c = self._clusters[idx]
                 for i in range(4):
                     c["sum"][i] += box[i]
@@ -232,6 +253,11 @@ class MaskCollector:
                 # 더해져 고정물도 결국 "움직였다"가 된다(움직임 게이트와 같은 논리).
                 c["max_disp"] = max(c["max_disp"], ((cx - ox) ** 2 + (cy - oy) ** 2) ** 0.5)
         return new
+
+    def cluster_box(self, index: int) -> list[float]:
+        """클러스터의 평균 박스(정규화). 썸네일을 그 구조물 자리에서 자르는 데 쓴다."""
+        c = self._clusters[index]
+        return [v / c["hits"] for v in c["sum"]]
 
     def set_thumb(self, index: int, name: str) -> None:
         if 0 <= index < len(self._clusters):

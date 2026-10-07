@@ -26,6 +26,8 @@ export type Camera = {
   model_variant: string
   rotation: number
   require_person: boolean
+  /** 얼굴 모자이크 — 켜면 화면에 나가는 영상에서 사람 얼굴을 가린다(탐지에는 영향 없음). */
+  privacy_mask: boolean
   is_active: boolean
   roi_count: number
   today_detections: number
@@ -38,6 +40,7 @@ export type CameraBrief = {
   id: string
   port: number
   is_streaming: boolean
+  privacy_mask: boolean
 }
 
 export type Roi = {
@@ -288,4 +291,51 @@ export type WifiConnectResult = {
   in_progress: boolean
   /** `network_manager._do_connect`가 남긴 값. */
   result: { status: 'ok'; ip: string | null } | { status: 'error'; error: string } | null
+}
+
+// ---------------------------------------------------------------- 구조물 수집 (일괄·예약)
+
+/** 수집 대상 — 전체 / 모델별 / 선택한 기기. */
+export type CalibrationTargetMode = 'all' | 'model' | 'devices'
+
+/** 카메라 한 대에 수집을 시킨 기록. `ok`는 **시작 요청**의 결과다. */
+export type CalibrationRun = {
+  id?: number
+  batch_id?: string
+  schedule_id?: number | null
+  device_id: string
+  device_name: string
+  camera_id: string
+  model_variant: string | null
+  seconds?: number
+  started_at?: string
+  ok: boolean
+  error: string | null
+}
+
+export type CalibrationFleetDevice = {
+  id: string
+  name: string
+  location: string | null
+  status: DeviceStatus
+  cameras: {
+    id: string
+    port: number
+    model_variant: string | null
+    is_active: boolean
+    last_run: CalibrationRun | null
+  }[]
+}
+
+export type CalibrationSchedule = {
+  id: number
+  name: string
+  days: number[]
+  hour: number
+  minute: number
+  seconds: number
+  target_mode: CalibrationTargetMode
+  targets: string[]
+  is_enabled: boolean
+  display: string
 }

@@ -13,6 +13,9 @@ import respx
 from app.models.camera import Camera
 from app.models.device import Device
 
+_RECORDING_OFF = pytest.mark.skip(
+    reason="[녹화 비활성] 개인정보 보호 — recording 라우터를 등록하지 않는다 (main.py)")
+
 PI = "http://192.168.1.101:5000"
 CAM = "http://192.168.1.101:8081"   # 카메라 MJPEG 포트 — 5000이 아님을 확인하려고 기본값과 다르게
 
@@ -44,6 +47,7 @@ BASE = "/api/devices/dev-1"
 # ------------------------------------------------------------------ 녹화
 
 @respx.mock
+@_RECORDING_OFF
 def test_recording_start_goes_to_camera_port_with_raw(client, auth, device):
     route = respx.post(f"{CAM}/recording/start").mock(return_value=httpx.Response(
         200, json={"ok": True, "clip_id": "clip_20261004_120000"}))
@@ -54,6 +58,7 @@ def test_recording_start_goes_to_camera_port_with_raw(client, auth, device):
 
 
 @respx.mock
+@_RECORDING_OFF
 def test_recording_start_without_raw_sends_no_raw_param(client, auth, device):
     route = respx.post(f"{CAM}/recording/start").mock(return_value=httpx.Response(200, json={"ok": True}))
     client.post(f"{BASE}/cameras/cam0/recording/start", headers=auth)
@@ -61,6 +66,7 @@ def test_recording_start_without_raw_sends_no_raw_param(client, auth, device):
 
 
 @respx.mock
+@_RECORDING_OFF
 def test_recording_pi_conflict_keeps_message(client, auth, device):
     # 카메라 포트의 오류 본문은 {"ok": false, "error": "<문장>"} — 문장이 메시지로 살아야 한다.
     respx.post(f"{CAM}/recording/stop").mock(return_value=httpx.Response(
@@ -72,6 +78,7 @@ def test_recording_pi_conflict_keeps_message(client, auth, device):
 
 
 @respx.mock
+@_RECORDING_OFF
 def test_recording_list(client, auth, device):
     respx.get(f"{CAM}/recording/list").mock(return_value=httpx.Response(
         200, json={"clips": [{"id": "clip_20261004_120000", "has_thumb": True}]}))
@@ -80,6 +87,7 @@ def test_recording_list(client, auth, device):
 
 
 @respx.mock
+@_RECORDING_OFF
 def test_recording_clip_streams_with_query_token(client, token, device):
     respx.get(f"{CAM}/recording/clips/clip_20261004_120000.mp4").mock(return_value=httpx.Response(
         200, content=b"MP4DATA", headers={"Content-Type": "video/mp4"}))
@@ -91,6 +99,7 @@ def test_recording_clip_streams_with_query_token(client, token, device):
 
 
 @respx.mock
+@_RECORDING_OFF
 def test_recording_clip_download_is_attachment(client, token, device):
     respx.get(f"{CAM}/recording/clips/clip_20261004_120000.mp4").mock(return_value=httpx.Response(
         200, content=b"MP4DATA", headers={"Content-Type": "video/mp4"}))
@@ -101,16 +110,19 @@ def test_recording_clip_download_is_attachment(client, token, device):
 
 @pytest.mark.parametrize("name", ["../rois.json", "clip_1.mp4", "clip_20261004_120000.json",
                                   "x.mp4"])
+@_RECORDING_OFF
 def test_recording_clip_rejects_bad_names(client, token, device, name):
     res = client.get(f"{BASE}/cameras/cam0/recording/clips/{name}?token={token}")
     assert res.status_code in (400, 404)
 
 
+@_RECORDING_OFF
 def test_recording_clip_requires_auth(client, device):
     res = client.get(f"{BASE}/cameras/cam0/recording/clips/clip_20261004_120000.mp4")
     assert res.status_code == 401
 
 
+@_RECORDING_OFF
 def test_recording_unknown_camera_is_404(client, auth, device):
     assert client.get(f"{BASE}/cameras/nope/recording", headers=auth).status_code == 404
 

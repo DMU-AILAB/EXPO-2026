@@ -28,7 +28,7 @@ from ..models.audio import AudioDeployment
 from ..models.camera import Camera
 from ..models.device import Device
 from ..models.roi import Roi
-from ..schemas.camera import CameraResponse, CameraUpdate, DetectionParamsUpdate
+from ..schemas.camera import CameraResponse, CameraUpdate, DetectionParamsUpdate, PrivacyMaskUpdate
 from ..services.heartbeat_service import get_buffered_cameras
 from ..services.pi_client import PiClient
 from ..services.pi_sync import build_roi_payload, merge_camera_profiles, validate_profiles_locally
@@ -61,6 +61,8 @@ def _legacy_camera_profile(camera: Camera) -> dict[str, Any]:
         "capture_preset": camera.capture_preset or "auto",
         "require_person_for_trigger": bool(camera.require_person),
         "roi_crop_inference": False,
+        "privacy_mask": camera.privacy_mask is not False,
+        "privacy_mask_ratio": 0.25,
     }
 
 
@@ -220,6 +222,8 @@ async def _camera_profiles_from_pi(device: Device) -> list[dict]:
         "capture_preset": "auto",
         "require_person_for_trigger": True,
         "roi_crop_inference": False,
+        "privacy_mask": True,
+        "privacy_mask_ratio": 0.25,
     }]
 
 
@@ -254,6 +258,8 @@ async def refresh_cameras_from_pi(db: Session, device: Device) -> bool:
         camera.model_variant = profile.get("model_variant", camera.model_variant)
         camera.rotation = profile.get("rotation", camera.rotation)
         camera.require_person = profile.get("require_person_for_trigger", camera.require_person)
+        # 필드가 없는 옛 프로필은 Pi 코드 기본값(켜짐)으로 동작한다
+        camera.privacy_mask = bool(profile.get("privacy_mask", True))
         camera.is_active = profile.get("enabled", camera.is_active)
 
     # Pi에서 사라진 카메라는 캐시에서도 지운다 — 캐시는 스냅샷이지 이력이 아니다.
@@ -289,6 +295,7 @@ async def get_cameras(device_id: str, db: Session = Depends(get_db),
             "model_variant": cam.model_variant,
             "rotation": cam.rotation,
             "require_person": cam.require_person,
+            "privacy_mask": cam.privacy_mask is not False,
             "is_active": cam.is_active,
             "roi_count": db.query(Roi).filter(Roi.camera_id == cam.id,
                                               Roi.device_id == device_id).count(),
@@ -357,6 +364,43 @@ async def update_camera(
     db.commit()
     db.refresh(camera)
     return camera
+
+
+@router.put("/{device_id}/privacy-mask", response_model=dict)
+async def set_privacy_mask(
+    device_id: str,
+    body: PrivacyMaskUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """기기의 **모든 카메라**에 얼굴 모자이크를 켜거나 끈다 — 디바이스 목록의 토글용.
+
+    카메라 PATCH와 달리 `If-Match`를 요구하지 않는다. 목록 화면은 etag를 들고 있지
+    않고, 이 호출은 Pi의 **현재** 프로필을 읽어 `privacy_mask` 하나만 바꿔 되돌려
+    쓰므로 다른 필드를 낡은 값으로 덮지 않는다(읽기와 쓰기 사이의 짧은 경합만 남는다).
+    """
+    device = _get_device(db, device_id)
+    client = PiClient(device.ip)
+
+    pi_profiles = await client.get_cameras()
+    if not pi_profiles:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "CAMERA_NOT_FOUND", "message": "기기에 카메라 프로필이 없습니다"})
+    merged = [{**p, "privacy_mask": body.enabled} for p in pi_profiles]
+
+    errors = validate_profiles_locally(merged)
+    if errors:
+        raise HTTPException(status_code=400,
+                            detail={"error": "VALIDATION_ERROR", "message": errors})
+    await client.put_cameras(merged)
+
+    # Pi가 받아들인 뒤에만 캐시를 갱신한다.
+    for cam in db.query(Camera).filter(Camera.device_id == device_id).all():
+        cam.privacy_mask = body.enabled
+    device.config_etag = str(uuid.uuid4())
+    db.commit()
+    return {"ok": True, "enabled": body.enabled, "cameras": len(merged)}
 
 
 async def _assert_enum_values(client: PiClient, updates: dict[str, Any]) -> None:

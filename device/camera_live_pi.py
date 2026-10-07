@@ -66,6 +66,12 @@ from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
                            adapt_profiles_to_hardware, coral_present)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
 import static_mask as _static_mask
+from privacy_mask import PrivacyMasker, mask_box as _mask_box
+
+# 크롭 추론 + 모자이크를 같이 쓸 때 전체 프레임 person 탐지를 몇 프레임마다 한 번 돌리는가.
+# 크롭 밖의 사람은 본 추론에 안 보이므로 별도 패스가 있어야 "찍히는 모든 영역"이 가려진다.
+# 사이 프레임은 PrivacyMasker의 유지 시간(초)과 박스 마진이 메운다.
+PRIVACY_FULLFRAME_EVERY = 3
 # 게이트 순서·상수·연관 로직의 단일 출처. 배포/평가/재생검증이 같은 것을 써야 한다.
 # 상수는 여기서 재수출한다 — `eval_video_recall.py`가 camera_live_pi에서 import해 왔다.
 from gate_chain import (  # noqa: F401  (재수출)
@@ -184,6 +190,24 @@ def _normalize_conf(conf: float | dict[str, float]) -> dict[str, float]:
 
 
 
+def _floor_conf(conf: dict[str, float], floor: float) -> dict[str, float]:
+    """수집용 하한 — 클래스별 배포 기준과 하한 중 낮은 쪽."""
+    return {name: min(v, floor) for name, v in conf.items()}
+
+
+# ── 구조물 수집용 하한 ────────────────────────────────────────────────
+#
+# 구조물 수집은 **배포 기준값 아래의 탐지까지** 봐야 한다. 기준값을 사이에 두고
+# 깜빡이는 오탐(실측: 휴대폰 거치대가 INT8 단계값 0.59 ↔ 0.675를 오감, 기준 0.6)은
+# 기준값 이상인 프레임이 30%를 못 넘어 후보에서 빠지는데, 그런 오탐이 트랙을 끊었다
+# 이으며 정지 억제를 리셋하는 가장 위험한 종류다. 마스크는 신뢰도가 아니라 IoU+클래스로
+# 판정하므로 낮은 신뢰도로 모은 후보도 운영 중의 높은 신뢰도 탐지를 그대로 막는다.
+#
+# 각 백엔드는 `set_collect_floor(x)`가 켜져 있는 동안 하한 이상의 탐지를
+# `last_collect_dets`에 따로 남긴다. **predict()의 반환값은 하한과 무관하게 배포 기준
+# 그대로다** — 탐지·안내 경로는 수집 중에도 바뀌지 않는다.
+
+
 class _CoralBackend:
     """Google Coral Edge TPU 백엔드 (Python 3.9 서브프로세스).
 
@@ -206,14 +230,19 @@ class _CoralBackend:
         self._model_path = _model_paths(weights_dir)["edgetpu"]
         self._input_size = input_size
         self.conf = _normalize_conf(conf)
+        self.collect_floor: float | None = None
+        self.last_collect_dets: list[dict] = []
         self._spawn()
 
     def _spawn(self) -> None:
         """워커 서브프로세스를 (재)기동한다. EdgeTPU 워커는 stdin이 이미지 프레임
         전용 채널이라 기동 후 신뢰도 임계값을 갱신할 방법이 없다 — 클래스별
         신뢰도가 바뀌면 update_conf()가 이 메서드로 워커를 통째로 재시작한다."""
+        # 수집 중에는 워커가 하한까지 내보내고, 배포 기준은 predict()에서 다시 건다.
+        worker_conf = (self.conf if self.collect_floor is None
+                       else _floor_conf(self.conf, self.collect_floor))
         argv = [str(self._PY39), str(self._WORKER),
-                str(self.conf[CLASS_NAMES[0]]), str(self.conf[CLASS_NAMES[1]]),
+                str(worker_conf[CLASS_NAMES[0]]), str(worker_conf[CLASS_NAMES[1]]),
                 str(self._model_path), str(self._input_size)]
         self._proc = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
@@ -232,6 +261,15 @@ class _CoralBackend:
         self.close()
         self._spawn()
 
+    def set_collect_floor(self, floor: float | None) -> None:
+        """워커는 기동 후 임계값을 바꿀 수 없어 재시작한다 — 수집 시작·종료에 한 번씩."""
+        if floor == self.collect_floor:
+            return
+        self.collect_floor = floor
+        self.last_collect_dets = []
+        self.close()
+        self._spawn()
+
     def predict(self, frame: np.ndarray) -> list[dict]:
         h, w = frame.shape[:2]
         self._proc.stdin.write(struct.pack(">II", h, w) + frame.tobytes())
@@ -239,7 +277,13 @@ class _CoralBackend:
         if len(size_bytes) < 4:
             raise RuntimeError("EdgeTPU 워커가 예기치 않게 종료되었습니다")
         size = struct.unpack(">I", size_bytes)[0]
-        return json.loads(self._proc.stdout.read(size))
+        dets = json.loads(self._proc.stdout.read(size))
+        if self.collect_floor is None:
+            return dets
+        # 워커 안의 후처리와 같은 비교(`>`)로 배포 기준을 다시 건다. 반올림된 conf로
+        # 비교하므로 기준값과 1e-4 안쪽인 탐지는 수집 중에만 달라질 수 있다.
+        self.last_collect_dets = dets
+        return [dict(d) for d in dets if d["conf"] > self.conf.get(d["label"], 0.0)]
 
     def close(self) -> None:
         """워커를 확실히 종료 — Coral 칩이 세션 종료를 인지하도록 정상 종료를 시도하고,
@@ -292,13 +336,25 @@ class _TFLiteBackend:
         # 시스템의 코어만 굶기고 있었다). 2로 낮춰 자기 속도는 유지하면서 코어를 돌려준다.
         self._interp = tflite.Interpreter(model_path=str(model_path), num_threads=2)
         self._interp.allocate_tensors()
+        self.collect_floor: float | None = None
+        self.last_collect_dets: list[dict] = []
+
+    def set_collect_floor(self, floor: float | None) -> None:
+        self.collect_floor = floor
+        self.last_collect_dets = []
 
     def predict(self, frame: np.ndarray) -> list[dict]:
         lb = set_input(self._interp, frame, input_size=self.input_size)
         self._interp.invoke()
         h, w = frame.shape[:2]
-        return postprocess_multiclass(get_output(self._interp), self.conf, w, h,
-                                      letterbox=lb)
+        out = get_output(self._interp)
+        if self.collect_floor is not None:
+            # 같은 출력에 후처리를 **따로 한 번 더** 한다. 하한으로 뽑은 것을 다시 거르면
+            # conf 반올림 때문에 기준값 경계에서 반환값이 달라질 수 있다 — 탐지·안내
+            # 경로는 수집 중에도 비트 단위로 같아야 한다.
+            self.last_collect_dets = postprocess_multiclass(
+                out, _floor_conf(self.conf, self.collect_floor), w, h, letterbox=lb)
+        return postprocess_multiclass(out, self.conf, w, h, letterbox=lb)
 
     def update_conf(self, conf: float | dict[str, float]) -> None:
         """다음 predict() 호출부터 바로 반영된다 — 별도 프로세스가 아니라
@@ -326,14 +382,28 @@ class _UltralyticsBackend:
         # 가장 낮은 임계값으로 느슨하게 호출해 아무것도 놓치지 않게 한 뒤
         # predict()에서 클래스별로 다시 걸러낸다.
         self._det = WhiteCaneDetector(model_path=model_path, conf=min(self.conf.values()), device=device)
+        self.collect_floor: float | None = None
+        self.last_collect_dets: list[dict] = []
+
+    def _detector_conf(self) -> float:
+        low = min(self.conf.values())
+        return low if self.collect_floor is None else min(low, self.collect_floor)
+
+    def set_collect_floor(self, floor: float | None) -> None:
+        self.collect_floor = floor
+        self.last_collect_dets = []
+        self._det.conf = self._detector_conf()
 
     def predict(self, frame: np.ndarray) -> list[dict]:
         dets = self._det.predict(frame)
+        if self.collect_floor is not None:
+            self.last_collect_dets = [d for d in dets if d["conf"] >= self.collect_floor]
+            return [dict(d) for d in dets if d["conf"] >= self.conf.get(d["label"], 0.0)]
         return [d for d in dets if d["conf"] >= self.conf.get(d["label"], 0.0)]
 
     def update_conf(self, conf: float | dict[str, float]) -> None:
         self.conf = _normalize_conf(conf)
-        self._det.conf = min(self.conf.values())
+        self._det.conf = self._detector_conf()
 
     def close(self) -> None:
         pass  # 서브프로세스/외부 장치 핸들 없음 — 정리할 게 없음
@@ -600,6 +670,12 @@ def _apply_channel_swap(frame: np.ndarray, enabled: bool) -> np.ndarray:
 
 
 # ── 영상 녹화 (수동 시작/중지 클립) ───────────────────────────────────
+#
+# ★ 배포에서는 비활성이다(개인정보 보호). 아래 `ClipRecorder`·`_route_recording`은 순수
+#   코드로 남겨 두었지만, 실제로 쓰는 지점 — MJPEGServer의 인스턴스 생성, push()의 write,
+#   `/recording/*` HTTP 분기, 오버레이 이전 프레임 복사 — 은 전부 주석 처리했다.
+#   다시 켜려면 아래 `[녹화 비활성]` 표시를 grep해 주석을 풀 것. 영상 파일에는 얼굴이
+#   모자이크 없이 남을 수 있으므로(raw 녹화는 특히) 켜기 전에 정책을 재검토해야 한다.
 #
 # 개인정보 정책 예외: 대시보드 설계 문서(원본 영상 저장 금지, BBox/통계만 저장)는 상용
 # 배치 기준이며, 이번 데모 범위에서는 사용자 승인으로 예외 적용한다(CLAUDE.md 참고).
@@ -875,7 +951,8 @@ class MJPEGServer:
         # 여기에 누적한다 — 서버는 시작/취소 신호와 진행 상황만 들고 있다.
         self._calib: dict | None = None
         self._calib_result: dict | None = None
-        self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
+        # [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다.
+        # self.recorder = ClipRecorder(recordings_dir or Path("recordings") / "legacy")
 
     # ── 구조물 수집 (새벽 캘리브레이션) ───────────────────────────
     #
@@ -943,8 +1020,9 @@ class MJPEGServer:
                 self._fps_samples.append(fps)
                 if len(self._fps_samples) > 30:
                     self._fps_samples.pop(0)
-        self.recorder.write(raw if (raw is not None and self.recorder.wants_raw)
-                            else frame)
+        # [녹화 비활성] 개인정보 보호
+        # self.recorder.write(raw if (raw is not None and self.recorder.wants_raw)
+        #                     else frame)
 
     def _avg_fps(self) -> float:
         with self._lock:
@@ -1002,33 +1080,36 @@ class MJPEGServer:
                         self._write_json(200, srv.calibration_status())
                     return True
 
-                route = _route_recording(method, self.path)
-                if route is None:
-                    return False
-                action, clip_id = route
-                if action == "status":
-                    self._write_json(200, srv.recorder.status())
-                elif action == "start":
-                    # ?raw=1 이면 오버레이 없는 원본을 저장한다(학습용 촬영).
-                    raw = parse_qs(urlsplit(self.path).query).get(
-                        "raw", ["0"])[0] not in ("0", "", "false")
-                    with srv._lock:
-                        shape = srv._frame_shape
-                    if shape is None:
-                        self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
-                    else:
-                        result = srv.recorder.start(shape, srv._avg_fps(), raw=raw)
-                        self._write_json(200 if result.get("ok") else 409, result)
-                elif action == "stop":
-                    result = srv.recorder.stop()
-                    self._write_json(200 if result.get("ok") else 409, result)
-                elif action == "list":
-                    self._write_json(200, {"clips": srv.recorder.list_clips()})
-                elif action == "clip_video":
-                    self._serve_clip_file(srv.recorder.clip_path(clip_id, "video"), "video/mp4")
-                elif action == "clip_thumb":
-                    self._serve_clip_file(srv.recorder.clip_path(clip_id, "thumb"), "image/jpeg")
-                return True
+                # [녹화 비활성] 개인정보 보호 — `/recording/*`은 라우트가 없으므로
+                # 호출하면 do_GET/do_POST의 기본 404로 떨어진다.
+                # route = _route_recording(method, self.path)
+                # if route is None:
+                #     return False
+                # action, clip_id = route
+                # if action == "status":
+                #     self._write_json(200, srv.recorder.status())
+                # elif action == "start":
+                #     # ?raw=1 이면 오버레이 없는 원본을 저장한다(학습용 촬영).
+                #     raw = parse_qs(urlsplit(self.path).query).get(
+                #         "raw", ["0"])[0] not in ("0", "", "false")
+                #     with srv._lock:
+                #         shape = srv._frame_shape
+                #     if shape is None:
+                #         self._write_json(409, {"ok": False, "error": "아직 수신된 프레임이 없습니다"})
+                #     else:
+                #         result = srv.recorder.start(shape, srv._avg_fps(), raw=raw)
+                #         self._write_json(200 if result.get("ok") else 409, result)
+                # elif action == "stop":
+                #     result = srv.recorder.stop()
+                #     self._write_json(200 if result.get("ok") else 409, result)
+                # elif action == "list":
+                #     self._write_json(200, {"clips": srv.recorder.list_clips()})
+                # elif action == "clip_video":
+                #     self._serve_clip_file(srv.recorder.clip_path(clip_id, "video"), "video/mp4")
+                # elif action == "clip_thumb":
+                #     self._serve_clip_file(srv.recorder.clip_path(clip_id, "thumb"), "image/jpeg")
+                # return True
+                return False
 
             def do_GET(self):
                 if self._handle_recording_route("GET"):
@@ -1379,6 +1460,12 @@ def _parse_args() -> argparse.Namespace:
                         "선/기둥/나뭇가지 오탐지 억제). 끄려면 --no-require-person. "
                         "--camera-config 미지정 시에만 사용 — 다중 카메라는 카메라별 "
                         "require_person_for_trigger 설정")
+    p.add_argument("--privacy-mask", action=argparse.BooleanOptionalAction, default=True,
+                   help="스트림 출력에서 사람 얼굴(박스 상단)을 모자이크 (기본 켜짐 — 탐지는 "
+                        "원본 프레임으로 한다). --camera-config 미지정 시에만 사용 — 다중 "
+                        "카메라는 카메라별 privacy_mask 설정")
+    p.add_argument("--privacy-mask-ratio", type=float, default=0.25,
+                   help="사람 박스 높이 중 모자이크할 상단 비율 (0.05~0.6, 기본 0.25)")
     return p.parse_args()
 
 
@@ -1568,6 +1655,11 @@ class CameraPipeline:
             roi_crop: tuple[int, int, int, int] | None = None
             roi_crop_dirty = True
 
+            # 얼굴 모자이크 — 추론·게이트가 끝난 뒤 출력 프레임에만 적용한다.
+            masker = (PrivacyMasker(profile.privacy_mask_ratio)
+                      if getattr(profile, "privacy_mask", False) else None)
+            privacy_frame_no = 0
+
             if _TRAFFIC_AVAILABLE and not self.disable_traffic_count:
                 foot_counter = FootTrafficCounter(profile.traffic_db)
 
@@ -1645,13 +1737,39 @@ class CameraPipeline:
                         print(f"[INFO][{tag}] ROI 크롭 추론 비활성 — trigger 구역이 없거나 "
                               f"크롭이 프레임에 비해 충분히 작지 않음")
 
+                # 구조물 수집 중이면 백엔드가 배포 기준 아래의 탐지까지 따로 남긴다
+                # (`_floor_conf` 위 설명). 탐지·안내로 가는 `dets`는 그대로다.
+                calib_deadline = mjpeg.calibration_deadline() if mjpeg is not None else None
+                collect_floor = (_static_mask.COLLECT_CONF_FLOOR
+                                 if calib_deadline is not None else None)
+                if (hasattr(backend, "set_collect_floor")
+                        and getattr(backend, "collect_floor", None) != collect_floor):
+                    backend.set_collect_floor(collect_floor)
+
+                # 모자이크 전용 전체 프레임 패스 — 크롭 추론 중에는 크롭 밖의 사람이 본
+                # 추론에 안 보인다. 결과는 **마스크에만** 쓰고 게이트·트래커·유동인구에는
+                # 넣지 않는다(크롭 모드의 집계 범위 의미 유지). 본 추론보다 **먼저** 돌려야
+                # `backend.last_collect_dets`가 본 추론의 것으로 남아 구조물 수집이 안 깨진다.
+                privacy_extra: list = []
+                if masker is not None and roi_crop:
+                    if privacy_frame_no % PRIVACY_FULLFRAME_EVERY == 0:
+                        try:
+                            privacy_extra = [d["bbox"] for d in backend.predict(frame)
+                                             if d.get("class") == PERSON_CLASS_ID]
+                        except Exception as e:      # noqa: BLE001
+                            print(f"[WARN][{tag}] 모자이크용 전체 프레임 탐지 실패: {e}")
+                    privacy_frame_no += 1
+
                 try:
                     if roi_crop:
                         cx0, cy0, cx1, cy1 = roi_crop
                         dets = backend.predict(frame[cy0:cy1, cx0:cx1])
                         # 좌표를 원본 프레임 기준으로 되돌린다 — 이후의 ROI 판별과
-                        # 움직임 게이트가 전체 프레임 좌표계를 전제한다.
-                        for d in dets:
+                        # 움직임 게이트가 전체 프레임 좌표계를 전제한다. 수집용 목록은
+                        # 반환값과 **다른 객체**라 따로 옮긴다(같은 dict를 두 번 옮기지 않게).
+                        shift = dets + (getattr(backend, "last_collect_dets", [])
+                                        if collect_floor is not None else [])
+                        for d in shift:
                             bx1, by1, bx2, by2 = d["bbox"]
                             d["bbox"] = [bx1 + cx0, by1 + cy0, bx2 + cx0, by2 + cy0]
                     else:
@@ -1661,6 +1779,14 @@ class CameraPipeline:
                     print(f"[ERROR][{tag}] 추론 중 오류 발생: {e}")
                     break
 
+                # 모자이크 대상은 **제외구역 필터 이전**의 사람 탐지다. 이후 값을 쓰면
+                # 제외구역·구조물 마스크 안에 선 사람의 얼굴이 그대로 나간다.
+                if masker is not None:
+                    masker.update(
+                        privacy_extra + [d["bbox"] for d in dets
+                                         if d.get("class") == PERSON_CLASS_ID],
+                        time.time())
+
                 # 지형지물 오탐지 방지용 제외구역 — 트래킹 이전에 raw detection 단계에서
                 # 걸러낸다 (트랙 생성 이후 거르면 구역 경계에서 트랙이 깜빡이는 문제가 있음).
                 dets = _filter_excluded(dets, roi_manager, frame)
@@ -1669,23 +1795,39 @@ class CameraPipeline:
                 # 걸러준 것도 마스크 후보가 되어야 하기 때문이다(정지 억제가 2초 뒤에야
                 # 걸리는 그 공백을 마스크로 앞당기는 것이 이 기능의 목적이다).
                 if mjpeg is not None:
-                    deadline = mjpeg.calibration_deadline()
+                    # 추론 전에 읽은 마감 시각을 그대로 쓴다 — 그 사이에 수집이 시작되면
+                    # 이번 프레임은 하한 없이 추론됐으므로 다음 프레임부터 모은다.
+                    deadline = calib_deadline
                     if deadline is not None:
                         if calib is None:
                             calib = _static_mask.MaskCollector()
                             calib_dir.mkdir(parents=True, exist_ok=True)
-                            print(f"[INFO][{tag}] 구조물 수집 시작")
+                            print(f"[INFO][{tag}] 구조물 수집 시작 "
+                                  f"(신뢰도 하한 {_static_mask.COLLECT_CONF_FLOOR})")
+                        collect_dets = (_filter_excluded(backend.last_collect_dets, roi_manager, frame)
+                                        if hasattr(backend, "last_collect_dets") else dets)
                         fh_c, fw_c = frame.shape[:2]
-                        for ci in calib.add(dets, fw_c, fh_c):
+                        for ci in calib.add(collect_dets, fw_c, fh_c):
                             # 새 클러스터가 생긴 프레임에서만 썸네일 1장 — 운영자가
-                            # "이게 무엇인지" 눈으로 확인할 근거다.
+                            # "이게 무엇인지" 눈으로 확인할 근거다. 반환값은 **클러스터
+                            # 번호**라 탐지 목록의 인덱스로 쓰면 다른 박스가 찍힌다.
                             try:
-                                d = dets[min(ci, len(dets) - 1)]
-                                x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
+                                nx1, ny1, nx2, ny2 = calib.cluster_box(ci)
+                                x1, y1 = int(nx1 * fw_c), int(ny1 * fh_c)
+                                x2, y2 = int(nx2 * fw_c), int(ny2 * fh_c)
                                 pad = 12
                                 crop = frame[max(0, y1 - pad):y2 + pad,
                                              max(0, x1 - pad):x2 + pad]
                                 if crop.size:
+                                    if masker is not None:
+                                        # 후보 썸네일은 디스크에 남는다 — 사람 후보를 잘라
+                                        # 저장하면 얼굴이 파일로 남으므로 여기서도 가린다.
+                                        ox, oy = max(0, x1 - pad), max(0, y1 - pad)
+                                        crop = crop.copy()
+                                        for bx1, by1, bx2, by2 in masker.boxes():
+                                            _mask_box(crop, (bx1 - ox, by1 - oy,
+                                                             bx2 - ox, by2 - oy),
+                                                      masker.ratio)
                                     name = f"c{ci:03d}.jpg"
                                     cv2.imwrite(str(calib_dir / name), crop)
                                     calib.set_thumb(ci, name)
@@ -1713,13 +1855,18 @@ class CameraPipeline:
                 g      = gates.step(dets, frame.shape[:2], now)
                 tracks = g.tracks
 
-                # 학습용 촬영(raw 녹화) 중에만 오버레이 이전 원본을 떠 둔다.
-                # 아래 그리기 함수들이 frame을 **제자리에서** 고치므로, 여기서
-                # 복사하지 않으면 원본이 남지 않는다. raw가 꺼져 있으면 복사하지
-                # 않는다 — 1080p 한 장 복사가 Pi에서 1~2ms다.
-                raw_frame = (frame.copy()
-                             if (mjpeg is not None and mjpeg.recorder.wants_raw)
-                             else None)
+                # [녹화 비활성] 개인정보 보호 — raw 녹화용 오버레이 이전 프레임 복사.
+                # raw_frame = (frame.copy()
+                #              if (mjpeg is not None and mjpeg.recorder.wants_raw)
+                #              else None)
+
+                # 추론·게이트·ROI 판정이 모두 끝났으므로 제자리 모자이크가 안전하다.
+                # 박스·ROI·HUD는 그 위에 그려져 선이 뭉개지지 않는다. 트래커가 들고 있는
+                # coasting 사람 박스도 합친다(탐지가 끊긴 프레임을 메운다).
+                if masker is not None:
+                    masker.update([t["bbox"] for t in tracks
+                                   if t.get("class") == PERSON_CLASS_ID], now)
+                    masker.apply(frame)
 
                 _draw_detections(frame, tracks)
 
@@ -1886,7 +2033,7 @@ class CameraPipeline:
 
                 if self.headless:
                     assert mjpeg is not None
-                    mjpeg.push(frame, fps, raw=raw_frame)
+                    mjpeg.push(frame, fps)
                 else:
                     cv2.imshow(f"VisionGuide — {tag}", frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -2080,6 +2227,8 @@ def main() -> None:
             rotation=0, inference_backend=args.inference_backend, roi_config=args.roi_config or "",
             port=args.port, traffic_db=args.traffic_db, model_variant=args.model_variant,
             require_person_for_trigger=args.require_person,
+            privacy_mask=args.privacy_mask,
+            privacy_mask_ratio=args.privacy_mask_ratio,
         )]
         if args.auto_hardware:
             profiles = _apply_auto_hardware(profiles)

@@ -4,10 +4,12 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 import json
 
-from ..database import SessionLocal
+from ..database import SessionLocal, engine
 from ..models.schedule import ScheduledReboot
 from ..models.device import Device
 from .pi_client import PiClient
+from ..models.calibration import CalibrationRun, CalibrationSchedule
+from .calibration_service import execute_schedule as execute_calibration
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +78,32 @@ def remove_schedule_job(schedule_id: int):
         scheduler.remove_job(job_id)
         logger.info(f"Removed scheduled job {job_id}")
 
+def calibration_job_id(schedule_id: int) -> str:
+    """재부팅 예약의 작업 id가 `str(schedule_id)`라 **접두사가 없으면 두 테이블의 id가
+    겹친다** — 같은 id의 수집 예약을 등록하는 순간 재부팅 작업을 덮어쓴다."""
+    return f"calibration:{schedule_id}"
+
+
+def add_calibration_job(schedule_id: int, days: list[int], hour: int, minute: int):
+    trigger = CronTrigger(day_of_week=to_apscheduler_dow(days), hour=hour, minute=minute)
+    scheduler.add_job(execute_calibration, trigger=trigger, args=[schedule_id],
+                      id=calibration_job_id(schedule_id), replace_existing=True,
+                      misfire_grace_time=300, coalesce=True)
+    logger.info("구조물 수집 예약 %s 등록: %02d:%02d, 요일 %s", schedule_id, hour, minute, days)
+
+
+def remove_calibration_job(schedule_id: int):
+    job_id = calibration_job_id(schedule_id)
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+
+
 def initialize_scheduler():
     """앱 시작 시 DB에서 활성화된 예약을 읽어 스케줄러에 일괄 등록합니다."""
+    # 수집 예약 테이블은 나중에 생겼다. 테이블은 `init_db`만 만들기 때문에, 이미 운영 중인
+    # DB에서 그대로 기동하면 아래 조회가 실패해 **서버가 뜨지 않는다**. 없는 것만 만든다.
+    for table in (CalibrationSchedule.__table__, CalibrationRun.__table__):
+        table.create(bind=engine, checkfirst=True)
     db: Session = SessionLocal()
     try:
         schedules = db.query(ScheduledReboot).filter(ScheduledReboot.is_enabled == True).all()
@@ -87,5 +113,10 @@ def initialize_scheduler():
                 add_schedule_job(sched.id, sched.device_id, days, sched.hour)
             except Exception as e:
                 logger.error(f"Failed to parse schedule {sched.id}: {e}")
+        for cal in db.query(CalibrationSchedule).filter(CalibrationSchedule.is_enabled == True).all():
+            try:
+                add_calibration_job(cal.id, json.loads(cal.days), cal.hour, cal.minute)
+            except Exception as e:
+                logger.error(f"Failed to register calibration schedule {cal.id}: {e}")
     finally:
         db.close()

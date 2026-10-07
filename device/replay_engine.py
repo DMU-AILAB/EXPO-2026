@@ -174,6 +174,12 @@ class ReplaySession:
         from camera_live_pi import (_draw_detections, _draw_gate_debug,
                                     _filter_excluded)
 
+        # 검증 영상에도 사람 얼굴이 있을 수 있다 — 화면에 나가는 프레임은 항상 가린다.
+        # 판정은 가리기 전 프레임으로 이미 끝난 뒤라 결과가 달라지지 않는다.
+        from privacy_mask import PrivacyMasker
+        from camera_live_pi import PERSON_CLASS_ID
+        masker = PrivacyMasker()
+
         idx = 0
         self._wall0 = time.time()
         while not self._stop.is_set():
@@ -187,6 +193,7 @@ class ReplaySession:
                 if self.loop:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     idx = 0
+                    masker = PrivacyMasker()      # 영상 시간이 0으로 돌아가므로 기억을 비운다
                     self._wall0 = time.time()
                     continue
                 break
@@ -196,6 +203,8 @@ class ReplaySession:
             now = idx / self.fps if self.fps else float(idx)
 
             dets = backend.predict(frame)
+            # 제외구역 필터 이전의 사람 박스 — 배포와 같은 위치(camera_live_pi 참고)
+            masker.update([d["bbox"] for d in dets if d.get("class") == PERSON_CLASS_ID], now)
             if any(d["label"] == "white_cane" for d in dets):
                 self.counters["raw"] += 1
             # 제외구역은 트래킹 이전 raw detection 단계에서 거른다(배포와 같은 위치).
@@ -209,6 +218,8 @@ class ReplaySession:
             self._latched_ever |= {e.entity_id for e in g.entities if e.is_cane_user}
             self.counters["latched"] = len(self._latched_ever)
 
+            masker.update([t["bbox"] for t in g.tracks if t.get("class") == PERSON_CLASS_ID], now)
+            masker.apply(frame)
             _draw_detections(frame, g.tracks)
             self._judge_rois(frame, g, now)
             if self.debug_gates:

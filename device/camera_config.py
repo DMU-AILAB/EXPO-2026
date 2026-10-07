@@ -103,6 +103,9 @@ _DEFAULT_REQUIRE_PERSON = True
 # 바꾸기 때문이다 — 크롭 밖의 사람은 탐지되지 않아 유동인구 집계 범위가 ROI 주변으로
 # 좁아진다. 기존 설치의 통계가 조용히 달라지면 안 되므로 명시적으로 켜게 한다.
 _DEFAULT_ROI_CROP_INFERENCE = False
+_DEFAULT_PRIVACY_MASK = True       # 공공장소 영상이라 기본 켬 — 필드가 없는 기존 camera_config.json도 보호된다
+_DEFAULT_PRIVACY_MASK_RATIO = 0.25
+_PRIVACY_RATIO_RANGE = (0.05, 0.6)
 
 
 @dataclass
@@ -139,6 +142,11 @@ class CameraProfile:
     # 감당하지 못한다. 크롭은 연산량을 그대로 두고 그 이득의 일부를 가져온다(실측 18%).
     # 트레이드오프: 크롭 밖의 사람은 탐지되지 않아 유동인구 집계 범위가 ROI 주변으로
     # 좁아진다. ROI가 프레임 대부분을 덮으면 이득도 없다 — 그래서 기본값이 False다.
+    privacy_mask: bool = _DEFAULT_PRIVACY_MASK  # 스트림·검증 재생·썸네일에서 사람 얼굴을 모자이크한다.
+    # 탐지·안내는 원본 프레임으로 끝낸 뒤에 적용하므로 성능에 영향이 없다(device/privacy_mask.py).
+    # roi_crop_inference와 함께 켜면 크롭 밖 사람도 가리기 위해 전체 프레임 person 탐지를
+    # 몇 프레임마다 한 번 더 돌린다 — 모자이크는 "카메라에 찍히는 모든 영역"이 대상이다.
+    privacy_mask_ratio: float = _DEFAULT_PRIVACY_MASK_RATIO  # 사람 박스 높이 중 가릴 상단 비율
 
 
 def load_camera_config(path: str | Path) -> list[CameraProfile]:
@@ -169,6 +177,9 @@ def load_camera_config(path: str | Path) -> list[CameraProfile]:
                                                          _DEFAULT_REQUIRE_PERSON)),
                 roi_crop_inference=bool(item.get("roi_crop_inference",
                                                  _DEFAULT_ROI_CROP_INFERENCE)),
+                privacy_mask=bool(item.get("privacy_mask", _DEFAULT_PRIVACY_MASK)),
+                privacy_mask_ratio=float(item.get("privacy_mask_ratio",
+                                                  _DEFAULT_PRIVACY_MASK_RATIO)),
             ))
         except (KeyError, TypeError, ValueError):
             continue
@@ -214,6 +225,11 @@ def validate_camera_config(profiles: list[CameraProfile]) -> list[str]:
         if p.capture_preset not in CAPTURE_PRESETS:
             errors.append(f"'{p.id}': capture_preset 값이 잘못됨 ({p.capture_preset}) — "
                           f"{list(CAPTURE_PRESETS)} 중 하나여야 함")
+
+        lo, hi = _PRIVACY_RATIO_RANGE
+        if not (lo <= p.privacy_mask_ratio <= hi):
+            errors.append(f"'{p.id}': privacy_mask_ratio 값이 범위를 벗어남 "
+                          f"({p.privacy_mask_ratio}) — {lo}~{hi}")
 
         ids_seen[p.id] = ids_seen.get(p.id, 0) + 1
 

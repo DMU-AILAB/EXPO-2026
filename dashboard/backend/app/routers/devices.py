@@ -70,6 +70,7 @@ async def get_devices(search: str = None, db: Session = Depends(get_db), current
                 "id": c.id,
                 "port": c.port,
                 "is_streaming": bool(runtime.get(c.id, {}).get("is_streaming", False)),
+                "privacy_mask": c.privacy_mask is not False,
             }
             for c in camera_rows
             if c.is_active
@@ -231,6 +232,7 @@ async def get_device(device_id: str, db: Session = Depends(get_db), current_user
             "fps": 10, "fps_applied": True,
             "model_variant": c.model_variant, "rotation": c.rotation,
             "require_person": c.require_person, "is_active": c.is_active,
+            "privacy_mask": c.privacy_mask is not False,
             "roi_count": db.query(Roi).filter(Roi.device_id == device_id,
                                               Roi.camera_id == c.id).count(),
             "is_streaming": bool(live.get("is_streaming", False)),

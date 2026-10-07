@@ -2,7 +2,8 @@
 
 import { qs, request, requestEnvelope, setToken } from './client'
 import type {
-  AudioFile, CalibrationStatus, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
+  AudioFile, CalibrationFleetDevice, CalibrationRun, CalibrationSchedule,
+  CalibrationStatus, CalibrationTargetMode, Camera, Device, DeviceDetail, DeviceStat, DetectionParams, EventRow,
   FpHotspot, MaskCandidate, MaskHit, NetworkStatus, RecordingClip, RecordingStatus, ReplayStatus,
   ReplayVideo, RfAudioItem, RfState, Roi, ScanResult, Schedule, StatsSummary, TimeSeriesPoint,
   WifiConnectResult, WifiNetwork,
@@ -77,8 +78,13 @@ export const listCameras = (deviceId: string) =>
 
 export const updateCamera = (
   deviceId: string, cameraId: string, etag: string,
-  body: Partial<Pick<Camera, 'capture_preset' | 'fps' | 'model_variant' | 'rotation' | 'require_person'>>,
+  body: Partial<Pick<Camera, 'capture_preset' | 'fps' | 'model_variant' | 'rotation' | 'require_person' | 'privacy_mask'>>,
 ) => request<Camera>(`/api/devices/${deviceId}/cameras/${cameraId}`, { method: 'PATCH', body, etag })
+
+/** 기기의 모든 카메라에 얼굴 모자이크를 켜고 끈다(디바이스 목록 토글). */
+export const setPrivacyMask = (deviceId: string, enabled: boolean) =>
+  request<{ ok: boolean; enabled: boolean; cameras: number }>(
+    `/api/devices/${deviceId}/privacy-mask`, { method: 'PUT', body: { enabled } })
 
 export const getDetectionParams = (deviceId: string, cameraId: string) =>
   request<DetectionParams>(`/api/devices/${deviceId}/cameras/${cameraId}/detection-params`)
@@ -287,3 +293,32 @@ export const connectWifi = (deviceId: string, ssid: string, password: string) =>
 
 export const getWifiConnectResult = (deviceId: string) =>
   request<WifiConnectResult>(`/api/devices/${deviceId}/network/connect-result`)
+
+// ---------------------------------------------------------------- 구조물 수집 (일괄·예약)
+
+type CalibrationTarget = { target_mode: CalibrationTargetMode; targets: string[] }
+type CalibrationScheduleBody = CalibrationTarget & {
+  name: string; days: number[]; hour: number; minute: number; seconds: number; is_enabled: boolean
+}
+
+export const getCalibrationTargets = () =>
+  request<{ devices: CalibrationFleetDevice[]; model_variants: string[] }>('/api/calibration/targets')
+
+/** 지금 수집 중인 기기 → {남은 시간, 카메라 수}. 서버가 기기에 직접 묻는다. */
+export const getActiveCalibrations = () =>
+  request<Record<string, { remaining_sec: number | null; cameras: number }>>('/api/calibration/active')
+
+export const listCalibrationRuns = (limit = 100) =>
+  request<CalibrationRun[]>(`/api/calibration/runs${qs({ limit })}`)
+
+export const listCalibrationSchedules = () =>
+  request<CalibrationSchedule[]>('/api/calibration/schedules')
+
+export const createCalibrationSchedule = (body: CalibrationScheduleBody) =>
+  request<CalibrationSchedule>('/api/calibration/schedules', { method: 'POST', body })
+
+export const updateCalibrationSchedule = (id: number, body: Partial<CalibrationScheduleBody>) =>
+  request<CalibrationSchedule>(`/api/calibration/schedules/${id}`, { method: 'PATCH', body })
+
+export const deleteCalibrationSchedule = (id: number) =>
+  request<void>(`/api/calibration/schedules/${id}`, { method: 'DELETE' })

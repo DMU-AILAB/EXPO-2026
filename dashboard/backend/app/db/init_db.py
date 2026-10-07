@@ -1,7 +1,7 @@
 import os
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
-from ..database import engine, Base, SessionLocal
+from ..database import engine, Base, SessionLocal, ensure_columns
 from ..models import User
 from ..config import settings
 
@@ -16,6 +16,7 @@ def init_db():
     
     # Create all tables
     Base.metadata.create_all(bind=engine)
+    ensure_columns()
     
     db: Session = SessionLocal()
     
