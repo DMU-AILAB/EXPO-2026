@@ -12,6 +12,7 @@ class Camera(Base):
     model_variant = Column(String, default='v10_320')
     rotation = Column(Integer, default=0)
     require_person = Column(Boolean, default=True)
+    privacy_mask = Column(Boolean, default=True, server_default="1")  # 얼굴 모자이크 — Pi의 privacy_mask 캐시
     is_active = Column(Boolean, default=True)
     
     conf_white_cane = Column(Float, default=0.55)

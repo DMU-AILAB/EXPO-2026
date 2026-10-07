@@ -7,7 +7,8 @@ import logging
 from .config import settings
 from .errors import register_error_handlers
 from .routers import auth, devices, cameras, rois, events, ws, stats, audio, schedules, scan, rf
-from .routers import recording, replay, calibration, calibration_fleet, network
+# [녹화 비활성] 개인정보 보호 — recording 라우터는 등록하지 않는다(Pi도 /recording/* 에 404)
+from .routers import replay, calibration, calibration_fleet, network
 from .services.heartbeat_service import bulk_flush_heartbeats
 from .services.monitor_service import broadcast_camera_alerts, sweep_offline_devices
 from .services.foot_traffic_puller import PULL_INTERVAL_SEC, pull_once
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup: Start APScheduler
     from .services.scheduler_service import scheduler, initialize_scheduler
+    from .database import ensure_columns
+    ensure_columns()          # 기존 DB에 새 컬럼이 없으면 카메라 조회가 전부 실패한다
     initialize_scheduler()
     scheduler.start()
 
@@ -90,7 +93,7 @@ app.include_router(schedules.router)
 app.include_router(scan.router)
 app.include_router(rf.router)
 app.include_router(rf.group_router)
-app.include_router(recording.router)
+# [녹화 비활성] app.include_router(recording.router)
 app.include_router(replay.router)
 app.include_router(calibration.router)
 app.include_router(calibration_fleet.router)

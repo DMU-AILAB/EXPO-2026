@@ -78,8 +78,13 @@ export const listCameras = (deviceId: string) =>
 
 export const updateCamera = (
   deviceId: string, cameraId: string, etag: string,
-  body: Partial<Pick<Camera, 'capture_preset' | 'fps' | 'model_variant' | 'rotation' | 'require_person'>>,
+  body: Partial<Pick<Camera, 'capture_preset' | 'fps' | 'model_variant' | 'rotation' | 'require_person' | 'privacy_mask'>>,
 ) => request<Camera>(`/api/devices/${deviceId}/cameras/${cameraId}`, { method: 'PATCH', body, etag })
+
+/** 기기의 모든 카메라에 얼굴 모자이크를 켜고 끈다(디바이스 목록 토글). */
+export const setPrivacyMask = (deviceId: string, enabled: boolean) =>
+  request<{ ok: boolean; enabled: boolean; cameras: number }>(
+    `/api/devices/${deviceId}/privacy-mask`, { method: 'PUT', body: { enabled } })
 
 export const getDetectionParams = (deviceId: string, cameraId: string) =>
   request<DetectionParams>(`/api/devices/${deviceId}/cameras/${cameraId}/detection-params`)

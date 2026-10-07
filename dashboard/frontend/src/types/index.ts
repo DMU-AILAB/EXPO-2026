@@ -26,6 +26,8 @@ export type Camera = {
   model_variant: string
   rotation: number
   require_person: boolean
+  /** 얼굴 모자이크 — 켜면 화면에 나가는 영상에서 사람 얼굴을 가린다(탐지에는 영향 없음). */
+  privacy_mask: boolean
   is_active: boolean
   roi_count: number
   today_detections: number
@@ -38,6 +40,7 @@ export type CameraBrief = {
   id: string
   port: number
   is_streaming: boolean
+  privacy_mask: boolean
 }
 
 export type Roi = {

@@ -30,6 +30,10 @@ class CameraUpdate(BaseModel):
     model_variant: Optional[ModelVariant] = None
     rotation: Optional[int] = None
     require_person: Optional[bool] = None
+    privacy_mask: Optional[bool] = None
+
+class PrivacyMaskUpdate(BaseModel):
+    enabled: bool
 
 class CameraResponse(BaseModel):
     id: str
@@ -39,6 +43,7 @@ class CameraResponse(BaseModel):
     model_variant: str
     rotation: int
     require_person: bool
+    privacy_mask: bool = True
     is_active: bool
     
     class Config:

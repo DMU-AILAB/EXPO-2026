@@ -4,7 +4,7 @@ import {
   ChevronLeft, Activity, Thermometer, Clock, Wifi, Camera, Video,
   MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle,
   CalendarClock, Trash2, AlertTriangle, Loader2,
-  Upload, Radio, ArrowUp, ArrowDown, Film, ScanSearch, ShieldAlert,
+  Upload, Radio, ArrowUp, ArrowDown, /* Film, */ ScanSearch, ShieldAlert,
 } from 'lucide-react'
 
 import * as api from '../api'
@@ -12,7 +12,8 @@ import { ApiError } from '../api/client'
 import { describe } from './device/shared'
 import CalibrationTab from './device/CalibrationTab'
 import NetworkTab from './device/NetworkTab'
-import RecordingTab from './device/RecordingTab'
+// [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다. 다시 켜려면 이 표시를 grep해 주석을 풀 것.
+// import RecordingTab from './device/RecordingTab'
 import ReplayTab from './device/ReplayTab'
 import StatusBadge from '../components/StatusBadge'
 import { streamUrl } from '../components/StreamThumbnail'
@@ -898,6 +899,14 @@ function SettingsTab({ device, reload }: Ctx) {
                     보행자 동반 필수 (사람 없이 흔들리는 유사물을 걸러냅니다)
                   </label>
                 </div>
+                <div className="col-span-2 flex items-center gap-2 text-xs">
+                  <input type="checkbox" id="privacyMask" checked={form.privacy_mask}
+                         onChange={(e) => setForm((p) => ({ ...p, privacy_mask: e.target.checked }))}
+                         className="accent-[#2c4be0] w-4 h-4" />
+                  <label htmlFor="privacyMask" className="font-medium text-slate-700 cursor-pointer">
+                    얼굴 모자이크 (화면에 나가는 영상에서만 가리며 탐지·안내에는 영향이 없습니다)
+                  </label>
+                </div>
                 <div className="col-span-2 flex items-center justify-end gap-3 pt-3 border-t border-slate-200/70">
                   {saved && (
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 mr-auto">
@@ -1112,6 +1121,7 @@ function camFormOf(cam?: CameraType) {
     model_variant: cam?.model_variant ?? 'v10_320',
     rotation: cam?.rotation ?? 0,
     require_person: cam?.require_person ?? true,
+    privacy_mask: cam?.privacy_mask ?? true,
   }
 }
 
@@ -1435,14 +1445,14 @@ function RfTab({ device }: Ctx) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'roi' | 'replay' | 'calibration' | 'recording' | 'rf' | 'network' | 'settings'
+type Tab = 'overview' | 'roi' | 'replay' | 'calibration' | /* 'recording' | */ 'rf' | 'network' | 'settings'
 
 const TABS: { key: Tab; label: string; icon: typeof MapPin }[] = [
   { key: 'overview', label: '개요', icon: Activity },
   { key: 'roi', label: 'ROI 관리', icon: MapPin },
   { key: 'replay', label: '검증', icon: ScanSearch },
   { key: 'calibration', label: '오탐 관리', icon: ShieldAlert },
-  { key: 'recording', label: '녹화', icon: Film },
+  // [녹화 비활성] { key: 'recording', label: '녹화', icon: Film },
   { key: 'rf', label: '리모컨', icon: Radio },
   { key: 'network', label: '네트워크', icon: Wifi },
   { key: 'settings', label: '설정', icon: SlidersHorizontal },
@@ -1512,7 +1522,7 @@ export default function DeviceDetail() {
       {tab === 'roi' && <RoiTab device={device} reload={reload} />}
       {tab === 'replay' && <ReplayTab device={device} reload={reload} />}
       {tab === 'calibration' && <CalibrationTab device={device} reload={reload} />}
-      {tab === 'recording' && <RecordingTab device={device} reload={reload} />}
+      {/* [녹화 비활성] {tab === 'recording' && <RecordingTab device={device} reload={reload} />} */}
       {tab === 'rf' && <RfTab device={device} reload={reload} />}
       {tab === 'network' && <NetworkTab device={device} reload={reload} />}
       {tab === 'settings' && <SettingsTab device={device} reload={reload} />}

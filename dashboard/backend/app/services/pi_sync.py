@@ -71,6 +71,7 @@ PI_CAMERA_FIELD_MAP = {
     "model_variant": "model_variant",
     "rotation": "rotation",
     "require_person": "require_person_for_trigger",
+    "privacy_mask": "privacy_mask",
     "is_active": "enabled",
 }
 
