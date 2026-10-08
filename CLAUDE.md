@@ -50,7 +50,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `gpio_controls.py` | Wi-Fi 버튼(GPIO17) — **짧게 누름(뗄 때)** = 홈 Wi-Fi ↔ 핫스팟 전환, **3초 누름** = 블루투스 페어링 창 3분(`ble_window.json`, 홈 Wi-Fi 연결 중이면 열지 않고 짧게 3번 — 광고할 수 없는데 켜진 것처럼 보이면 안 된다. LED 페어링 패턴도 광고 가능할 때만) · 통합 상태 LED · 부저 |
 | `ble_provisioning.py` | **BLE Wi-Fi 페어링** — 대시보드(Web Bluetooth)가 망에 없는 기기에 SSID·비밀번호를 건넨다. Wi-Fi 미연결 + 버튼 창이 열렸을 때만 광고(`VG-xxxx`). GATT: info/command/result(+순번 `n`)/event. Wi-Fi 조작은 `roi_editor/network_manager.py` 재사용, `dbus-next` |
 | `rois_example.json` | ROI 설정 파일 예시 |
-| `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n`, `v15_vid_s2` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v10_320`** (= `runs/white_cane_v10_nolkc/weights`). v10은 **누수 없는 재분할(`datasets/v2`) 위에서 처음부터 학습한 계보**이고, 실영상 탐지율이 v9 계열 최고 수준이다(`docs/model_evaluation_report_v3.md`). `v11_yolo26n_320`은 백본 비교용으로 남겨둔 것이지 권장이 아니다(실영상 35.3% vs v10 73.2%). **`v15_320`(= `runs/white_cane_v15_vid_s2/weights`)은 배포 후보**다 — v10 데이터에 자체 촬영 영상 869장을 train에만 더했고, 3시드·INT8 비교에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다(리포트 §17). 기기 실측 전이라 기본값은 아직 `v10_320`이다. **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
+| `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n`, `v15_vid_s2` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 기본값은 `v15_320`**(= `runs/white_cane_v15_vid_s2/weights`)이다 — v10 데이터에 자체 촬영 영상 869장을 train에만 더했고, 3시드·INT8 비교에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다(리포트 §17). 기기 CPU 실측에서 v10과 추론시간이 같다(약 67ms, A-B-A). **★ Coral(edgetpu) 컴파일본이 없다** — Coral 카메라는 CPU TFLite로 폴백해 약 28ms → 약 67ms가 되고, Coral에서의 성능·헛트리거는 검증되지 않았다(`edgetpu_compiler`를 받을 수 없었다). `v10_320`은 예비다. `v11_yolo26n_320`은 백본 비교용(실영상 35.3% vs v10 73.2%)이지 권장이 아니다. **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
 | `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/v1/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
 | `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
 | `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
@@ -478,8 +478,8 @@ Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 �
   리터럴만 — 값 복제 금지). 기본 모델이 이미 있으면 받지 않는다. `bundle_id`는 코드 해시라 **모델 범위와
   무관해야 한다**(달라지면 푸시 업데이트가 항상 구버전으로 보인다 — 테스트가 고정). 푸시 업데이트는
   `none` 기본. 설치 스크립트의 `BOOTSTRAP_MODEL_DIRS`는 서버 값과 `tests/test_installer_matches_makefile.py`가 대조한다.
-  **코드 기본 모델(`_DEFAULT_MODEL_VARIANT`)은 아직 `v10_320`이다** — v15는 기기 FPS 실측 게이트(≥10fps,
-  헛트리거 없음)를 통과한 뒤에 바꾼다.
+  **코드 기본 모델(`_DEFAULT_MODEL_VARIANT`)은 `v15_320`이다**(사용자 결정). CPU 실측은 v10과 동일했으나 **Coral 컴파일본이 없어
+  Coral 카메라는 CPU로 폴백하며 헛트리거는 측정하지 못했다** — Coral 컴파일본이 생기면 재검증할 것.
 - **핫스팟 프로필(`VisionGuide-AP`)은 없을 때만 만든다.** 저장소 어디에도 이 프로필을 만드는 코드가
   없어서(기존 기기는 손으로 만든 것) 새 기기에서는 Wi-Fi가 없을 때 핫스팟 폴백이 조용히 실패했다.
   **프로필 *이름*은 코드가 `nmcli connection up`에 쓰는 이름이고 SSID와 다를 수 있다** — 기존 기기는

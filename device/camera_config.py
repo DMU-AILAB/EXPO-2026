@@ -74,7 +74,7 @@ MODEL_VARIANTS = {
     "v10_320": {
         "weights_dir": "runs/white_cane_v10_nolkc/weights",
         "input_size": 320,
-        "label": "white_cane_v10_320 (320, 누수 제거 재분할 + 증강 튜닝 — 권장)",
+        "label": "white_cane_v10_320 (320, 누수 제거 재분할 + 증강 튜닝 — 예비)",
     },
     # yolo26n 백본 비교용. 실영상 지표에서 yolov8n에 크게 뒤져(35.3% vs 73.2%)
     # 채택하지 않았으나, 실기기에서 직접 확인할 수 있도록 선택지로 남긴다.
@@ -85,16 +85,17 @@ MODEL_VARIANTS = {
     },
     # v10 데이터에 자체 촬영 영상 14편(869장, train에만)을 더한 계보. 3시드 비교와
     # INT8 재측정에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다
-    # (리포트 §17). 기기 실측 전이라 기본값은 아직 v10_320이다.
+    # (리포트 §17). 기본값이다. ★ Coral(edgetpu) 컴파일본이 없다 — Coral 카메라는 CPU TFLite로
+    # 폴백한다(추론 약 28ms → 약 67ms, 기기 실측). 컴파일본이 생기면 같은 폴더에 두면 된다.
     "v15_320": {
         "weights_dir": "runs/white_cane_v15_vid_s2/weights",
         "input_size": 320,
-        "label": "white_cane_v15_320 (320, 자체 촬영 영상 편입 — 배포 후보)",
+        "label": "white_cane_v15_320 (320, 자체 촬영 영상 편입 — 기본·권장)",
     },
 }
 # 기본값이 오랫동안 v2_640이었다 — 프레임 드랍의 원인이던 640 모델이라
 # camera_config.json 없이 뜬 Pi가 가장 느린 모델로 동작했다. 현행 권장으로 맞춘다.
-_DEFAULT_MODEL_VARIANT = "v10_320"
+_DEFAULT_MODEL_VARIANT = "v15_320"
 # 사람 동반 필수 조건의 기본값 — dataclass 기본값과 load_camera_config()의 폴백이
 # 어긋나면 필드가 없는 기존 파일이 조용히 다른 값으로 로드되므로 한 곳에서만 정의한다.
 _DEFAULT_REQUIRE_PERSON = True
