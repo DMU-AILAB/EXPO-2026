@@ -414,6 +414,38 @@ SSH 키·sudo 비밀번호 없이 대시보드 버튼 한 번으로 선택한 �
 - ★ `GET /api/devices/update-info`·`/update`는 `/{device_id}`보다 **먼저 선언**해야 한다
   (아니면 경로 변수로 먹힌다).
 
+## 서버 주소 자동 갱신 · 연결 진단 — 설계 결정
+
+Wi-Fi가 바뀔 때마다 `.env`를 고치고 신원 재주입을 누르던 일, 그리고 "왜 안 되지"를 추적하던
+일을 대시보드로 옮긴 것이다(`services/server_address.py`·`address_sync.py`·`diagnosis.py`).
+
+- **`PUBLIC_BASE_URL=auto`(기본)**: 서버가 **그 기기에 닿는 경로의 자기 IP**를 계산한다
+  (UDP `connect()`로 라우팅만 정하는 방식 — 패킷이 나가지 않아 기기가 꺼져 있어도 된다).
+  `.local` 이름에 기대지 않는다 — mDNS 해석은 기기마다 다르고 방화벽에서도 막힌다.
+  포트는 **서버가 실제로 받은 요청의 포트**(`remember_port` 미들웨어)가 `.env PORT`보다
+  우선한다 — `uvicorn --port`로 띄우면 `.env`와 어긋나기 쉽다(이번에 실제로 어긋났다).
+  명시한 URL은 그대로 쓴다.
+- **주소 갱신은 키를 바꾸지 않는다.** `Device.control_key`에 평문이 있으므로 같은 키로 같은
+  신원을 다시 보내면 되고(`api_key_hash` 불변), Pi는 키가 맞아 인수로 취급하지 않는다
+  (로그·부저 없음). 신원 재주입(`/provision`)은 키를 새로 발급하므로 이 용도로 쓰지 않는다.
+- **자동으로 건드리는 범위는 신원이 이미 있는 기기뿐**이다. 신원이 없는 기기를 인수하는 것은
+  다른 서버가 쓰는 기기를 빼앗을 수 있어 사람이 누른다(진단 탭이 안내). 같은 IP에 다른
+  `device_id`의 기기가 있으면 **우리 키를 심지 않는다**(DHCP로 IP가 넘어간 경우).
+- **`address-reconcile` 루프**(`main.py`)는 하트비트가 끊긴 기기만 점검한다(정상 기기는 건드리지
+  않는다). 기기별 실패 백오프 5분→최대 30분 — 꺼진 기기를 계속 두드리지 않는다.
+  기기 IP까지 바뀌면 서버가 찾지 못한다(하트비트가 와야 `adopt_peer_ip`가 따라간다) →
+  기기 추가의 자동 탐색으로 다시 찾는다.
+- **연결 진단**(`GET /api/devices/{id}/diagnose`)의 점검은 이번 세션에서 실제로 겪은 원인마다
+  하나씩이다: 방화벽(기기→서버 TCP만 막힘), 구버전 코드, 서버 주소 불일치, 신원 미주입,
+  `cam1` 미연결("주의"), 전원, 온도, NTP. 서로 독립이고 기기에 닿지 않으면 `unknown`이다.
+  **서버에서 기기로 닿는다고 기기에서 서버로 닿는 것이 아니다** — 그래서 기기가 스스로
+  DNS→TCP→HTTP 순으로 확인하는 `GET /api/diagnose`(`device/diagnose.py`)를 따로 둔다.
+  `GET /api/device/status`는 기기 탐색이 바디 스키마로 판별하므로 늘리지 않는다.
+- **전력은 `vcgencmd get_throttled`로 판단한다**: 지금(`now`)과 부팅 이후(`ever`)를 구분한다 —
+  과거에만 저전압이면 주의, 지금이면 문제.
+- 자동 탐색 동시 접속은 8이다(`routers/scan.py`) — 15 이상에서는 /24 스캔이 살아 있는 기기를
+  무작위로 놓쳤다(Wi-Fi + WSL 미러 네트워크 실측). 키우기 전에 재현율부터 잴 것.
+
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
 `tests/test_pipeline_integration.py`가 **프레임 루프를 끝까지 실제로 돌리는 유일한
@@ -752,7 +784,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` · `diagnose.py` · `esp32_relay.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —

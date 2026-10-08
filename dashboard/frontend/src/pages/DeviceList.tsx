@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CalendarClock, ChevronRight, Download, Loader2, Search, ShieldAlert } from 'lucide-react'
+import { CalendarClock, ChevronRight, Download, Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react'
 
 import * as api from '../api'
 import CalibrationScheduleDialog from '../components/CalibrationScheduleDialog'
@@ -39,6 +39,21 @@ export default function DeviceList() {
   const [updating, setUpdating] = useState(false)
   const [updateResults, setUpdateResults] = useState<api.UpdateResult[] | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  // 서버 IP가 바뀌었을 때(Wi-Fi 이동 등) 기기가 아는 서버 주소를 지금 주소로 맞춘다. 키는 안 바뀐다.
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshResults, setRefreshResults] = useState<api.RefreshAddressResult[] | null>(null)
+  const runRefresh = async () => {
+    setRefreshing(true); setRefreshResults(null)
+    try {
+      setRefreshResults((await api.refreshAddresses()).results)
+      reload()
+    } catch (e) {
+      setRefreshResults([{ device_id: '', ok: false, changed: false, skipped: false, server_url: null,
+        previous: null, error: e instanceof Error ? e.message : '서버 주소를 갱신하지 못했습니다' }])
+    } finally {
+      setRefreshing(false)
+    }
+  }
   const toggleSelected = (id: string) =>
     setSelected((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const allSelected = devices.length > 0 && devices.every((d) => selected.has(d.id))
@@ -78,6 +93,15 @@ export default function DeviceList() {
           모델 포함
         </label>
         <button
+          onClick={() => void runRefresh()}
+          disabled={refreshing}
+          title="서버 IP가 바뀌어 기기가 '알 수 없음'일 때 — 기기가 아는 서버 주소를 지금 주소로 맞춥니다"
+          className="glass-btn px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+        >
+          {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          서버 주소 갱신
+        </button>
+        <button
           onClick={() => void runUpdate()}
           disabled={selected.size === 0 || updating}
           className="glass-btn px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
@@ -102,6 +126,27 @@ export default function DeviceList() {
         </div>
         </div>
       </div>
+
+      {refreshResults && (
+        <div className="glass-panel p-4 mb-4 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-bold text-slate-700">서버 주소 갱신 결과</span>
+            <button onClick={() => setRefreshResults(null)} className="text-slate-400 hover:text-slate-600">닫기</button>
+          </div>
+          {refreshResults.length === 0 && <p className="text-slate-500">신원이 있는 기기가 없습니다</p>}
+          {refreshResults.map((r, i) => {
+            const name = devices.find((d) => d.id === r.device_id)?.name ?? r.device_id
+            const tone = !r.ok ? (r.skipped ? 'text-amber-700' : 'text-red-700') : 'text-emerald-700'
+            const text = !r.ok ? (r.error ?? '실패')
+              : r.changed ? `${r.previous || '(없음)'} → ${r.server_url}` : '이미 최신 주소입니다'
+            return (
+              <p key={`${r.device_id}-${i}`} className={`py-0.5 font-semibold ${tone}`}>
+                <span className="font-mono">{name}</span> · {text}
+              </p>
+            )
+          })}
+        </div>
+      )}
 
       {(updateResults || updateError) && (
         <div className="glass-panel p-4 mb-4 text-xs">
@@ -166,6 +211,14 @@ export default function DeviceList() {
                   </td>
                   <td className="px-4 py-3.5 font-mono font-semibold text-slate-800 whitespace-nowrap">
                     {device.name}
+                    {device.status !== 'online' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/devices/${device.id}?tab=diagnose`) }}
+                        className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200"
+                        title="왜 온라인이 아닌지 원인과 해결 방법을 봅니다">
+                        진단
+                      </button>
+                    )}
                     {!device.provisioned && (
                       <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
                             title="이 서버가 기기의 키를 모릅니다 — 상세에서 신원 재주입">

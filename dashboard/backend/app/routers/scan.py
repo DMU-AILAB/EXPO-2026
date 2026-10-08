@@ -153,7 +153,13 @@ def suggest_subnet(public_base_url: str) -> Optional[str]:
 @router.get("/suggest")
 async def get_suggested_subnet(current_user=Depends(get_current_user)):
     from ..config import settings
-    return {"data": {"subnet": suggest_subnet(settings.public_base_url)}, "ok": True}
+    from ..services.server_address import is_auto, local_ip_toward
+    subnet = suggest_subnet(settings.public_base_url)
+    if subnet is None and is_auto():
+        # PUBLIC_BASE_URL=auto면 주소가 없으므로 기본 경로의 서버 IP로 대역을 추정한다.
+        ip = local_ip_toward("192.0.2.1")
+        subnet = suggest_subnet(f"http://{ip}") if ip else None
+    return {"data": {"subnet": subnet}, "ok": True}
 
 
 @router.get("/{scan_id}")

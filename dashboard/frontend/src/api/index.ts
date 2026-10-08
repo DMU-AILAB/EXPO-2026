@@ -103,6 +103,52 @@ export const getDeviceUpdateStatus = (id: string) =>
 export const rollbackDeviceUpdate = (id: string) =>
   request<unknown>(`/api/devices/${id}/update/rollback`, { method: 'POST' })
 
+// ------------------------------------------------------- 서버 주소 갱신
+
+/** 기기가 아는 서버 주소를 지금 주소로 맞춘 결과. 키는 바뀌지 않는다. */
+export interface RefreshAddressResult {
+  device_id: string
+  ok: boolean
+  changed: boolean
+  /** 신원이 없거나 다른 기기라 건드리지 않았다 — 신원 재주입이 필요할 수 있다. */
+  skipped: boolean
+  server_url: string | null
+  previous: string | null
+  error: string | null
+}
+
+/** `deviceIds`를 비우면 신원이 있는 모든 기기. */
+export const refreshAddresses = (deviceIds?: string[]) =>
+  request<{ results: RefreshAddressResult[] }>('/api/devices/refresh-address', {
+    method: 'POST',
+    body: { device_ids: deviceIds ?? null },
+  })
+
+export const refreshDeviceAddress = (id: string) =>
+  request<RefreshAddressResult>(`/api/devices/${id}/refresh-address`, { method: 'POST' })
+
+// ---------------------------------------------------------------- 연결 진단
+
+export type CheckStatus = 'ok' | 'warn' | 'fail' | 'unknown'
+
+/** 점검 항목 하나. `action`이 있으면 같은 화면에서 바로 고치는 버튼을 보여준다. */
+export interface DiagnosisCheck {
+  key: string
+  label: string
+  status: CheckStatus
+  detail: string
+  fix: string
+  action: 'refresh_address' | 'provision' | 'update' | null
+}
+
+export interface Diagnosis {
+  overall: CheckStatus
+  checks: DiagnosisCheck[]
+  checked_at: string
+}
+
+export const getDiagnosis = (id: string) => request<Diagnosis>(`/api/devices/${id}/diagnose`)
+
 // ---------------------------------------------------------------- 카메라
 
 /** `stale: true`면 기기가 꺼져 있어 캐시를 보여주는 중이다. */

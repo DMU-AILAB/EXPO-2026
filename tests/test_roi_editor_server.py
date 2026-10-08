@@ -500,3 +500,18 @@ def test_update_rollback_requires_key_and_restores(update_env):
     assert (dest / "detect.py").read_text() == "OLD = 1\n"
     assert restarts == [1, 1]
     assert client.post("/api/update/rollback", headers={"X-Device-Key": "key-1"}).status_code == 409
+
+
+def test_diagnose_endpoint_reports_server_power_and_clock(client, monkeypatch):
+    import diagnose
+    monkeypatch.setattr(diagnose, "check_server", lambda url: {"url": url, "dns": {"ok": True}})
+    monkeypatch.setattr(diagnose, "read_throttled", lambda: {"raw": "0x0"})
+    monkeypatch.setattr(diagnose, "ntp_synchronized", lambda: True)
+
+    # 신원이 없으면 서버 점검은 건너뛴다
+    body = client.get("/api/diagnose").json()
+    assert body["server"] is None and body["power"] == {"raw": "0x0"} and body["ntp_synchronized"] is True
+
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "k", "server_url": "http://pc:8001"})
+    assert client.get("/api/diagnose").json()["server"]["url"] == "http://pc:8001"
+    assert "api_key" not in client.get("/api/diagnose").text           # 키는 나가지 않는다

@@ -13,9 +13,11 @@ class Settings(BaseSettings):
     audio_dir: str = "./data/audio"
 
     # 기기가 이벤트·하트비트를 보낼 **서버 자신의 주소**. 등록 시 Pi에 심어진다.
-    # 비어 있으면 Pi의 DeviceIdentity.is_usable()이 False가 되어 아무것도 전송되지
-    # 않는다(device/device_identity.py:49-51) — 그래서 등록 단계에서 막는다.
-    public_base_url: str = "http://localhost:8000"
+    # "auto"(기본)면 기기에 닿는 경로의 서버 IP를 그때그때 계산한다(services/server_address.py) —
+    # Wi-Fi가 바뀌어도 .env를 고치지 않는다. 명시한 URL은 그대로 쓴다.
+    # 기기에서 닿지 않는 주소면 Pi의 DeviceIdentity.is_usable()은 True여도 아무것도
+    # 도착하지 않는다 — 진단 탭이 이를 잡아 준다.
+    public_base_url: str = "auto"
     
     cors_origins: str = "http://localhost:5173"
 

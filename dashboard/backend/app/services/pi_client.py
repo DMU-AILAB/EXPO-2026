@@ -13,8 +13,9 @@ Pi 쪽 실제 계약 (apps/roi_editor/server.py):
 | 카메라 저장 | `POST /api/cameras` ← `{"cameras":[...]}` — **목록 전체 치환** |
 | ROI 조회 | `GET /api/rois?camera=<id>` → `rois.json` 내용 그대로 |
 | ROI 저장 | `POST /api/rois?camera=<id>` ← `{rois, conf, cooldown, debounce}` — **전체 치환** |
-| 신원 심기 | `POST /api/identity` |
+| 신원 심기·조회 | `POST /api/identity` · `GET /api/identity` |
 | 오디오 업로드 | `POST /api/audio/upload` (multipart, 필드명 `file`) → `{"ok":true,"path":"<절대경로>"}` |
+| 진단 | `GET /api/diagnose` · `GET /api/outbox` · `GET /api/metrics` |
 | 코드 업데이트 | `POST /api/update` (multipart `file`, `X-Device-Key`) · `POST /api/update/rollback` · `GET /api/update/status` |
 | 기기 판별 | `GET /api/version` → `{version, product:"VisionGuide", ...}` |
 | 검증 재생 | `/api/replay/{videos,start,pause,step,stop,status,stream.mjpg}` — 세션은 기기에 하나 |
@@ -185,6 +186,22 @@ class PiClient:
 
     async def post_rollback(self, device_key: str) -> dict:
         return await self.post_control("/api/update/rollback", device_key)
+
+    async def get_identity(self) -> dict:
+        """`{registered, device_id, server_url, name, location, registered_at}` — api_key는 오지 않는다."""
+        return await self._get_json("/api/identity")
+
+    async def get_outbox(self) -> dict:
+        """`{events:{pending,last_error,...}, heartbeat:{last_sent_at,last_error,...}}` — 기기→서버 전송 상태."""
+        return await self._get_json("/api/outbox")
+
+    async def get_metrics(self) -> dict:
+        """`{cameras:[{camera_id, streaming, stale, fps, ...}]}` — 카메라별 런타임 지표."""
+        return await self._get_json("/api/metrics")
+
+    async def get_diagnose(self) -> dict:
+        """기기가 스스로 확인한 `{server, power, ntp_synchronized}`. 구버전 기기는 404."""
+        return await self._get_json("/api/diagnose")
 
     # ------------------------------------------------------------------ 제어
 

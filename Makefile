@@ -76,7 +76,8 @@ DEPLOY_PY = \
 	device/static_mask.py \
 	device/privacy_mask.py \
 	device/ble_beacon.py \
-	device/self_update.py
+	device/self_update.py \
+	device/diagnose.py
 
 # Pi에 배포할 모델 파일 — 카메라 프로필의 model_variant로 선택되는 각 모델 디렉터리.
 # 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.

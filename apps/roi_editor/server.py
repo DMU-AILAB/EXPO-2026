@@ -63,6 +63,7 @@ from device_identity import (  # noqa: E402
     default_path, load_identity, save_identity, signal_takeover,
 )
 import self_update  # noqa: E402
+import diagnose as _diagnose  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths (overridden by CLI args at startup)
@@ -887,6 +888,22 @@ def post_update_rollback(request: Request):
     print(f"[INFO] 원격 요청으로 업데이트 롤백: {result}, 1초 후 재시작")
     _schedule_update_restart()
     return {"ok": True, "restarting": True, **result}
+
+
+@app.get("/api/diagnose")
+def get_diagnose():
+    """기기가 스스로 확인한 연결·전원·시계 — 대시보드 "연결 진단"이 부른다.
+
+    서버 쪽에서는 알 수 없는 것만 낸다: 기기 → 서버 접속(DNS→TCP→HTTP 단계별),
+    전원(저전압/스로틀링), NTP 동기. 읽기 전용이고 키가 필요 없다(api_key는 나가지 않는다).
+    `/api/device/status`는 기기 탐색이 바디 스키마로 판별하므로 늘리지 않고 여기에 둔다.
+    """
+    ident = load_identity(identity_path)
+    return {
+        "server": _diagnose.check_server(ident.server_url) if ident and ident.server_url else None,
+        "power": _diagnose.read_throttled(),
+        "ntp_synchronized": _diagnose.ntp_synchronized(),
+    }
 
 
 @app.get("/api/metrics")

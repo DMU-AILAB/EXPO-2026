@@ -22,6 +22,11 @@ class BulkUpdateRequest(BaseModel):
     include_models: bool = False
 
 
+class RefreshAddressRequest(BaseModel):
+    """비우면 신원이 있는 모든 기기."""
+    device_ids: Optional[list[str]] = None
+
+
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     location: Optional[str] = None

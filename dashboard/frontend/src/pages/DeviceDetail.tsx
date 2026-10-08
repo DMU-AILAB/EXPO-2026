@@ -4,7 +4,7 @@ import {
   ChevronLeft, Activity, Thermometer, Clock, Wifi, Camera, Video,
   MapPin, Power, SlidersHorizontal, Plus, Pencil, RotateCcw, CheckCircle,
   CalendarClock, Trash2, AlertTriangle, Loader2,
-  Upload, Radio, ArrowUp, ArrowDown, /* Film, */ ScanSearch, ShieldAlert,
+  Upload, Radio, ArrowUp, ArrowDown, /* Film, */ ScanSearch, ShieldAlert, Stethoscope,
 } from 'lucide-react'
 
 import * as api from '../api'
@@ -12,6 +12,7 @@ import { ApiError } from '../api/client'
 import { describe } from './device/shared'
 import CalibrationTab from './device/CalibrationTab'
 import NetworkTab from './device/NetworkTab'
+import DiagnoseTab from './device/DiagnoseTab'
 import DeviceUpdatePanel from '../components/DeviceUpdatePanel'
 import DeviceProvisionPanel from '../components/DeviceProvisionPanel'
 // [녹화 비활성] 개인정보 보호 — 배포에서는 녹화를 쓰지 않는다. 다시 켜려면 이 표시를 grep해 주석을 풀 것.
@@ -1453,7 +1454,7 @@ function RfTab({ device }: Ctx) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'roi' | 'replay' | 'calibration' | /* 'recording' | */ 'rf' | 'network' | 'settings'
+type Tab = 'overview' | 'roi' | 'replay' | 'calibration' | /* 'recording' | */ 'rf' | 'network' | 'diagnose' | 'settings'
 
 const TABS: { key: Tab; label: string; icon: typeof MapPin }[] = [
   { key: 'overview', label: '개요', icon: Activity },
@@ -1463,6 +1464,7 @@ const TABS: { key: Tab; label: string; icon: typeof MapPin }[] = [
   // [녹화 비활성] { key: 'recording', label: '녹화', icon: Film },
   { key: 'rf', label: '리모컨', icon: Radio },
   { key: 'network', label: '네트워크', icon: Wifi },
+  { key: 'diagnose', label: '연결 진단', icon: Stethoscope },
   { key: 'settings', label: '설정', icon: SlidersHorizontal },
 ]
 
@@ -1533,6 +1535,7 @@ export default function DeviceDetail() {
       {/* [녹화 비활성] {tab === 'recording' && <RecordingTab device={device} reload={reload} />} */}
       {tab === 'rf' && <RfTab device={device} reload={reload} />}
       {tab === 'network' && <NetworkTab device={device} reload={reload} />}
+      {tab === 'diagnose' && <DiagnoseTab device={device} reload={reload} />}
       {tab === 'settings' && <SettingsTab device={device} reload={reload} />}
     </div>
   )
