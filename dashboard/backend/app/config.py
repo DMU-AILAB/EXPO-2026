@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # 번들 목록은 이 루트의 `Makefile` DEPLOY_PY가 단일 출처다.
     repo_root: str = ""
 
+    # Pi가 서버를 스스로 찾아 등록하게 한다(UDP 발견 + 등록 요청). 끄면 응답기도 침묵하고 등록 요청은
+    # 403이다. 신원이 없는 기기는 즉시 등록하지만 **다른 서버 소속 기기는 승인 대기**로 둔다.
+    # 통제된 LAN을 전제로 한다 — 공용 망에서는 끈다.
+    auto_enroll: bool = True
+    # 발견 응답 UDP 포트. device/server_discovery.py의 DISCOVERY_PORT와 같아야 한다(계약 테스트가 대조).
+    discovery_port: int = 48555
+
     # 빌드된 프런트(`npm run build`의 dist). 비우면 `<repo>/dashboard/frontend/dist`.
     # index.html이 있을 때만 백엔드가 같은 포트로 서빙한다 — 없으면 개발 모드(vite dev) 그대로.
     frontend_dist: str = ""

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CalendarClock, ChevronRight, Download, Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react'
+import { CalendarClock, ChevronRight, Cpu, Download, Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react'
 
 import * as api from '../api'
 import CalibrationScheduleDialog from '../components/CalibrationScheduleDialog'
+import ModelRolloutDialog from '../components/ModelRolloutDialog'
+import PendingEnrollments from '../components/PendingEnrollments'
 import StatusBadge from '../components/StatusBadge'
 import { useApi } from '../hooks/useApi'
 import { formatLastSeen } from '../format'
@@ -32,6 +34,7 @@ export default function DeviceList() {
   const onlineCount = devices.filter((d) => d.status === 'online').length
   const filtered = devices
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [rolloutOpen, setRolloutOpen] = useState(false)
 
   // 선택한 기기들에 코드를 올린다. 기기별 결과를 따로 보여주므로 한 대가 실패해도 나머지는 진행된다.
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -115,6 +118,12 @@ export default function DeviceList() {
         >
           <CalendarClock className="w-3.5 h-3.5" />수집 예약
         </button>
+        <button
+          onClick={() => setRolloutOpen(true)}
+          className="glass-btn px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5"
+        >
+          <Cpu className="w-3.5 h-3.5" />모델 일괄 변경
+        </button>
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -126,6 +135,8 @@ export default function DeviceList() {
         </div>
         </div>
       </div>
+
+      <PendingEnrollments onChanged={reload} />
 
       {refreshResults && (
         <div className="glass-panel p-4 mb-4 text-xs">
@@ -274,6 +285,7 @@ export default function DeviceList() {
       </div>
 
       {scheduleOpen && <CalibrationScheduleDialog onClose={() => setScheduleOpen(false)} />}
+      {rolloutOpen && <ModelRolloutDialog onClose={() => setRolloutOpen(false)} onDone={reload} />}
     </div>
   )
 }

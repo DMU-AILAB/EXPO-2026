@@ -25,6 +25,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 DRY_RUN=0
 UNITS_ONLY=0
 NO_REGISTER=0
+ASSUME_YES=0
 MODELS="default"        # none | default | all — 서버 번들 안의 모델 범위
 AP_PASSWORD="${AP_PASSWORD:-visionguide}"
 # ★ 서버 번들의 기본 모델 = dashboard/backend/app/services/bundle_builder.py BOOTSTRAP_MODELS가 가리키는
@@ -33,6 +34,12 @@ AP_PASSWORD="${AP_PASSWORD:-visionguide}"
 BOOTSTRAP_MODEL_DIRS=(runs/white_cane_v15_vid_s2/weights runs/white_cane_v10_nolkc/weights)
 # ★ deploy/auto_ap.sh의 AP_IP와 같아야 한다(같은 테스트가 대조). 프로필 *이름*은 코드가 전환에 쓰는 이름이다.
 AP_CONNECTION="VisionGuide-AP"
+# 서버 자동 발견(UDP 브로드캐스트). ★ 아래 discover_server의 상수는 device/server_discovery.py와 같아야 한다
+# (tests/test_installer_matches_makefile.py가 대조한다). 환경변수로 바꿀 수 있다 — 브로드캐스트가 막힌
+# 망에서 서버 주소로 직접 보내거나(DISCOVERY_TARGETS="192.168.0.5"), 테스트에서 쓴다.
+DISCOVERY_PORT="${DISCOVERY_PORT:-48555}"
+DISCOVERY_TIMEOUT="${DISCOVERY_TIMEOUT:-2}"
+DISCOVERY_TRIES="${DISCOVERY_TRIES:-3}"
 AP_IP="192.168.4.1"
 
 # ★ Makefile의 deps(apt) + install-service(iptables). 바꾸면 Makefile도 같이 바꿀 것.
@@ -44,8 +51,9 @@ usage() {
   cat <<'EOF'
 사용법: install.sh [옵션]
 
-  --server URL        VisionGuide 서버 주소 (기본: 이 스크립트를 내려준 서버)
-  --token TOKEN       설치 토큰 — 코드 내려받기와 서버 등록에 쓴다
+  --server URL        VisionGuide 서버 주소 (기본: 이 스크립트를 내려준 서버. 둘 다 없으면 LAN에서 스스로 찾는다)
+  --token TOKEN       설치 토큰 — 코드 내려받기와 서버 등록에 쓴다.
+                      생략하면 토큰 없이 진행한다(서버가 자동 등록을 허용하는 사설 LAN일 때)
   --user NAME         서비스를 돌릴 사용자 (기본: 지금 사용자)
   --python PATH       파이썬 경로 (기본: pyenv 3.10 → python3)
   --models MODE       받을 모델: default(현행 v15 + 예비 v10, 약 6MB — 기본) | all(전부, 수십 MB) | none
@@ -55,6 +63,7 @@ usage() {
                       프로필이 이미 있으면 건드리지 않는다
   --units-only        코드는 건드리지 않고 유닛·sudoers만 다시 설치한다
   --no-register       서버 등록을 건너뛴다 (이후 대시보드 기기 추가에서 등록)
+  --yes               LAN에서 찾은 서버를 묻지 않고 믿는다 (기본: 터미널에서는 확인을 묻는다)
   --dry-run           실제 변경 없이 단계와 명령만 출력한다
   -h, --help
 EOF
@@ -71,6 +80,7 @@ while [[ $# -gt 0 ]]; do
     --ap-password) AP_PASSWORD="${2:?--ap-password 값이 필요합니다}"; shift 2 ;;
     --units-only) UNITS_ONLY=1; shift ;;
     --no-register) NO_REGISTER=1; shift ;;
+    --yes|-y) ASSUME_YES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "알 수 없는 옵션: $1" >&2; usage >&2; exit 2 ;;
@@ -105,14 +115,98 @@ run() {
 PLACEHOLDER="__SERVER""_URL__"
 [[ "$SERVER_URL" == "$PLACEHOLDER" ]] && SERVER_URL=""
 
+# LAN에서 VisionGuide 서버를 찾아 주소를 stdout에 한 줄로 낸다(못 찾으면 비어 있고 실패 코드).
+# device/server_discovery.py의 최소 인라인 구현 — 코드가 아직 설치되기 전이라 그 모듈을 쓸 수 없다.
+# 프로토콜: 요청 b"VISIONGUIDE?" → 응답 JSON {"service":"visionguide","url":...} (UDP, 브로드캐스트).
+discover_server() {
+  local py; py="$(command -v python3 || true)"
+  [[ -n "$py" ]] || return 1
+  DISCOVERY_PORT="$DISCOVERY_PORT" DISCOVERY_TIMEOUT="$DISCOVERY_TIMEOUT" DISCOVERY_TRIES="$DISCOVERY_TRIES" \
+    DISCOVERY_TARGETS="${DISCOVERY_TARGETS:-}" "$py" - <<'PY'
+import json, os, socket, sys, time
+from urllib.parse import urlparse
+PORT = int(os.environ["DISCOVERY_PORT"]); TIMEOUT = float(os.environ["DISCOVERY_TIMEOUT"])
+TRIES = max(1, int(os.environ["DISCOVERY_TRIES"]))
+PREFIX = b"VISIONGUIDE?"; SERVICE = "visionguide"
+targets = os.environ.get("DISCOVERY_TARGETS", "").split()
+if not targets:
+    targets = ["255.255.255.255"]
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9)); ip = s.getsockname()[0]
+        if ip.count(".") == 3 and ip != "0.0.0.0":
+            targets.append(ip.rsplit(".", 1)[0] + ".255")      # 다중 NIC 대비: 기본 경로 /24 지향 브로드캐스트
+    except OSError:
+        pass
+payload = PREFIX + json.dumps({"v": 1, "hostname": socket.gethostname()}).encode()
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+sock.bind(("", 0))
+found = []
+for _ in range(TRIES):
+    sent = 0
+    for t in targets:
+        try:
+            sock.sendto(payload, (t, PORT)); sent += 1
+        except OSError:
+            pass
+    if not sent:
+        continue
+    end = time.monotonic() + TIMEOUT
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            break
+        sock.settimeout(left)
+        try:
+            data, _ = sock.recvfrom(4097)
+            obj = json.loads(data.decode("utf-8"))
+            url = obj.get("url") if isinstance(obj, dict) and obj.get("service") == SERVICE else None
+            u = urlparse(url) if isinstance(url, str) and len(url) <= 200 and not any(c.isspace() for c in url) else None
+            if u is not None:
+                u.port                                            # 잘못된 포트면 ValueError
+            if u is not None and u.scheme in ("http", "https") and u.hostname and url.rstrip("/") not in found:
+                found.append(url.rstrip("/"))
+        except (socket.timeout, TimeoutError, OSError):
+            break
+        except ValueError:
+            continue
+    if found:
+        break
+for u in found:
+    print("발견: " + u, file=sys.stderr)
+if not found:
+    sys.exit(1)
+print(found[0])
+PY
+}
+
 # --------------------------------------------------------------------------- 1. 사전 점검
 step "사전 점검"
 [[ "$(id -u)" -ne 0 ]] || die "root로 실행하지 마세요 — 서비스가 돌 일반 사용자로 실행하면 필요할 때만 sudo를 씁니다"
 for cmd in curl tar; do command -v "$cmd" >/dev/null || die "$cmd 가 필요합니다 (sudo apt-get install $cmd)"; done
 [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "armv7l" ]] || warn "라즈베리파이가 아닌 구조($(uname -m))입니다 — 계속합니다"
 if [[ $UNITS_ONLY -eq 0 ]]; then
-  [[ -n "$SERVER_URL" ]] || die "서버 주소가 없습니다 (--server URL)"
-  [[ -n "$TOKEN" || $DRY_RUN -eq 1 ]] || die "설치 토큰이 없습니다 (--token) — 대시보드에서 설치 명령을 새로 만드세요"
+  if [[ -z "$SERVER_URL" ]]; then
+    info "서버 주소가 없어 LAN에서 VisionGuide 서버를 찾습니다 (최대 ${DISCOVERY_TRIES}회 × ${DISCOVERY_TIMEOUT}초)"
+    SERVER_URL="$(discover_server)" || SERVER_URL=""
+    [[ -n "$SERVER_URL" ]] || die "서버를 찾지 못했습니다 — 서버가 켜져 있고 같은 망인지 확인하거나 --server URL 로 직접 알려 주세요 (서버의 UDP ${DISCOVERY_PORT} 방화벽도 확인)"
+    # ★ 이 서버가 내려주는 코드를 root 권한으로 설치한다. UDP 브로드캐스트에는 누구나 답할 수 있으므로 **먼저 답한
+    # 호스트를 그냥 믿지 않는다** — 터미널이면 사람이 확인한다(--yes로 생략). 터미널이 아니면(파이프 등)
+    # 물을 수 없으므로 경고만 하고 진행한다. 서버가 내려준 명령(주소가 박힌 install.sh)에는 이 경로가 없다.
+    if [[ $ASSUME_YES -eq 0 && $DRY_RUN -eq 0 ]]; then
+      if [[ -t 0 ]]; then
+        printf '    찾은 서버: %s\n    이 서버에서 코드를 받아 root 권한으로 설치합니다. 맞습니까? [y/N] ' "$SERVER_URL"
+        read -r answer || answer=""
+        [[ "$answer" =~ ^[Yy]$ ]] || die "취소했습니다 — 맞는 서버라면 --server $SERVER_URL 로 다시 실행하세요"
+      else
+        warn "터미널이 아니라 확인을 물을 수 없습니다 — LAN에서 찾은 ${SERVER_URL}을 믿고 진행합니다 (원치 않으면 --server 로 지정)"
+      fi
+    fi
+  fi
+  if [[ -z "$TOKEN" ]]; then
+    info "설치 토큰 없음 — 서버가 자동 등록을 허용하면(사설 LAN) 토큰 없이 진행합니다"
+  fi
 fi
 if [[ $DRY_RUN -eq 0 ]]; then
   info "sudo 비밀번호를 한 번 묻습니다 (이후 단계는 묻지 않습니다)"
@@ -147,11 +241,12 @@ models_present() {   # 기본 모델 가중치가 모두 이미 있는가
 FETCH_MODELS="$MODELS"
 if [[ "$MODELS" == "default" ]] && models_present; then FETCH_MODELS="none"; fi
 
-fetch() {   # fetch <경로> <저장 파일> — 토큰은 쿼리로 보낸다
-  local path="$1" out="$2" sep='?'
+fetch() {   # fetch <경로> <저장 파일> — 토큰이 있으면 쿼리로 보낸다(없으면 서버가 사설 LAN이면 허용한다)
+  local path="$1" out="$2" sep='?' q=""
   [[ "$path" == *\?* ]] && sep='&'
-  curl -fsS --retry 2 --connect-timeout 5 -o "$out" "${SERVER_URL}${path}${sep}token=${TOKEN}" \
-    || die "${path} 를 내려받지 못했습니다 — 서버 주소·토큰(30분 유효)·방화벽을 확인하세요"
+  [[ -z "$TOKEN" ]] || q="${sep}token=${TOKEN}"
+  curl -fsS --retry 2 --connect-timeout 5 -o "$out" "${SERVER_URL}${path}${q}" \
+    || die "${path} 를 내려받지 못했습니다 — $([[ -z "$TOKEN" ]] && echo "토큰 없이는 받을 수 없는 서버입니다(자동 등록이 꺼져 있거나 사설 LAN 밖). 대시보드에서 설치 명령을 만들어 --token 으로 주세요" || echo "서버 주소·토큰(30분 유효)·방화벽을 확인하세요")"
 }
 
 # --------------------------------------------------------------------------- 3. 에셋 내려받기
@@ -272,8 +367,28 @@ fi
 
 # --------------------------------------------------------------------------- 10. 서버 등록
 step "서버 등록"
-if [[ $NO_REGISTER -eq 1 || $UNITS_ONLY -eq 1 || -z "$TOKEN" ]]; then
+if [[ $NO_REGISTER -eq 1 || $UNITS_ONLY -eq 1 ]]; then
   info "건너뜁니다 — 대시보드 '기기 추가'에서 이 기기를 찾아 등록하세요"
+elif [[ -z "$TOKEN" && $DRY_RUN -eq 1 ]]; then
+  info "[dry-run] POST ${SERVER_URL}/api/bootstrap/enroll  (토큰 없이 — 서버가 이 기기를 읽어 등록하거나, 다른 서버 소속이면 승인 대기)"
+elif [[ -z "$TOKEN" ]]; then
+  # 토큰 없는 경로: 서버가 이 기기의 :5000을 직접 읽어 판정한다(신원 없음 → 등록, 다른 서버 소속 → 승인 대기).
+  body="$("$PYTHON_BIN" -c 'import json,sys; print(json.dumps({"hostname": sys.argv[1]}))' "$(hostname)")"
+  resp="$(curl -fsS -m 60 -X POST -H 'Content-Type: application/json' -d "$body" "${SERVER_URL}/api/bootstrap/enroll")" \
+    || { warn "서버에 등록을 요청하지 못했습니다 — 기기가 켜진 뒤 스스로 다시 시도합니다(JoinAgent). 급하면 대시보드 '기기 추가'에서 등록하세요"; resp=""; }
+  if [[ -n "$resp" ]]; then
+    "$PYTHON_BIN" - "$resp" <<'PY' || warn "서버 응답을 해석하지 못했습니다 — 대시보드에서 이 기기가 보이는지 확인하세요"
+import json, sys
+try:
+    d = (json.loads(sys.argv[1]) or {}).get("data") or {}
+except ValueError:                          # 캡티브 포털 등 JSON이 아닌 응답
+    sys.exit(1)
+msg = {"enrolled": "등록됨", "known": "이미 이 서버 소속", "failed": "신원 주입 실패 — " + str(d.get("provision_error")),
+       "rejected": "서버가 거절함(1시간 뒤 다시)",
+       "pending": "다른 서버(" + str(d.get("current_server_url")) + ")에 등록돼 있어 승인 대기 — 대시보드에서 승인하세요"}
+print(f"    등록: {d.get('device_id') or '-'}  결과: {msg.get(d.get('status'), d.get('status'))}")
+PY
+  fi
 elif [[ $DRY_RUN -eq 1 ]]; then
   info "[dry-run] POST ${SERVER_URL}/api/bootstrap/register  (서버가 이 기기에 신원을 심습니다)"
 else

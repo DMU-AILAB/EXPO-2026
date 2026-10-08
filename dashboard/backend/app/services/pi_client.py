@@ -38,6 +38,10 @@ Pi 쪽 실제 계약 (apps/roi_editor/server.py):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
+
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -191,6 +195,30 @@ class PiClient:
         """`{registered, device_id, server_url, name, location, registered_at}` — api_key는 오지 않는다."""
         return await self._get_json("/api/identity")
 
+    async def prove_identity(self, key: str) -> bool:
+        """기기가 **이 키를 아는가** — 키를 보내지 않는 챌린지-응답(`GET /api/identity/proof`).
+
+        서버가 매번 새 `nonce`를 보내고, 기기가 `HMAC-SHA256(키, nonce)`를 돌려주면 서버가 자기 키로 계산한 값과
+        비교한다. True면 우리 소속, False면 다른 서버 소속·키 불일치다.
+
+        두 가지를 하지 않으려고 이렇게 만들었다.
+        - **신원을 다시 보내 확인하지 않는다**: Pi의 `POST /api/identity`는 키가 틀려도 덮어쓴다(인수).
+        - **키를 헤더로 보내 확인하지 않는다**: 아직 증명되지 않은 상대(가짜 Pi가 우리 기기의 device_id를
+          주장하는 경우)에게 코드 푸시·재부팅까지 가능한 비밀을 건네게 된다.
+        그 밖의 오류(404=구버전 기기, 403=신원 없음, 연결 실패)는 예외로 올린다.
+        """
+        nonce = secrets.token_hex(16)
+        res = await self._request("GET", "/api/identity/proof", params={"nonce": nonce})
+        try:
+            body = res.json()
+        except ValueError:
+            return False
+        proof = body.get("proof") if isinstance(body, dict) else None
+        if not isinstance(proof, str):
+            return False
+        expected = hmac.new(key.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, proof)
+
     async def get_outbox(self) -> dict:
         """`{events:{pending,last_error,...}, heartbeat:{last_sent_at,last_error,...}}` — 기기→서버 전송 상태."""
         return await self._get_json("/api/outbox")
@@ -324,6 +352,18 @@ class PiClient:
         """리모컨 감지 임계값(RSSI, 1~255). 낮을수록 먼 거리에서도 반응한다."""
         res = await self._request("PUT", "/api/rf/detection",
                                   json={"rssi_threshold": rssi_threshold})
+        return res.json()
+
+    # ------------------------------------------------------------------ 음성 안내 음소거
+
+    async def get_audio_settings(self) -> dict:
+        """`{muted: bool}` — 음성 안내 음소거 상태."""
+        data = await self._get_json("/api/audio/settings")
+        return data if isinstance(data, dict) else {"muted": False}
+
+    async def put_audio_settings(self, muted: bool) -> dict:
+        """음성 안내 음소거 on/off. Pi의 AudioPlayer가 재생 직전에 읽어 즉시 반영한다."""
+        res = await self._request("PUT", "/api/audio/settings", json={"muted": muted})
         return res.json()
 
     # ------------------------------------------------------------------ 통계

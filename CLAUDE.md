@@ -83,7 +83,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 34개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 36개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 개발 도구와 외부 장치 소스 (dev/에 ESP32 릴레이 Arduino 펌웨어 포함)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  PC 중앙 관리자 대시보드(backend + frontend) + 디자인 자료(mockups · demo)
@@ -512,6 +512,72 @@ Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 �
   없이 띄운다(하트비트 버퍼·APScheduler가 한 프로세스). 변경하는 일은 전부 `Act`를 거쳐 `-DryRun`이 막는다.
   `tests/test_server_setup_scripts.py`가 이를 고정한다.
 
+## Pi 자동 발견 · 등록 · 승인 — 설계 결정
+
+Pi가 서버를 스스로 찾아 등록한다(`device/server_discovery.py`·`server_join.py` ↔ 서버 `discovery_responder.py`·
+`enrollment.py`·`pending_enrollments.py`, `POST /api/bootstrap/enroll`). 서버가 바뀐 Pi는 **승인 한 번**으로 옮긴다.
+
+- **★ 소속 확인 방법이 두 가지로 위험하다 — 그래서 키를 보내지 않는 챌린지-응답을 쓴다.**
+  ① 신원을 다시 보내 보기: Pi의 `POST /api/identity`는 키가 틀려도 **덮어쓴다**(인수) — 시험이 곧 탈취다.
+  ② 키를 헤더로 보내 보기: 상대가 **아직 증명되지 않았다.** 가짜 Pi가 우리 기기의 `device_id`(`pi-<ip>`로 추측
+  가능)를 주장하면 코드 푸시·재부팅까지 가능한 `control_key`를 건네게 된다(독립 리뷰가 잡은 설계 결함이었다).
+  → `GET /api/identity/proof?nonce=`(Pi) 가 `HMAC-SHA256(api_key, nonce)`를 돌려주고, 서버(`PiClient.prove_identity`)가
+  매번 새 nonce로 자기 키의 값과 비교한다. 키는 전송되지 않고 응답은 재사용할 수 없다. `GET /api/identity`는
+  `api_key`를 돌려주지 않으므로 직접 비교할 수도 없다. proof가 없는 구버전은 **안전한 쪽(승인 대기)**.
+  **증명이 끝나기 전에는 우리 행을 바꾸지 않는다**(`adopt_peer_ip`도 증명 뒤에만).
+- **판정은 서버가 Pi를 직접 읽어서 한다**(`handle_enroll`) — 요청 본문의 자기 신고는 쓰지 않는다.
+  신원 없음→즉시 등록 / 키를 아는 우리 행→주소만 갱신 / 우리 행이 없지만 기기가 이미 **우리 서버를 보고 있음**
+  (DB 유실 복구)→재등록 / 그 외→승인 대기(**기기에 아무것도 보내지 않는다**, 행도 만들지 않는다).
+- **같은 IP의 요청은 직렬화한다**(IP별 `asyncio.Lock`) — `install.sh`의 등록과 `JoinAgent`의 첫 시도가 몇 초 안에 겹쳐,
+  둘이 동시에 키를 돌리면 Pi와 DB의 키가 갈라지거나 같은 id로 두 번 INSERT해 500이 난다. **무인증 엔드포인트가
+  증폭기가 되지 않게** 같은 IP는 10초 안에 다시 받으면 직전 결과(**실패 포함**)를 돌려준다(서버가 요청자의 :5000을
+  두드리므로). 상대 기기가 준 필드는 타입을 확인하고 200자로 자른다(대기 목록에 그대로 저장된다). 사설 LAN 외 요청은 400, `AUTO_ENROLL=false`면 403이고 UDP 응답기도 침묵한다.
+- **프로토콜**: UDP 48555, 요청 `b"VISIONGUIDE?"`(+JSON) 브로드캐스트 → 응답 JSON `{"service":"visionguide","url":…}`
+  유니캐스트. 서버가 여러 NIC를 가질 수 있어 응답 `url`은 **요청자 IP 기준**(`public_url_for`)이다. Pi는 전역
+  브로드캐스트와 기본 경로 /24 지향 브로드캐스트 양쪽으로 보낸다. 상수는 양쪽에 있으므로 `test_discovery.py`가
+  **진짜 `discover()`를 진짜 응답기에 붙여** 대조한다(`install.sh`의 인라인 구현도 같은 상수를 테스트가 대조).
+  운영 응답기는 `0.0.0.0`에 바인딩해야 브로드캐스트 목적지를 받는다(특정 주소 바인딩은 못 받는다).
+- **승인은 그 순간 기기를 다시 확인한다**(`approve_pending`): 대기 항목은 최대 15분 묵은 것이라 그 사이 같은 IP를 다른
+  기기가 받았을 수 있다 — `device_id`가 달라졌으면 409(`PENDING_STALE`)로 거부하고 덮어쓰지 않는다. 기존 행의 키는
+  **Pi가 받아들인 뒤에만** 바꾼다(주입 실패 시 멀쩡한 기기의 키가 서버에서 거부되면 안 된다).
+- **UDP 응답기는 출발지별로 1초에 한 번만 답한다**(12바이트 요청에 ~150바이트 응답이라 출발지를 속이면 반사 증폭).
+- **`install.sh`가 LAN에서 찾은 서버는 터미널이면 사람이 확인한다**(`--yes`로 생략). 그 서버가 내려주는 코드를 root로
+  설치하는데 UDP에는 누구나 답할 수 있다. 서버가 내려준 명령(주소가 박힌 스크립트)에는 이 경로가 없다.
+- **승인 대기는 메모리**(`--workers` 금지 전제). 기기가 **5분마다** 다시 알리고 서버는 **15분 무요청이면 만료**한다 —
+  `JoinAgent`의 재질의 간격(`pending` 5분)이 만료보다 짧아야 한다. 거절하면 1시간 억제.
+- **`JoinAgent`는 신원을 바꾸지 않는다.** `load_identity`만 쓴다(테스트가 import를 고정). 자기 `server_url`과 같은
+  서버에는 아무것도 하지 않고 다른 서버에만 요청한다. `threading.Thread`의 내부 메서드 `_stop`을 속성으로 덮으면
+  `join()`이 깨지므로 `_stop_event`를 쓴다. 첫 시도는 10초 늦춘다 — 서버가 등록 요청을 받으면 이 Pi의 :5000을
+  되불러 확인하는데 이 스레드는 `uvicorn.run` 이전에 시작되기 때문이다.
+- `url_key`(host:port 정규화)는 서버·Pi·`install.sh`가 같은 규칙이다. 잘못된 포트(`http://h:bad`)에서 예외를
+  던지면 `enroll`이 500으로 죽는다(Pi 신원에 이상한 `server_url`이 있을 수 있다) — 빈 문자열을 돌려준다.
+- 발견은 편의 기능이다: UDP 포트가 점유돼도 서버는 **경고만 하고 계속 뜬다**. 브로드캐스트가 막힌 망(AP 격리)에서는
+  동작하지 않으므로 수동 등록·설치 토큰 경로는 그대로 남긴다.
+- 토큰 없는 내려받기(`authorize`): **토큰이 있으면 항상 엄격히 검증**하고(만료된 명령을 LAN이라는 이유로 통과시키지
+  않는다), 없을 때만 `AUTO_ENROLL` + 사설 LAN을 본다. `register`(토큰 1회용)는 그대로고 토큰 없는 등록은 `enroll`뿐이다.
+
+## 기존 기기 모델 일괄 변경 — 설계 결정
+
+신규 설치의 기본 모델이 바뀌어도 **이미 깔린 기기의 `camera_config.json`은 그대로**다(예: `v4_320`). 대시보드 기기 목록의
+"모델 일괄 변경"(`POST /api/devices/model-variant`, `services/model_rollout.py`)이 기존 경로를 재사용해 올린다 —
+`GET /api/cameras` → `merge_camera_profiles`(모르는 필드 보존) → 선검증 → `POST /api/cameras`(전체 치환). 새 Pi API는 없다
+(`/api/model-variants`에 `available`만 추가). Pi가 `camera_config.json` mtime을 0.5초 단위로 감시해 **바뀐 카메라의 파이프라인만**
+다시 띄우므로 서비스 재시작은 필요 없다.
+
+- **가중치가 없으면 바꾸지 않는다.** 파일이 없는 모델이면 파이프라인이 시작하자마자 죽고 재시작을 반복해 탐지가 멈춘다.
+  `/api/model-variants`의 목록은 정적 표라 **없는 모델도 나온다** — 그래서 Pi가 `available`(best_int8.tflite 실재)을 알려 준다.
+  이 값이 없는 구버전은 증명할 수 없으므로 **건너뛴다.** `push_models`면 코드 번들(기본 모델 포함)을 먼저 올린 뒤 다시 확인한다.
+- **Coral(edgetpu) 카메라는 건드리지 않는다**(모델 형식·백엔드가 다르다). 비활성 카메라도 건드리지 않는다.
+- **바꾼 뒤 FPS ≥ 10을 확인하고 미달이면 그 카메라만 되돌린다**(KPI). 측정할 수 없는 것(지표 없음·오래됨·조회 실패)도 미달로 본다.
+  **측정 전에 8초 안정화 대기**를 둔다 — 파이프라인이 다시 뜨기 전에는 *이전 모델이 보고한* 지표가 아직 신선해 보여 새 모델이
+  느려도 통과로 오판한다. 롤백은 최신 카메라 목록을 다시 읽어 그 위에 얹는다. 롤백도 실패하면 이전 값을 알려 직접 확인하게 한다.
+- **미리보기(`dry_run`) → 확인 → 실행** 순서가 UI의 흐름이다. 서버 캐시(`Camera.model_variant`)는 Pi가 받아들인 뒤에만 바꾼다.
+  기기는 **한 대씩 순서대로** 돈다(같은 DB 세션 공유 + 한 기기가 FPS를 기다리는 동안 다른 기기의 부하가 측정에 섞이지 않게).
+- 바꾼 카메라의 **구조물 마스크는 재수집을 권장**한다 — 후보는 *그 모델이 무엇을 오탐하느냐*에 달려 있다(자동 실행하지 않는다).
+- ★ **함수의 기본 인자에 모듈 상수·함수를 넣지 말 것** — 정의 시점에 값이 고정돼 설정·테스트가 바꿔도 반영되지 않는다
+  (`build_response(url_for=public_url_for)`, `rollout_device(settle_sec=SETTLE_SEC)`에서 두 번 겪었다. 후자는 테스트가
+  8초·45초를 진짜로 기다려 4분이 걸렸다). `None`으로 두고 호출 시점에 읽는다.
+
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
 `tests/test_pipeline_integration.py`가 **프레임 루프를 끝까지 실제로 돌리는 유일한
@@ -599,6 +665,13 @@ outbox 코드가 한 줄도 실행되지 않는다. 사람과 지팡이가 실�
   완전히 끈 것과 모든 영상·모든 임계값에서 같았다. 즉 ①(프레임 단위 연관 끊김)은 이론상
   존재하지만 실측에서는 거의 발생하지 않는다. 지팡이가 탐지되고 두 게이트를 통과한
   프레임에서는 사람 연관이 거의 항상 성립한다.
+
+## 음성 안내 음소거 — 설계 결정
+
+대시보드 기기 상세 '설정' 탭의 "음성 안내" 토글이 `audio_settings.json`(`{"muted": bool}`, Pi 로컬 런타임 파일·gitignore)을
+`GET/PUT /api/audio/settings`(roi_editor)로 바꾼다. `AudioPlayer._worker`가 **재생 직전마다** 파일을 읽으므로(`read_muted`)
+탐지 루프·재시작 없이 즉시 반영된다. 음소거여도 **`on_done`은 호출**한다(쿨다운 기산점 유지 — 해제 직후 안내가 몰리지 않게).
+탐지·이벤트 기록·유동인구는 그대로이고 재생만 건너뛴다. 파일이 없거나 깨지면 소리가 난다(안전 쪽 기본값).
 
 ## 영상 녹화 (설계 결정)
 
@@ -850,7 +923,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` · `diagnose.py` · `esp32_relay.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` · `diagnose.py` · `server_discovery.py` · `server_join.py` · `esp32_relay.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —

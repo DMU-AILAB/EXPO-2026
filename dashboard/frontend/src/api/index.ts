@@ -97,6 +97,45 @@ export const updateDevices = (deviceIds: string[], includeModels = false) =>
     body: { device_ids: deviceIds, include_models: includeModels },
   })
 
+/** 모델 일괄 변경의 기기별 결과 — 한 대가 실패해도 나머지는 계속 진행된다. */
+export interface ModelRolloutChange {
+  camera_id: string
+  previous: string
+  current: string
+  /** 바꾼 뒤 측정한 FPS(미리보기에서는 null). 측정하지 못했으면 null */
+  fps: number | null
+  /** FPS가 기준에 못 미쳐 이전 모델로 되돌렸다 */
+  rolled_back: boolean
+}
+
+export interface ModelRolloutResult {
+  device_id: string
+  ok: boolean
+  /** 가중치가 없거나 구버전이라 바꾸지 않았다(`reason`에 사유) */
+  skipped: boolean
+  reason: string | null
+  error: string | null
+  changed: ModelRolloutChange[]
+  skipped_cameras: { camera_id: string; reason: string }[]
+  /** 가중치를 먼저 올렸다(실행) */
+  models_pushed: boolean
+  /** 미리보기에서: 실제로 실행하면 코드 번들을 먼저 올린다 */
+  needs_push?: boolean
+  dry_run?: boolean
+}
+
+export const changeModelVariant = (body: {
+  to: string
+  device_ids?: string[]
+  from_variants?: string[]
+  push_models?: boolean
+  verify?: boolean
+  dry_run?: boolean
+}) => request<{ to: string; dry_run: boolean; results: ModelRolloutResult[] }>('/api/devices/model-variant', {
+  method: 'POST',
+  body,
+})
+
 export const getDeviceUpdateStatus = (id: string) =>
   request<DeviceUpdateStatus>(`/api/devices/${id}/update-status`)
 
@@ -164,6 +203,32 @@ export interface BootstrapToken {
 
 export const createBootstrapToken = () =>
   request<BootstrapToken>('/api/bootstrap/token', { method: 'POST' })
+
+/** 다른 서버에 등록돼 있다가 스스로 올라온 기기 — 관리자가 승인해야 이 서버로 옮겨 온다. */
+export type PendingEnrollment = {
+  ip: string
+  /** 기기가 지금 쓰는 신원(다른 서버가 발급한 것) */
+  device_id: string
+  hostname: string
+  /** 기기가 지금 보고하고 있는 서버 */
+  current_server_url: string
+  /** 표시용 벽시계(초) */
+  first_seen: number
+  last_seen: number
+}
+
+export type ApproveResult = {
+  device_id: string
+  provisioned: boolean
+  provision_error: string | null
+  synced: boolean
+}
+
+export const listPendingEnrollments = () => request<PendingEnrollment[]>('/api/bootstrap/pending')
+export const approvePendingEnrollment = (ip: string) =>
+  request<ApproveResult>(`/api/bootstrap/pending/${encodeURIComponent(ip)}/approve`, { method: 'POST' })
+export const rejectPendingEnrollment = (ip: string) =>
+  request<{ ip: string; was_pending: boolean }>(`/api/bootstrap/pending/${encodeURIComponent(ip)}/reject`, { method: 'POST' })
 
 // ---------------------------------------------------------------- 카메라
 
@@ -262,6 +327,15 @@ export const setRfGroup = (deviceId: string, groupEnabled: boolean, groupPriorit
 export const setRfDetection = (deviceId: string, rssiThreshold: number) =>
   request<{ rssi_threshold: number }>(`/api/devices/${deviceId}/rf/detection`, {
     method: 'PUT', body: { rssi_threshold: rssiThreshold },
+  })
+
+/** 음성 안내 음소거 상태(기기 단위). */
+export const getAudioSettings = (deviceId: string) =>
+  request<{ muted: boolean }>(`/api/devices/${deviceId}/audio-settings`)
+
+export const setAudioSettings = (deviceId: string, muted: boolean) =>
+  request<{ muted: boolean }>(`/api/devices/${deviceId}/audio-settings`, {
+    method: 'PUT', body: { muted },
   })
 
 /** group_enabled인 모든 기기를 priority 오름차순으로 반환. 상대적 순위 계산용. */

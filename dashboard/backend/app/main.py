@@ -11,6 +11,7 @@ from .routers import auth, devices, cameras, rois, events, ws, stats, audio, sch
 # [녹화 비활성] 개인정보 보호 — recording 라우터는 등록하지 않는다(Pi도 /recording/* 에 404)
 from .routers import replay, calibration, calibration_fleet, network, esp32, bootstrap
 from .services.address_sync import reconcile_addresses
+from .services.discovery_responder import start_responder, stop_responder
 from .services.heartbeat_service import bulk_flush_heartbeats
 from .services.server_address import remember_port
 from .services.monitor_service import broadcast_camera_alerts, sweep_offline_devices
@@ -57,7 +58,10 @@ async def lifespan(app: FastAPI):
         # 하트비트가 도착할 시간을 준다) 이후 1분 주기 — 기기별 재시도 간격은 address_sync가 조절한다.
         asyncio.create_task(_loop("address-reconcile", 60, reconcile_addresses, first_delay=20)),
     ]
+    # Pi가 서버를 스스로 찾게 하는 UDP 응답기. 포트가 점유돼 있어도 서버는 계속 뜬다(경고만).
+    responder = await start_responder() if settings.auto_enroll else None
     yield
+    stop_responder(responder)
     # Shutdown: Stop APScheduler
     scheduler.shutdown()
 

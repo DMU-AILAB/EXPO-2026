@@ -6,6 +6,7 @@
 scp 목록으로 에셋을 만들므로 어긋날 수 없고, 패키지 목록만 대조하면 된다.
 """
 
+import json
 import os
 import re
 import shlex
@@ -86,12 +87,115 @@ def test_dry_run_without_token_skips_registration_but_still_plans(tmp_path):
     assert res.returncode == 0 and "건너뜁니다" in res.stdout
 
 
-def test_real_run_refuses_to_run_without_token(tmp_path):
-    """토큰 없이는 코드를 받을 수 없다 — dry-run이 아니면 시작하기 전에 멈춘다."""
-    env = {**os.environ, "HOME": str(tmp_path)}
-    res = subprocess.run(["bash", str(INSTALL), "--server", "http://10.0.0.1:8001"],
-                         capture_output=True, text=True, env=env, timeout=30)
-    assert res.returncode != 0 and "토큰" in res.stderr
+def _responder(reply: bytes | None):
+    """루프백 UDP 응답기 — 요청을 받으면 `reply`로 답한다. (포트, 받은 요청 목록, 정지 함수)."""
+    import socket
+    import threading
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(0.2)
+    got, stop = [], threading.Event()
+
+    def loop():
+        while not stop.is_set():
+            try:
+                data, addr = sock.recvfrom(4096)
+            except OSError:
+                continue
+            got.append(data)
+            if reply is not None:
+                sock.sendto(reply, addr)
+
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+
+    def close():
+        stop.set()
+        th.join(2)
+        sock.close()
+
+    return sock.getsockname()[1], got, close
+
+
+def _discover_env(tmp_path, port):
+    return {**os.environ, "HOME": str(tmp_path), "DISCOVERY_PORT": str(port), "DISCOVERY_TARGETS": "127.0.0.1",
+            "DISCOVERY_TIMEOUT": "0.5", "DISCOVERY_TRIES": "2"}
+
+
+def test_토큰_없이도_dry_run은_enroll_경로를_계획한다(tmp_path):
+    res = _dry(tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "설치 토큰 없음" in res.stdout and "/api/bootstrap/enroll" in res.stdout
+    assert "/api/bootstrap/register" not in res.stdout
+
+
+def test_토큰이_있으면_register_경로다(tmp_path):
+    res = _dry(tmp_path, "--token", "T")
+    assert "/api/bootstrap/register" in res.stdout and "/api/bootstrap/enroll" not in res.stdout
+
+
+def test_서버_주소가_없으면_UDP로_찾는다(tmp_path):
+    port, got, close = _responder(json.dumps({"v": 1, "service": "visionguide",
+                                              "url": "http://192.168.0.105:8000", "name": "pc"}).encode())
+    try:
+        env = _discover_env(tmp_path, port)
+        env["APP_DIR"] = str(tmp_path / "visionguide")
+        res = subprocess.run(["bash", str(INSTALL), "--dry-run", "--user", "tester"],
+                             capture_output=True, text=True, env=env, timeout=30)
+    finally:
+        close()
+    assert res.returncode == 0, res.stderr
+    assert "발견: http://192.168.0.105:8000" in res.stderr
+    assert "서버: http://192.168.0.105:8000" in res.stdout
+    assert got and got[0].startswith(b"VISIONGUIDE?")            # 서버 응답기가 알아듣는 요청이다
+
+
+def test_명시한_서버_주소가_있으면_찾지_않는다(tmp_path):
+    port, got, close = _responder(None)
+    try:
+        res = subprocess.run(["bash", str(INSTALL), "--dry-run", "--user", "tester", "--server", "http://10.0.0.1:8001"],
+                             capture_output=True, text=True, env=_discover_env(tmp_path, port), timeout=30)
+    finally:
+        close()
+    assert res.returncode == 0 and got == []
+
+
+def test_아무도_답하지_않으면_sudo_전에_실패한다(tmp_path):
+    """실제 실행에서 서버를 못 찾으면 sudo 비밀번호를 묻기 전에 알려야 한다."""
+    port, _, close = _responder(None)
+    try:
+        res = subprocess.run(["bash", str(INSTALL), "--user", "tester"],
+                             capture_output=True, text=True, env=_discover_env(tmp_path, port), timeout=30)
+    finally:
+        close()
+    assert res.returncode != 0 and "서버를 찾지 못했습니다" in res.stderr
+    assert "sudo" not in res.stderr.replace("sudo 비밀번호", "")      # sudo 단계까지 가지 않았다
+
+
+def test_엉뚱한_응답은_서버로_받아들이지_않는다(tmp_path):
+    for bad in (b"garbage", json.dumps({"service": "other", "url": "http://x:1"}).encode(),
+                json.dumps({"service": "visionguide", "url": "ftp://x:1"}).encode(),
+                json.dumps({"service": "visionguide", "url": "http://x:99999"}).encode()):
+        port, _, close = _responder(bad)
+        try:
+            res = subprocess.run(["bash", str(INSTALL), "--dry-run", "--user", "tester"],
+                                 capture_output=True, text=True, env=_discover_env(tmp_path, port), timeout=30)
+        finally:
+            close()
+        assert res.returncode != 0 and "서버를 찾지 못했습니다" in res.stderr, bad
+
+
+def test_발견_프로토콜_상수는_Pi_모듈과_같다():
+    import server_discovery as sd
+    text = INSTALL.read_text(encoding="utf-8")
+    assert f'DISCOVERY_PORT="${{DISCOVERY_PORT:-{sd.DISCOVERY_PORT}}}"' in text
+    assert f'PREFIX = {sd.REQUEST_PREFIX!r}'.replace("b'", 'b"').replace("'", '"') in text
+    assert f'SERVICE = "{sd.SERVICE}"' in text
+
+
+def test_토큰_없는_다운로드_실패_메시지는_토큰을_안내한다():
+    text = INSTALL.read_text(encoding="utf-8")
+    assert "토큰 없이는 받을 수 없는 서버입니다" in text
 
 
 def test_script_refuses_root():
@@ -230,3 +334,47 @@ def test_all_models_are_always_fetched_even_if_present(tmp_path):
 def test_summary_is_printed(tmp_path):
     out = _dry(tmp_path, path_prefix=_fake_nmcli(tmp_path, "lo\n")).stdout
     assert "요약" in out and "핫스팟 프로필:" in out and "모델:" in out
+
+
+def _real_discovery_run(tmp_path, *extra):
+    """실제 실행(dry-run 아님) — 서버를 찾은 직후 확인 절차까지 본다. sudo에서 멈추므로 stdin은 닫아 둔다."""
+    port, _, close = _responder(json.dumps({"v": 1, "service": "visionguide",
+                                            "url": "http://192.168.0.105:8000", "name": "pc"}).encode())
+    try:
+        return subprocess.run(["bash", str(INSTALL), "--user", "tester", *extra], capture_output=True, text=True,
+                              env=_discover_env(tmp_path, port), stdin=subprocess.DEVNULL, timeout=30)
+    finally:
+        close()
+
+
+def test_찾은_서버는_터미널이_아니면_경고하고_진행한다(tmp_path):
+    """root로 설치할 코드를 내려주는 서버다 — 누구나 UDP에 답할 수 있으므로 믿는다는 사실을 알려야 한다."""
+    res = _real_discovery_run(tmp_path)
+    assert "확인을 물을 수 없습니다" in res.stderr and "192.168.0.105:8000" in res.stderr
+
+
+def test_yes면_묻지도_경고하지도_않는다(tmp_path):
+    res = _real_discovery_run(tmp_path, "--yes")
+    assert "확인을 물을 수 없습니다" not in res.stderr
+
+
+def test_서버_주소를_직접_주면_확인하지_않는다(tmp_path):
+    port, _, close = _responder(None)
+    try:
+        res = subprocess.run(["bash", str(INSTALL), "--user", "tester", "--server", "http://10.0.0.1:8001"],
+                             capture_output=True, text=True, env=_discover_env(tmp_path, port),
+                             stdin=subprocess.DEVNULL, timeout=30)
+    finally:
+        close()
+    assert "확인을 물을 수 없습니다" not in res.stderr
+
+
+def test_터미널에서는_사람이_확인한다():
+    text = INSTALL.read_text(encoding="utf-8")
+    assert "[[ -t 0 ]]" in text and "[y/N]" in text and "--yes" in text
+
+
+def test_서버_응답이_JSON이_아니어도_설치가_중단되지_않는다():
+    # 캡티브 포털 등. 코드·서비스 설치가 끝난 뒤라 여기서 set -e로 죽으면 요약도 못 본다
+    text = INSTALL.read_text(encoding="utf-8")
+    assert "except ValueError" in text and "서버 응답을 해석하지 못했습니다" in text

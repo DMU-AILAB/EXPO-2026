@@ -56,6 +56,7 @@ from camera_config import (  # noqa: E402
 )
 from yolo_postprocess import CLASS_NAMES  # noqa: E402
 from event_logger import EventSender, HeartbeatSender, pending_count  # noqa: E402
+from server_join import JoinAgent  # noqa: E402
 from device_metrics import read_metrics  # noqa: E402
 from device_status import read_status  # noqa: E402
 from device_identity import (  # noqa: E402
@@ -78,6 +79,8 @@ audio_dir: Path = _DEFAULT_AUDIO_DIR
 traffic_db_path: Path = _DEFAULT_TRAFFIC_DB
 camera_config_path: Path = _DEFAULT_CAMERA_CONFIG
 rf_config_path: Path = _DEFAULT_RF_CONFIG
+_DEFAULT_AUDIO_SETTINGS = Path(__file__).parent.parent / "audio_settings.json"
+audio_settings_path: Path = _DEFAULT_AUDIO_SETTINGS
 identity_path: Path = default_path(_ROOT)
 api_only = False
 STATIC_DIR = Path(__file__).parent / "static"
@@ -436,6 +439,33 @@ async def list_audio():
     return {"files": files}
 
 
+def _load_audio_settings() -> dict:
+    try:
+        data = json.loads(audio_settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@app.get("/api/audio/settings")
+async def get_audio_settings():
+    """음성 안내 음소거 상태. 파일이 없으면 소리가 난다(muted=False)."""
+    return {"muted": _load_audio_settings().get("muted") is True}
+
+
+class AudioSettingsPayload(BaseModel):
+    muted: bool
+
+
+@app.put("/api/audio/settings")
+async def put_audio_settings(payload: AudioSettingsPayload):
+    """음소거 on/off. AudioPlayer가 재생 직전에 파일을 읽으므로 재시작 없이 반영된다."""
+    data = _load_audio_settings()
+    data["muted"] = payload.muted
+    _save(data, audio_settings_path)
+    return {"ok": True, "muted": payload.muted}
+
+
 def _load_rf_config() -> dict:
     try:
         data = json.loads(rf_config_path.read_text(encoding="utf-8"))
@@ -571,7 +601,11 @@ async def get_model_variants():
     """카메라 편집 UI가 드롭다운을 채울 때 쓰는 모델 목록 — camera_config.MODEL_VARIANTS가
     유일한 출처라서 UI에 라벨을 하드코딩해도 드리프트가 안 나지만, API로 노출해두면
     새 모델을 추가할 때 index.html을 건드릴 필요가 없다."""
-    return {"variants": [{"key": k, **v} for k, v in MODEL_VARIANTS.items()],
+    # `available`: 이 기기에 가중치(best_int8.tflite)가 **실제로 있는가**. 목록은 코드에 들어 있는 정적 표라서
+    # 없는 모델도 나온다 — 파일이 없는 모델로 카메라를 바꾸면 파이프라인이 시작하자마자 죽고 재시작을
+    # 반복해 탐지가 멈춘다(모델 일괄 변경이 이 값을 보고 건너뛴다). 추가 필드라 기존 소비자는 영향이 없다.
+    return {"variants": [{"key": k, **v, "available": (_ROOT / v["weights_dir"] / "best_int8.tflite").is_file()}
+                         for k, v in MODEL_VARIANTS.items()],
             "default": _DEFAULT_MODEL_VARIANT}
 
 
@@ -964,6 +998,26 @@ def get_identity():
             "location": ident.location, "registered_at": ident.registered_at}
 
 
+@app.get("/api/identity/proof")
+def identity_proof(nonce: str):
+    """이 기기가 **자기 키를 안다는 증명** — `HMAC-SHA256(api_key, nonce)`. 키는 전송되지 않는다.
+
+    서버가 다른 서버 소속 기기를 빼앗지 않고 "이건 우리 기기다"를 확인하는 수단이다. 두 가지를 피하려고
+    이렇게 만들었다.
+    - 신원을 다시 보내 확인하기: `POST /api/identity`는 키가 틀려도 **덮어쓴다**(인수). 시험이 곧 탈취다.
+    - 키를 헤더로 보내 확인하기: 서버가 **아직 증명되지 않은 상대**(가짜 Pi)에게 비밀을 건네게 된다.
+    서버가 매번 새로 만든 `nonce`를 보내고 응답을 자기 키로 계산한 값과 비교한다 — 응답을 위조하려면 키가
+    필요하고, 같은 응답을 재사용할 수 없다. 신원이 없는 기기는 증명할 키가 없어 403이다.
+    """
+    ident = load_identity(identity_path)
+    if ident is None or not ident.api_key:
+        raise HTTPException(403, "기기가 아직 서버에 등록되지 않았습니다")
+    if not 8 <= len(nonce) <= 128:
+        raise HTTPException(400, "nonce는 8~128자여야 합니다")
+    mac = hmac.new(ident.api_key.encode("utf-8"), nonce.encode("utf-8"), "sha256")
+    return {"proof": mac.hexdigest(), "device_id": ident.device_id}
+
+
 @app.post("/api/identity")
 def post_identity(req: IdentityIn, request: Request):
     """서버가 등록 시 발급한 신원을 심는다.
@@ -1026,7 +1080,7 @@ def _video_dirs() -> list[Path]:
 
 
 _replay = {"session": None}
-_sender: dict = {"thread": None, "heartbeat": None}
+_sender: dict = {"thread": None, "heartbeat": None, "join": None}
 
 
 class ReplayStart(BaseModel):
@@ -1252,6 +1306,11 @@ if __name__ == "__main__":
         _all_traffic_dbs, identity_path,
         camera_ids=[p.id for p in load_camera_config(camera_config_path)])
     _sender["heartbeat"].start()
+    # 서버를 스스로 찾아 등록을 요청하는 에이전트(`server_join.py`). 신원 없는 새 기기를 등록하고,
+    # 다른 서버 소속이면 그 서버의 승인 대기 목록에 올린다. 첫 시도는 이 프로세스가 uvicorn을
+    # 띄운 뒤로 미뤄진다(서버가 등록 요청을 받으면 이 기기의 :5000을 되불러 확인한다).
+    _sender["join"] = JoinAgent(identity_path)
+    _sender["join"].start()
 
     _ident = load_identity(identity_path)
     print(f"[ROI Editor] 기기 신원: "
