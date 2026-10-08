@@ -168,3 +168,15 @@ def test_서버_설치_코드는_파일을_UTF8로_명시해_읽고_쓴다():
     files += [p for p in (ROOT / "dashboard" / "backend" / "app").rglob("*.py") if "__pycache__" not in p.parts]
     offenders = {p.relative_to(ROOT).as_posix(): hits for p in files if (hits := _text_io_without_encoding(p))}
     assert not offenders, offenders
+
+
+def test_bat은_성공해도_끝에서_멈춘다():
+    """이미 관리자 콘솔이면 ps1이 새 창을 열지 않아, 멈추지 않으면 설치가 끝나는 순간 창이 닫혀 접속 주소와 관리자
+    비밀번호 요약을 읽을 수 없다(성공했는데 '바로 종료된다'는 보고)."""
+    text = BAT.read_bytes().decode("ascii")
+    lines = [l.strip() for l in text.splitlines()]
+    pause = next(i for i, l in enumerate(lines) if l.startswith("if /i not") and "pause" in l)
+    assert 'VG_NO_PAUSE' in lines[pause]                          # 자동화에서는 끌 수 있다
+    exit_line = next(i for i, l in enumerate(lines) if l.startswith("endlocal"))
+    assert pause < exit_line                                      # 종료 직전에 멈춘다
+    assert not any(l.startswith("if not") and "pause" in l and "ERROR" not in l for l in lines)   # 실패일 때만 멈추던 옛 구조가 아니다
