@@ -45,6 +45,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 이 스크립트가 띄우는 모든 파이썬(pip·venv·server_setup·init_db)을 UTF-8 모드로 돌린다. Windows의 기본 인코딩은
+# 로케일(한국어 Windows는 cp949)이라, UTF-8 한글이 든 파일을 인코딩 지정 없이 읽는 곳에서
+# "'cp949' codec can't decode byte 0xeb"로 죽는다(pip install -r requirements.txt에서 실제로 겪음).
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -283,12 +289,13 @@ if ($NoAutostart) {
     if (-not $alreadyUp) {
         Act "서버 시작 (이 창을 닫아도 계속 실행): pythonw -m uvicorn app.main:app --port $Port" {
             Start-Process -FilePath $VenvPyW -WorkingDirectory $Backend -WindowStyle Hidden `
-                -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', "$Port")
+                -ArgumentList @('-X', 'utf8', '-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', "$Port")
         }
     }
 } else {
     # --reload/--workers 없음: 하트비트 버퍼와 APScheduler가 한 프로세스 안에 있다.
-    $uvArgs = "-m uvicorn app.main:app --host 0.0.0.0 --port $Port"
+    # -X utf8: 작업 스케줄러는 이 세션의 환경변수를 물려받지 않으므로 인자로 UTF-8 모드를 켠다.
+    $uvArgs = "-X utf8 -m uvicorn app.main:app --host 0.0.0.0 --port $Port"
     Act "작업 스케줄러 등록: $TaskName (로그온 시, 숨김)" {
         $action    = New-ScheduledTaskAction -Execute $VenvPyW -Argument $uvArgs -WorkingDirectory $Backend
         $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -318,7 +325,7 @@ else {
     Write-Step '서버 응답 대기 (최대 60초)'
     $up = $false
     for ($i = 0; $i -lt 60; $i++) { if (Test-Health) { $up = $true; break }; Start-Sleep -Seconds 1 }
-    if (-not $up) { Fail "60초 안에 서버가 응답하지 않습니다. 직접 확인: cd $Backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port $Port" }
+    if (-not $up) { Fail "60초 안에 서버가 응답하지 않습니다. 직접 확인: cd $Backend; .venv\Scripts\python.exe -X utf8 -m uvicorn app.main:app --port $Port" }
     Write-Ok "서버 응답 확인: http://localhost:$Port"
 }
 $url = "http://$(if ($lan) { $lan } else { 'localhost' }):$Port"

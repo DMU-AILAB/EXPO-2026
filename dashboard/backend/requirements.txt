@@ -4,19 +4,22 @@ sqlalchemy
 pydantic
 pydantic-settings
 passlib[bcrypt]
-# passlib 1.7.4는 bcrypt 4.1+ 의 API 변경과 맞지 않아 해싱이 통째로 실패한다
-# ("password cannot be longer than 72 bytes"). passlib이 유지보수되지 않으므로
-# 여기서 고정한다 — 풀면 로그인·초기 관리자 시드가 전부 깨진다.
+# NOTE: keep this file ASCII-only. On Windows, pip reads requirements files with the
+# locale encoding (cp949 on Korean Windows) and fails on UTF-8 Korean text.
+#
+# passlib 1.7.4 is incompatible with the bcrypt 4.1+ API change; hashing fails entirely
+# ("password cannot be longer than 72 bytes"). passlib is unmaintained, so pin bcrypt here.
+# Unpinning breaks login and the initial admin seed.
 bcrypt<4.1
 pyjwt
 python-multipart
 shapely
 httpx
 mutagen
-# 예약 재부팅(app/services/scheduler_service.py)이 쓴다. 빠져 있어서 앱이
-# import 단계에서 죽었다.
+# Used by scheduled reboots (app/services/scheduler_service.py). Missing it made the app
+# die at import time.
 apscheduler
-# 테스트
+# tests
 pytest
 respx
 pytest-asyncio

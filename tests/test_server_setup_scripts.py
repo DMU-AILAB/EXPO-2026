@@ -115,3 +115,56 @@ def test_sh_구문과_dry_run():
 def test_sh는_잘못된_옵션과_포트를_거부한다():
     assert subprocess.run(["bash", str(SH), "--bogus"], capture_output=True).returncode == 2
     assert subprocess.run(["bash", str(SH), "--port", "abc"], capture_output=True).returncode == 2
+
+
+# --- Windows 인코딩(cp949) ------------------------------------------------------------------
+# Windows의 파이썬·pip 기본 인코딩은 로케일이다(한국어 Windows는 cp949). UTF-8 한글이 든 파일을 인코딩 지정 없이 읽으면
+# "'cp949' codec can't decode byte 0xeb"로 죽는다 — 리눅스·WSL은 UTF-8이 기본이라 개발 중에는 드러나지 않는다.
+# 새 Windows PC의 setup-server가 `pip install -r requirements.txt`에서 실제로 이렇게 죽었다.
+
+def test_설치가_pip로_읽는_requirements는_ASCII뿐이다():
+    """pip는 requirements를 로케일 인코딩으로 읽는다 — 한글 주석 한 줄이면 Windows 설치가 멈춘다."""
+    raw = (ROOT / "dashboard" / "backend" / "requirements.txt").read_bytes()
+    bad = [(i + 1, line[:40]) for i, line in enumerate(raw.splitlines()) if any(b > 127 for b in line)]
+    assert not bad, f"비ASCII 줄: {bad}"
+
+
+def test_ps1은_파이썬을_UTF8_모드로_돌린다():
+    text = PS1.read_text(encoding="utf-8-sig")
+    assert re.search(r"\$env:PYTHONUTF8\s*=\s*'1'", text)
+    assert re.search(r"\$env:PYTHONIOENCODING\s*=\s*'utf-8'", text)
+
+
+def test_자동_시작_작업의_인자에도_UTF8_모드가_있다():
+    text = PS1.read_text(encoding="utf-8-sig")
+    assert re.search(r'\$uvArgs\s*=\s*"-X utf8 ', text)
+    assert "'-X', 'utf8'" in text                                  # -NoAutostart의 직접 시작
+
+
+def _text_io_without_encoding(path: Path):
+    """인코딩 없이 텍스트로 파일을 읽고 쓰는 호출(`read_text()`·`write_text(x)`·텍스트 모드 `open`)."""
+    import ast
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        kw = {k.arg for k in node.keywords}
+        f = node.func
+        name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
+        if name in ("read_text", "write_text") and "encoding" not in kw:
+            found.append((node.lineno, name))
+        elif name == "open" and "encoding" not in kw:
+            mode = next((a.value for a in node.args[1:2] if isinstance(a, ast.Constant)), None)
+            mode = mode or next((k.value.value for k in node.keywords if k.arg == "mode" and isinstance(k.value, ast.Constant)), "r")
+            if "b" not in str(mode) and isinstance(f, ast.Name):     # 내장 open(...) 텍스트 모드만
+                found.append((node.lineno, "open"))
+    return found
+
+
+def test_서버_설치_코드는_파일을_UTF8로_명시해_읽고_쓴다():
+    """Windows 설치 경로가 실행하는 파이썬 — 인코딩을 로케일에 맡기지 않는다."""
+    files = [ROOT / "deploy" / "server_setup.py"]
+    files += [p for p in (ROOT / "dashboard" / "backend" / "app").rglob("*.py") if "__pycache__" not in p.parts]
+    offenders = {p.relative_to(ROOT).as_posix(): hits for p in files if (hits := _text_io_without_encoding(p))}
+    assert not offenders, offenders
