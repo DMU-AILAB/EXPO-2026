@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ..config import settings
 
-__all__ = ["Bundle", "BundleError", "build_bundle", "repo_root"]
+__all__ = ["Bundle", "BundleError", "build_bundle", "build_assets", "installer_script", "repo_root"]
 
 
 class BundleError(Exception):
@@ -125,3 +125,58 @@ def build_bundle(include_models: bool = False) -> Bundle:
             for arc in sorted(files):
                 add(arc, files[arc].read_bytes())
     return Bundle(data=raw.getvalue(), bundle_id=bundle_id, file_count=len(files))
+
+
+def _install_service_files(makefile: str) -> list[str]:
+    """`make install-service`가 Pi로 보내는 `deploy/…` 파일 — 같은 목록을 설치 스크립트도 쓴다.
+
+    `scp deploy/a deploy/b … host:/tmp/` 한 줄이 단일 출처다. 설치 스크립트에 유닛 이름을
+    다시 적으면 Makefile과 어긋나 기기에서 유닛이 빠진다(`tests/test_installer_matches_makefile.py`).
+    """
+    m = re.search(r"^install-service:\n(?:.*\n)*?\tscp ((?:deploy/[\w.-]+\s+)+)", makefile, re.M)
+    if not m:
+        raise BundleError("Makefile의 install-service에서 scp 목록을 찾지 못했습니다")
+    return re.findall(r"deploy/([\w.-]+)", m.group(1))
+
+
+def build_assets() -> Bundle:
+    """설치 스크립트용 에셋 — systemd 유닛·sudoers·`auto_ap.sh`. 평면 배치(`<이름>`)로 담는다."""
+    root = repo_root()
+    mk = root / "Makefile"
+    if not mk.is_file():
+        raise BundleError(f"저장소 루트에서 Makefile을 찾지 못했습니다: {root}")
+    names = _install_service_files(mk.read_text(encoding="utf-8"))
+    files: dict[str, Path] = {}
+    for name in names:
+        src = root / "deploy" / name
+        if not src.is_file():
+            raise BundleError(f"deploy/{name}이 없습니다")
+        files[name] = src
+
+    hashes = {name: _sha(src) for name, src in files.items()}
+    digest = hashlib.sha256("\n".join(f"{n}:{hashes[n]}" for n in sorted(hashes)).encode()).hexdigest()
+    raw = io.BytesIO()
+    with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tf:
+            for name in sorted(files):
+                payload = files[name].read_bytes()
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                info.mtime = 0
+                info.mode = 0o755 if name.endswith(".sh") else 0o644
+                tf.addfile(info, io.BytesIO(payload))
+    return Bundle(data=raw.getvalue(), bundle_id=f"a-{digest[:12]}", file_count=len(files))
+
+
+def installer_script(server_url: str) -> str:
+    """`deploy/install.sh`에 서버 주소 기본값을 넣어 돌려준다.
+
+    주소는 서버가 만든 값이지만 셸에 들어가므로 URL 문자만 허용한다 — 따옴표나 `;`가 섞이면
+    설치 스크립트가 임의 명령을 실행하게 된다.
+    """
+    if not re.fullmatch(r"https?://[A-Za-z0-9._:\-\[\]]+", server_url):
+        raise BundleError(f"서버 주소 형식이 안전하지 않습니다: {server_url!r}")
+    path = repo_root() / "deploy" / "install.sh"
+    if not path.is_file():
+        raise BundleError("deploy/install.sh가 없습니다")
+    return path.read_text(encoding="utf-8").replace("__SERVER_URL__", server_url)

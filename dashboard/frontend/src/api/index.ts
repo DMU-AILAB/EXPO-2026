@@ -149,6 +149,22 @@ export interface Diagnosis {
 
 export const getDiagnosis = (id: string) => request<Diagnosis>(`/api/devices/${id}/diagnose`)
 
+// ------------------------------------------------------- Pi 부트스트랩 설치
+
+export interface BootstrapToken {
+  token: string
+  /** 초 단위 유효 시간 */
+  expires_in: number
+  server_url: string
+  /** Pi에 붙여 넣는 한 줄 명령 */
+  command: string
+  /** 같은 명령에 --dry-run — 아무것도 바꾸지 않고 단계만 보여준다 */
+  dry_run_command: string
+}
+
+export const createBootstrapToken = () =>
+  request<BootstrapToken>('/api/bootstrap/token', { method: 'POST' })
+
 // ---------------------------------------------------------------- 카메라
 
 /** `stale: true`면 기기가 꺼져 있어 캐시를 보여주는 중이다. */

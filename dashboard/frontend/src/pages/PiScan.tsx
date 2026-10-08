@@ -6,6 +6,7 @@ import {
 import * as api from '../api'
 import { ApiError } from '../api/client'
 import BleSetup from '../components/BleSetup'
+import BootstrapInstall from '../components/BootstrapInstall'
 import type { DiscoveredDevice, ScanResult } from '../types'
 
 type Verify = { state: 'idle' | 'loading' | 'ok' | 'fail'; version?: string | null; cameras?: number | null }
@@ -342,6 +343,7 @@ export default function PiScan() {
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <BleSetup onRegister={registerByIp} />
+        <BootstrapInstall />
       </div>
     </div>
   )

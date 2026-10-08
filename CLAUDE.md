@@ -446,6 +446,33 @@ Wi-Fi가 바뀔 때마다 `.env`를 고치고 신원 재주입을 누르던 일,
 - 자동 탐색 동시 접속은 8이다(`routers/scan.py`) — 15 이상에서는 /24 스캔이 살아 있는 기기를
   무작위로 놓쳤다(Wi-Fi + WSL 미러 네트워크 실측). 키우기 전에 재현율부터 잴 것.
 
+## Pi 부트스트랩 설치 (`deploy/install.sh`) — 설계 결정
+
+Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 등록을 한다(SSH·`make` 불필요).
+푸시 업데이트를 받지 못하는 **구버전 기기**와 새 SD카드가 대상이다. 대시보드 "기기 추가 →
+새 기기 설치"가 토큰이 든 명령(`bash <(curl -fsSL "…/api/bootstrap/install.sh?token=…")`)을 만든다.
+
+- **프로세스 치환(`bash <(…)`)을 쓴다** — `curl … | bash`는 스크립트가 stdin을 차지해 `sudo -v`의
+  비밀번호 프롬프트가 꼬인다. `--dry-run`(아무것도 바꾸지 않고 sudo도 묻지 않는다)을 함께 준다.
+- **코드 적용은 `device/self_update.py`의 CLI를 그대로 쓴다**(경로 검증·허용 목록·sha256·문법·백업) —
+  검증을 셸로 다시 구현하지 않는다. 의존성이 없는 첫 설치라 `roi_editor` 스모크는 `--no-smoke`.
+- **목록의 단일 출처**: 유닛·sudoers 파일은 `Makefile` `install-service`의 `scp deploy/…` 줄로
+  서버가 에셋(`assets.tar.gz`)을 만든다(`bundle_builder.build_assets`) — 스크립트에 이름을 다시
+  적지 않는다. apt/pip 패키지만 스크립트에 있고 `tests/test_installer_matches_makefile.py`가
+  Makefile `deps`·`deps-roi-editor`와 대조한다. Makefile을 스크립트 호출로 바꾸지 않았다(회귀 위험).
+- **sudoers는 `visudo -cf`로 검증한 뒤에만 설치한다**(Makefile은 설치 후 검증 — 깨진 파일이 먼저
+  들어가면 이후 sudo가 전부 막힌다). `visionguide-network.sudoers`만 사용자명이 `ailab`으로
+  박혀 있어 다른 계정이면 `sed`로 바꾼다.
+- **토큰**(`routers/bootstrap.py`): 30분, **메모리에만**(`--workers` 금지 전제), 내려받기는 반복
+  가능하고 **등록만 1회용**. 파일 내려받기는 JWT가 아니라 토큰으로 인증한다(Pi에는 로그인이 없다).
+- **등록은 서버가 기기에 신원을 직접 심는다**(`_provision_device`) — 키를 응답에 싣지 않는다.
+  기기 IP는 요청의 TCP 상대 주소(`peer_ipv4`, 사설 LAN만). 같은 id가 있으면(재설치) 키를 새로
+  발급해 다시 심는다. id 규칙은 기기 추가 화면과 같은 `pi-<ip>`라 한 기기가 두 행이 되지 않는다.
+- **서버 주소는 스크립트 안에서 한 번만 치환된다.** 자리표시자 점검 줄을 `"__SERVER""_URL__"`로
+  쪼갠 이유: 치환이 그 줄까지 바꾸면 주소가 지워진다. 주소는 URL 문자만 허용한다(셸 삽입 방지).
+- 보안 전제는 푸시 업데이트와 같다 — **서버가 내려준 스크립트를 root 권한으로 실행하는 경로**라
+  통제된 망을 가정한다(토큰 만료·`--dry-run`이 완화책).
+
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
 `tests/test_pipeline_integration.py`가 **프레임 루프를 끝까지 실제로 돌리는 유일한

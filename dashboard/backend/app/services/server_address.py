@@ -15,7 +15,7 @@ from typing import Optional
 
 from ..config import settings
 
-__all__ = ["AUTO", "is_auto", "local_ip_toward", "public_url_for", "remember_port"]
+__all__ = ["AUTO", "is_auto", "local_ip_toward", "public_url_default", "public_url_for", "remember_port"]
 
 AUTO = "auto"
 
@@ -63,4 +63,16 @@ def public_url_for(device_ip: str) -> str:
     if not is_auto():
         return settings.public_base_url.strip().rstrip("/")
     ip = local_ip_toward(device_ip)
+    return f"http://{ip}:{_port()}" if ip else ""
+
+
+def public_url_default() -> str:
+    """기기를 아직 모를 때(설치 명령을 만들 때)의 서버 주소 — 기본 경로의 서버 IP.
+
+    설치할 Pi의 IP는 아직 모르므로 인터넷 방향(문서용 주소 192.0.2.1) 경로로 정한다. 같은 망에
+    있는 기기라면 이 인터페이스로 닿는다.
+    """
+    if not is_auto():
+        return settings.public_base_url.strip().rstrip("/")
+    ip = local_ip_toward("192.0.2.1")
     return f"http://{ip}:{_port()}" if ip else ""
