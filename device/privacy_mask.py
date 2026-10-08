@@ -19,6 +19,10 @@ import numpy as np
 
 DEFAULT_RATIO = 0.25          # 박스 높이 중 가릴 상단 비율 — 서 있는 성인은 머리가 약 1/7~1/8
 MIN_RATIO, MAX_RATIO = 0.05, 0.6
+HEAD_W_RATIO = 0.7            # 가림 높이의 하한 = 박스 폭 × 이 값 (머리 크기는 키가 아니라 어깨너비에 비례)
+# 서 있는 성인(h ≈ 2.5~3w)은 0.25h ≈ 0.7w라 이 하한이 닿지 않아 종전과 같다. 앉거나 박스가
+# 넓으면(h/w 작음) 고정 비율로는 얼굴이 마스크 아래로 빠지므로 비율이 자동으로 커진다.
+# 0.7은 일반 체형 추정값이지 이 데이터로 맞춘 값이 아니다 — 앉은 사람 영상으로 확인할 것.
 HOLD_SEC = 0.5                # 사람 박스가 **탐지에서 끊긴 뒤** 마지막 위치에 마스크를 유지하는 시간
 # (걷는 사람은 1초면 마지막 위치와 실제 위치가 꽤 벌어져, 길게 잡아도 소용이 줄어든다)
 MARGIN_X = 0.0                # 좌우 마진(박스 폭 대비) — 0이면 박스 폭 그대로
@@ -36,7 +40,10 @@ def clamp_ratio(ratio: float) -> float:
 
 def mask_region(box: Sequence[float], ratio: float,
                 frame_hw: tuple[int, int]) -> tuple[int, int, int, int] | None:
-    """사람 박스 `(x1,y1,x2,y2)`에서 가릴 영역을 프레임 안으로 잘라 돌려준다."""
+    """사람 박스 `(x1,y1,x2,y2)`에서 가릴 영역을 프레임 안으로 잘라 돌려준다.
+
+    `ratio`는 **최소** 비율이다 — 박스가 폭에 비해 낮으면(앉은 사람) 폭 기준으로 늘어난다.
+    """
     fh, fw = frame_hw
     x1, y1, x2, y2 = (float(v) for v in box[:4])
     w, h = x2 - x1, y2 - y1
@@ -45,7 +52,8 @@ def mask_region(box: Sequence[float], ratio: float,
     rx1 = int(round(x1 - w * MARGIN_X))
     rx2 = int(round(x2 + w * MARGIN_X))
     ry1 = int(round(y1 - h * MARGIN_TOP))
-    ry2 = int(round(y1 + h * clamp_ratio(ratio)))
+    eff = min(MAX_RATIO, max(clamp_ratio(ratio), HEAD_W_RATIO * w / h))
+    ry2 = int(round(y1 + h * eff))
     rx1, rx2 = max(0, rx1), min(fw, rx2)
     ry1, ry2 = max(0, ry1), min(fh, ry2)
     if rx2 - rx1 < 2 or ry2 - ry1 < 2:
