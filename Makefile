@@ -85,13 +85,8 @@ DEPLOY_PY = \
 # 새 모델을 추가하려면 camera_config.py의 MODEL_VARIANTS와 함께 이 목록에도 추가할 것.
 # (best.pt는 PyTorch fallback용이라 Pi엔 torch/ultralytics 자체를 설치하지 않으므로 배포 대상 아님)
 DEPLOY_MODEL_DIRS = \
-	runs/white_cane_v2/weights \
-	runs/white_cane_v3_320/weights \
 	runs/white_cane_v4_320/weights \
-	runs/white_cane_v5b_ft320/weights \
-	runs/white_cane_v6_ft320/weights \
 	runs/white_cane_v10_nolkc/weights \
-	runs/white_cane_v11_v26n/weights \
 	runs/white_cane_v15_vid_s2/weights
 
 .PHONY: deploy sync sync-roi-editor deps deps-roi-editor check-time setup-ntp restart quick \

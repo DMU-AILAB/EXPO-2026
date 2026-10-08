@@ -1118,16 +1118,14 @@ const CAPTURE_PRESETS = [
   'auto', '320x180', '320x240', '480x270', '480x360', '480x480',
   '640x360', '640x480', '848x480', '800x600', '960x540',
 ]
-const MODEL_VARIANTS = [
-  'v2_640', 'v3_320', 'v4_320', 'v5b_320', 'v6_320', 'v10_320', 'v11_yolo26n_320',
-  'v15_320',
-]
+// ★ device/camera_config.MODEL_VARIANTS와 같아야 한다(계약 테스트가 대조)
+const MODEL_VARIANTS = ['v4_320', 'v10_320', 'v15_320']
 
 function camFormOf(cam?: CameraType) {
   return {
     capture_preset: cam?.capture_preset ?? 'auto',
     fps: cam?.fps ?? 10,
-    model_variant: cam?.model_variant ?? 'v10_320',
+    model_variant: cam?.model_variant ?? 'v15_320',
     rotation: cam?.rotation ?? 0,
     require_person: cam?.require_person ?? true,
     privacy_mask: cam?.privacy_mask ?? true,

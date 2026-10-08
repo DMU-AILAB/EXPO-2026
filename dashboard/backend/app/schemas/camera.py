@@ -16,13 +16,9 @@ class CapturePreset(str, Enum):
     RES_960x540 = "960x540"
 
 class ModelVariant(str, Enum):
-    V2_640 = "v2_640"
-    V3_320 = "v3_320"
+    # ★ device/camera_config.MODEL_VARIANTS와 같아야 한다 — 계약 테스트가 대조한다.
     V4_320 = "v4_320"
-    V5B_320 = "v5b_320"
-    V6_320 = "v6_320"
     V10_320 = "v10_320"
-    V11_YOLO26N_320 = "v11_yolo26n_320"
     V15_320 = "v15_320"
 
 class CameraUpdate(BaseModel):

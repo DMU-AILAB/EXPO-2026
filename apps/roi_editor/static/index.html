@@ -1407,7 +1407,7 @@ async function addCameraFromScan(num, model) {
     roi_crop_inference: false,
     privacy_mask: true,
     privacy_mask_ratio: 0.25,
-    model_variant: 'v2_640',
+    model_variant: 'v15_320',
   };
 
   const updated = [...cameras, newCam];
@@ -1552,7 +1552,7 @@ function fillCameraForm() {
   const _pr = Math.round((cam.privacy_mask_ratio ?? 0.25) * 100);
   document.getElementById('camPrivacyRatio').value = _pr;
   document.getElementById('camPrivacyRatioVal').textContent = _pr;
-  document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
+  document.getElementById('camModelVariant').value = cam.model_variant || 'v15_320';
   document.getElementById('camCapturePreset').value = cam.capture_preset || 'auto';
 }
 

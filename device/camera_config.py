@@ -43,30 +43,12 @@ CAPTURE_PRESETS: dict[str, dict] = {
 _DEFAULT_CAPTURE_PRESET = "auto"
 
 MODEL_VARIANTS = {
-    "v2_640": {
-        "weights_dir": "runs/white_cane_v2/weights",
-        "input_size": 640,
-        "label": "white_cane_v2 (640, 정확도 우선)",
-    },
-    "v3_320": {
-        "weights_dir": "runs/white_cane_v3_320/weights",
-        "input_size": 320,
-        "label": "white_cane_v3_320 (320, 속도 우선)",
-    },
+    # Coral(edgetpu) 컴파일본(`best_int8_edgetpu.tflite`)이 있는 것은 v4_320뿐이다 — 현재 Coral로 운영 중인 카메라가
+    # 쓴다. v10·v15는 컴파일본이 없어 Coral 카메라에서도 CPU TFLite로 폴백한다.
     "v4_320": {
         "weights_dir": "runs/white_cane_v4_320/weights",
         "input_size": 320,
-        "label": "white_cane_v4_320 (320, 사람 라벨 보완 재학습)",
-    },
-    "v5b_320": {
-        "weights_dir": "runs/white_cane_v5b_ft320/weights",
-        "input_size": 320,
-        "label": "white_cane_v5b_320 (320, 배경 오탐지 보완)",
-    },
-    "v6_320": {
-        "weights_dir": "runs/white_cane_v6_ft320/weights",
-        "input_size": 320,
-        "label": "white_cane_v6_320 (320, 유사물 오탐지 보완)",
+        "label": "white_cane_v4_320 (320, 사람 라벨 보완 재학습 — Coral 가능)",
     },
     # v10 이후는 누수 없는 재분할(datasets/v2) 위에서 처음부터 학습한 계보다.
     # v1~v6의 정지 이미지 지표(mAP50 0.98)는 증강본/연속촬영이 train과 test에
@@ -75,13 +57,6 @@ MODEL_VARIANTS = {
         "weights_dir": "runs/white_cane_v10_nolkc/weights",
         "input_size": 320,
         "label": "white_cane_v10_320 (320, 누수 제거 재분할 + 증강 튜닝 — 예비)",
-    },
-    # yolo26n 백본 비교용. 실영상 지표에서 yolov8n에 크게 뒤져(35.3% vs 73.2%)
-    # 채택하지 않았으나, 실기기에서 직접 확인할 수 있도록 선택지로 남긴다.
-    "v11_yolo26n_320": {
-        "weights_dir": "runs/white_cane_v11_v26n/weights",
-        "input_size": 320,
-        "label": "white_cane_v11_yolo26n_320 (320, yolo26n 백본 — 비교용)",
     },
     # v10 데이터에 자체 촬영 영상 14편(869장, train에만)을 더한 계보. 3시드 비교와
     # INT8 재측정에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다
@@ -93,9 +68,26 @@ MODEL_VARIANTS = {
         "label": "white_cane_v15_320 (320, 자체 촬영 영상 편입 — 기본·권장)",
     },
 }
+# 선택지에서 뺀 모델 — **기존 기기의 camera_config.json이나 systemd 유닛에 이 이름이 남아 있을 수 있다.**
+# 검증 실패로 그 설정이 통째로 무시되거나 기동이 죽으면 안 되므로 기본 모델로 대체해 읽는다
+# (`normalize_model_variant`). 가중치 파일은 저장소에 남아 있다.
+RETIRED_MODEL_VARIANTS = frozenset({"v2_640", "v3_320", "v5b_320", "v6_320", "v11_yolo26n_320"})
 # 기본값이 오랫동안 v2_640이었다 — 프레임 드랍의 원인이던 640 모델이라
 # camera_config.json 없이 뜬 Pi가 가장 느린 모델로 동작했다. 현행 권장으로 맞춘다.
 _DEFAULT_MODEL_VARIANT = "v15_320"
+
+
+def normalize_model_variant(name: str | None) -> str | None:
+    """선택지에서 뺀 모델 이름이면 기본 모델로 바꿔 돌려준다(경고 로그). 그 외에는 그대로.
+
+    알 수 없는 이름은 **고치지 않는다** — 오타를 조용히 기본값으로 덮으면 원인을 찾을 수 없고,
+    `validate_camera_config`가 정확히 그것을 걸러야 한다.
+    """
+    if name in RETIRED_MODEL_VARIANTS:
+        print(f"[WARN] model_variant '{name}'은(는) 더 이상 선택할 수 없습니다 — "
+              f"'{_DEFAULT_MODEL_VARIANT}'(으)로 대체합니다")
+        return _DEFAULT_MODEL_VARIANT
+    return name
 # 사람 동반 필수 조건의 기본값 — dataclass 기본값과 load_camera_config()의 폴백이
 # 어긋나면 필드가 없는 기존 파일이 조용히 다른 값으로 로드되므로 한 곳에서만 정의한다.
 _DEFAULT_REQUIRE_PERSON = True
@@ -172,7 +164,7 @@ def load_camera_config(path: str | Path) -> list[CameraProfile]:
                 port=int(item.get("port", 8080)),
                 traffic_db=item.get("traffic_db", "foot_traffic.db"),
                 swap_rb=bool(item.get("swap_rb", False)),
-                model_variant=item.get("model_variant", _DEFAULT_MODEL_VARIANT),
+                model_variant=normalize_model_variant(item.get("model_variant", _DEFAULT_MODEL_VARIANT)),
                 capture_preset=item.get("capture_preset", _DEFAULT_CAPTURE_PRESET),
                 require_person_for_trigger=bool(item.get("require_person_for_trigger",
                                                          _DEFAULT_REQUIRE_PERSON)),
