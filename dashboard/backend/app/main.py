@@ -6,10 +6,14 @@ import logging
 
 from .config import settings
 from .errors import register_error_handlers
+from .frontend_serve import mount_frontend
 from .routers import auth, devices, cameras, rois, events, ws, stats, audio, schedules, scan, rf
 # [녹화 비활성] 개인정보 보호 — recording 라우터는 등록하지 않는다(Pi도 /recording/* 에 404)
-from .routers import replay, calibration, calibration_fleet, network, esp32
+from .routers import replay, calibration, calibration_fleet, network, esp32, bootstrap
+from .services.address_sync import reconcile_addresses
+from .services.discovery_responder import start_responder, stop_responder
 from .services.heartbeat_service import bulk_flush_heartbeats
+from .services.server_address import remember_port
 from .services.monitor_service import broadcast_camera_alerts, sweep_offline_devices
 from .services.foot_traffic_puller import PULL_INTERVAL_SEC, pull_once
 from .services.stream_fanout import stream_fanout
@@ -28,9 +32,11 @@ async def lifespan(app: FastAPI):
 
     # 백그라운드 루프 세 개. 각자 주기가 다르고 실패해도 서로를 멈추지 않아야 한다 —
     # 한 루프의 예외가 태스크를 끝내면 그 기능만 조용히 죽는다.
-    async def _loop(name: str, interval: float, fn):
+    async def _loop(name: str, interval: float, fn, first_delay: float | None = None):
+        delay = interval if first_delay is None else first_delay
         while True:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(delay)
+            delay = interval
             try:
                 await fn()
             except asyncio.CancelledError:
@@ -48,8 +54,14 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(_loop("heartbeat-flush", 30, _flush_and_sweep)),
         asyncio.create_task(_loop("foot-traffic", PULL_INTERVAL_SEC, pull_once)),
+        # 서버 IP가 바뀌어 하트비트가 끊긴 기기의 server_url을 맞춘다. 20초 뒤 첫 점검(기동 직후
+        # 하트비트가 도착할 시간을 준다) 이후 1분 주기 — 기기별 재시도 간격은 address_sync가 조절한다.
+        asyncio.create_task(_loop("address-reconcile", 60, reconcile_addresses, first_delay=20)),
     ]
+    # Pi가 서버를 스스로 찾게 하는 UDP 응답기. 포트가 점유돼 있어도 서버는 계속 뜬다(경고만).
+    responder = await start_responder() if settings.auto_enroll else None
     yield
+    stop_responder(responder)
     # Shutdown: Stop APScheduler
     scheduler.shutdown()
 
@@ -70,6 +82,13 @@ app = FastAPI(title="VisionGuide Backend API", lifespan=lifespan)
 
 # 명세 §1.4·§16의 오류 형식을 여기 한 곳에서 강제한다.
 register_error_handlers(app)
+
+@app.middleware("http")
+async def _remember_server_port(request, call_next):
+    # public_base_url=auto가 기기에 알려 줄 포트 — .env의 PORT는 --port로 띄우면 어긋난다.
+    remember_port(request.url.port)
+    return await call_next(request)
+
 
 origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 
@@ -99,7 +118,17 @@ app.include_router(calibration.router)
 app.include_router(calibration_fleet.router)
 app.include_router(network.router)
 app.include_router(esp32.router)
+app.include_router(bootstrap.router)
 
-@app.get("/")
-def read_root():
+@app.get("/api/health")
+def health():
+    # 설치 스크립트(setup-server)가 기동 완료를 기다릴 때 쓴다 — dist 유무와 무관하게 항상 응답한다.
     return {"status": "VisionGuide Backend is running", "ok": True}
+
+
+# 라우터를 전부 등록한 **뒤**에 붙여야 한다(SPA 폴백이 `/{path}`를 먹는다). dist가 없으면
+# 개발 모드 그대로라 `/`가 예전 상태 JSON이다.
+if not mount_frontend(app, settings.frontend_dist or None):
+    @app.get("/")
+    def read_root():
+        return {"status": "VisionGuide Backend is running", "ok": True}

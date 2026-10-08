@@ -50,7 +50,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `gpio_controls.py` | Wi-Fi 버튼(GPIO17) — **짧게 누름(뗄 때)** = 홈 Wi-Fi ↔ 핫스팟 전환, **3초 누름** = 블루투스 페어링 창 3분(`ble_window.json`, 홈 Wi-Fi 연결 중이면 열지 않고 짧게 3번 — 광고할 수 없는데 켜진 것처럼 보이면 안 된다. LED 페어링 패턴도 광고 가능할 때만) · 통합 상태 LED · 부저 |
 | `ble_provisioning.py` | **BLE Wi-Fi 페어링** — 대시보드(Web Bluetooth)가 망에 없는 기기에 SSID·비밀번호를 건넨다. Wi-Fi 미연결 + 버튼 창이 열렸을 때만 광고(`VG-xxxx`). GATT: info/command/result(+순번 `n`)/event. Wi-Fi 조작은 `roi_editor/network_manager.py` 재사용, `dbus-next` |
 | `rois_example.json` | ROI 설정 파일 예시 |
-| `runs/white_cane_v2/`, `v3_320`, `v4_320`, `v5b_ft320`, `v6_ft320`, `v10_nolkc`, `v11_v26n`, `v15_vid_s2` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` 참고). **현행 권장은 `v10_320`** (= `runs/white_cane_v10_nolkc/weights`). v10은 **누수 없는 재분할(`datasets/v2`) 위에서 처음부터 학습한 계보**이고, 실영상 탐지율이 v9 계열 최고 수준이다(`docs/model_evaluation_report_v3.md`). `v11_yolo26n_320`은 백본 비교용으로 남겨둔 것이지 권장이 아니다(실영상 35.3% vs v10 73.2%). **`v15_320`(= `runs/white_cane_v15_vid_s2/weights`)은 배포 후보**다 — v10 데이터에 자체 촬영 영상 869장을 train에만 더했고, 3시드·INT8 비교에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다(리포트 §17). 기기 실측 전이라 기본값은 아직 `v10_320`이다. **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
+| `runs/white_cane_v4_320`, `v10_nolkc`, `v15_vid_s2` 의 `weights/` | 학습된 가중치 — 카메라 프로필의 `model_variant`로 선택 (`camera_config.MODEL_VARIANTS` — **이 3개만 선택지**다. `v2_640`·`v3_320`·`v5b`·`v6`·`v11`은 선택지에서 뺐고 가중치 파일은 저장소에 남아 있다. 기존 기기 설정에 그 이름이 남아 있으면 읽을 때 기본 모델로 대체한다 — `RETIRED_MODEL_VARIANTS`). **Coral 컴파일본은 `v4_320`에만 있다**(v10·v15는 CPU 폴백). 같은 목록이 서버 enum·UI·`Makefile`에도 있어 `tests/test_model_variants.py`가 대조한다. **현행 기본값은 `v15_320`**(= `runs/white_cane_v15_vid_s2/weights`)이다 — v10 데이터에 자체 촬영 영상 869장을 train에만 더했고, 3시드·INT8 비교에서 배포 지점(conf 0.55)의 실외·실내가 모두 v10보다 높았다(리포트 §17). 기기 CPU 실측에서 v10과 추론시간이 같다(약 67ms, A-B-A). **★ Coral(edgetpu) 컴파일본이 없다** — Coral 카메라는 CPU TFLite로 폴백해 약 28ms → 약 67ms가 되고, Coral에서의 성능·헛트리거는 검증되지 않았다(`edgetpu_compiler`를 받을 수 없었다). `v10_320`은 예비다. `v11_yolo26n_320`은 백본 비교용(실영상 35.3% vs v10 73.2%)이지 권장이 아니다. **v1~v6의 정지 이미지 지표(mAP50 0.98)는 누수된 split에서 나온 값이라 v10과 직접 비교하면 안 된다** |
 | `prepare_background_dataset.py` | 로컬 전용(Pi 배포 대상 아님) 1회성 데이터 준비 — `datasets/sources/background_photos/`의 배경 사진을 EXIF 회전 반영·640 jpg 정규화·`bg_XXXX.jpg` 리네임 후 빈 라벨과 함께 `datasets/v1/train/`에 편입. FP 벤치용 홀드아웃을 v4 오탐지 여부로 층화 추출해 분리 |
 | `eval_background_fp.py` | 배경(네거티브) 이미지에서 나오는 오탐지를 conf 임계값별로 집계하는 벤치마크. PT/TFLite 등 ultralytics가 읽는 형식이면 모두 같은 잣대로 비교 가능 |
 | `fetch_lvis_lookalikes.py` / `fetch_openimages_lookalikes.py` | 로컬 전용 1회성 수집 — 공개 데이터셋(LVIS / Open Images V7)을 **색인으로만** 써서 유사물 사진을 내려받고 COCO yolov8n으로 solo/with_person 분류. LVIS는 어노테이션만 제공하므로 이미지는 각 레코드의 `coco_url`로 개별 다운로드(전체 18GB를 받을 필요 없음), Open Images는 공개 S3에서 id 단위로 받는다 |
@@ -83,7 +83,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 디렉터리 구조 (★ 배치 규칙)
 
 ```
-device/     Pi에서 실행되는 런타임 34개 — Makefile의 DEPLOY_PY와 정확히 일치한다
+device/     Pi에서 실행되는 런타임 36개 — Makefile의 DEPLOY_PY와 정확히 일치한다
 tools/      PC 개발 도구와 외부 장치 소스 (dev/에 ESP32 릴레이 Arduino 펌웨어 포함)
 apps/       사람이 띄워 쓰는 앱 (roi_editor · simulator · label_tool)
 dashboard/  PC 중앙 관리자 대시보드(backend + frontend) + 디자인 자료(mockups · demo)
@@ -414,6 +414,194 @@ SSH 키·sudo 비밀번호 없이 대시보드 버튼 한 번으로 선택한 �
 - ★ `GET /api/devices/update-info`·`/update`는 `/{device_id}`보다 **먼저 선언**해야 한다
   (아니면 경로 변수로 먹힌다).
 
+## 서버 주소 자동 갱신 · 연결 진단 — 설계 결정
+
+Wi-Fi가 바뀔 때마다 `.env`를 고치고 신원 재주입을 누르던 일, 그리고 "왜 안 되지"를 추적하던
+일을 대시보드로 옮긴 것이다(`services/server_address.py`·`address_sync.py`·`diagnosis.py`).
+
+- **`PUBLIC_BASE_URL=auto`(기본)**: 서버가 **그 기기에 닿는 경로의 자기 IP**를 계산한다
+  (UDP `connect()`로 라우팅만 정하는 방식 — 패킷이 나가지 않아 기기가 꺼져 있어도 된다).
+  `.local` 이름에 기대지 않는다 — mDNS 해석은 기기마다 다르고 방화벽에서도 막힌다.
+  포트는 **서버가 실제로 받은 요청의 포트**(`remember_port` 미들웨어)가 `.env PORT`보다
+  우선한다 — `uvicorn --port`로 띄우면 `.env`와 어긋나기 쉽다(이번에 실제로 어긋났다).
+  명시한 URL은 그대로 쓴다.
+- **주소 갱신은 키를 바꾸지 않는다.** `Device.control_key`에 평문이 있으므로 같은 키로 같은
+  신원을 다시 보내면 되고(`api_key_hash` 불변), Pi는 키가 맞아 인수로 취급하지 않는다
+  (로그·부저 없음). 신원 재주입(`/provision`)은 키를 새로 발급하므로 이 용도로 쓰지 않는다.
+- **자동으로 건드리는 범위는 신원이 이미 있는 기기뿐**이다. 신원이 없는 기기를 인수하는 것은
+  다른 서버가 쓰는 기기를 빼앗을 수 있어 사람이 누른다(진단 탭이 안내). 같은 IP에 다른
+  `device_id`의 기기가 있으면 **우리 키를 심지 않는다**(DHCP로 IP가 넘어간 경우).
+- **`address-reconcile` 루프**(`main.py`)는 하트비트가 끊긴 기기만 점검한다(정상 기기는 건드리지
+  않는다). 기기별 실패 백오프 5분→최대 30분 — 꺼진 기기를 계속 두드리지 않는다.
+  기기 IP까지 바뀌면 서버가 찾지 못한다(하트비트가 와야 `adopt_peer_ip`가 따라간다) →
+  기기 추가의 자동 탐색으로 다시 찾는다.
+- **연결 진단**(`GET /api/devices/{id}/diagnose`)의 점검은 이번 세션에서 실제로 겪은 원인마다
+  하나씩이다: 방화벽(기기→서버 TCP만 막힘), 구버전 코드, 서버 주소 불일치, 신원 미주입,
+  `cam1` 미연결("주의"), 전원, 온도, NTP. 서로 독립이고 기기에 닿지 않으면 `unknown`이다.
+  **서버에서 기기로 닿는다고 기기에서 서버로 닿는 것이 아니다** — 그래서 기기가 스스로
+  DNS→TCP→HTTP 순으로 확인하는 `GET /api/diagnose`(`device/diagnose.py`)를 따로 둔다.
+  `GET /api/device/status`는 기기 탐색이 바디 스키마로 판별하므로 늘리지 않는다.
+- **전력은 `vcgencmd get_throttled`로 판단한다**: 지금(`now`)과 부팅 이후(`ever`)를 구분한다 —
+  과거에만 저전압이면 주의, 지금이면 문제.
+- 자동 탐색 동시 접속은 8이다(`routers/scan.py`) — 15 이상에서는 /24 스캔이 살아 있는 기기를
+  무작위로 놓쳤다(Wi-Fi + WSL 미러 네트워크 실측). 키우기 전에 재현율부터 잴 것.
+
+## Pi 부트스트랩 설치 (`deploy/install.sh`) — 설계 결정
+
+Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 등록을 한다(SSH·`make` 불필요).
+푸시 업데이트를 받지 못하는 **구버전 기기**와 새 SD카드가 대상이다. 대시보드 "기기 추가 →
+새 기기 설치"가 토큰이 든 명령(`bash <(curl -fsSL "…/api/bootstrap/install.sh?token=…")`)을 만든다.
+
+- **프로세스 치환(`bash <(…)`)을 쓴다** — `curl … | bash`는 스크립트가 stdin을 차지해 `sudo -v`의
+  비밀번호 프롬프트가 꼬인다. `--dry-run`(아무것도 바꾸지 않고 sudo도 묻지 않는다)을 함께 준다.
+- **코드 적용은 `device/self_update.py`의 CLI를 그대로 쓴다**(경로 검증·허용 목록·sha256·문법·백업) —
+  검증을 셸로 다시 구현하지 않는다. 의존성이 없는 첫 설치라 `roi_editor` 스모크는 `--no-smoke`.
+- **목록의 단일 출처**: 유닛·sudoers 파일은 `Makefile` `install-service`의 `scp deploy/…` 줄로
+  서버가 에셋(`assets.tar.gz`)을 만든다(`bundle_builder.build_assets`) — 스크립트에 이름을 다시
+  적지 않는다. apt/pip 패키지만 스크립트에 있고 `tests/test_installer_matches_makefile.py`가
+  Makefile `deps`·`deps-roi-editor`와 대조한다. Makefile을 스크립트 호출로 바꾸지 않았다(회귀 위험).
+- **sudoers는 `visudo -cf`로 검증한 뒤에만 설치한다**(Makefile은 설치 후 검증 — 깨진 파일이 먼저
+  들어가면 이후 sudo가 전부 막힌다). `visionguide-network.sudoers`만 사용자명이 `ailab`으로
+  박혀 있어 다른 계정이면 `sed`로 바꾼다.
+- **토큰**(`routers/bootstrap.py`): 30분, **메모리에만**(`--workers` 금지 전제), 내려받기는 반복
+  가능하고 **등록만 1회용**. 파일 내려받기는 JWT가 아니라 토큰으로 인증한다(Pi에는 로그인이 없다).
+- **등록은 서버가 기기에 신원을 직접 심는다**(`_provision_device`) — 키를 응답에 싣지 않는다.
+  기기 IP는 요청의 TCP 상대 주소(`peer_ipv4`, 사설 LAN만). 같은 id가 있으면(재설치) 키를 새로
+  발급해 다시 심는다. id 규칙은 기기 추가 화면과 같은 `pi-<ip>`라 한 기기가 두 행이 되지 않는다.
+- **서버 주소는 스크립트 안에서 한 번만 치환된다.** 자리표시자 점검 줄을 `"__SERVER""_URL__"`로
+  쪼갠 이유: 치환이 그 줄까지 바꾸면 주소가 지워진다. 주소는 URL 문자만 허용한다(셸 삽입 방지).
+- 보안 전제는 푸시 업데이트와 같다 — **서버가 내려준 스크립트를 root 권한으로 실행하는 경로**라
+  통제된 망을 가정한다(토큰 만료·`--dry-run`이 완화책).
+- **모델은 기본으로 싣는다**(`--models default|all|none`, 기본 `default`). 모델이 없으면 탐지가 안
+  되는 기기가 조용히 만들어진다. `default` = `bundle_builder.BOOTSTRAP_MODELS`(`v15_320` 현행 후보 +
+  `v10_320` 예비, 약 6MB)이고 **가중치 경로는 `camera_config.MODEL_VARIANTS`에서 읽는다**(`ast`로
+  리터럴만 — 값 복제 금지). 기본 모델이 이미 있으면 받지 않는다. `bundle_id`는 코드 해시라 **모델 범위와
+  무관해야 한다**(달라지면 푸시 업데이트가 항상 구버전으로 보인다 — 테스트가 고정). 푸시 업데이트는
+  `none` 기본. 설치 스크립트의 `BOOTSTRAP_MODEL_DIRS`는 서버 값과 `tests/test_installer_matches_makefile.py`가 대조한다.
+  **코드 기본 모델(`_DEFAULT_MODEL_VARIANT`)은 `v15_320`이다**(사용자 결정). CPU 실측은 v10과 동일했으나 **Coral 컴파일본이 없어
+  Coral 카메라는 CPU로 폴백하며 헛트리거는 측정하지 못했다** — Coral 컴파일본이 생기면 재검증할 것.
+- **핫스팟 프로필(`VisionGuide-AP`)은 없을 때만 만든다.** 저장소 어디에도 이 프로필을 만드는 코드가
+  없어서(기존 기기는 손으로 만든 것) 새 기기에서는 Wi-Fi가 없을 때 핫스팟 폴백이 조용히 실패했다.
+  **프로필 *이름*은 코드가 `nmcli connection up`에 쓰는 이름이고 SSID와 다를 수 있다** — 기존 기기는
+  SSID `VisionGuide-Pi`·`192.168.50.1`을 쓰는 프로필이라, 있으면 절대 덮어쓰지 않는다.
+  새로 만들 때는 `192.168.4.1`(`auto_ap.sh`와 같음), 비밀번호 기본 `visionguide`(`--ap-password`, 8~63자).
+
+## 서버 한 줄 설치 (`setup-server.bat` · `deploy/server_setup.py`) — 설계 결정
+
+새 PC에서 서버를 세우는 일(환경·의존성·`.env`·DB·프런트 빌드·방화벽·자동 시작)을 한 번에 한다.
+`start-dashboard.bat`은 **개발용**(conda 환경 + Vite 개발 서버 `:5173`)으로 남는다.
+
+- **서버는 Windows 네이티브로 돌린다 — WSL이 아니다.** 이 저장소의 PC 도구(`deploy.ps1`·`start-dashboard.bat`·
+  `docs/dashboard-pc-setup.md`)가 전부 Windows용이고, WSL(NAT/미러 모드·Hyper-V 방화벽)이 기기 연결 문제의
+  주된 원인이었다. 코드 편집·테스트는 WSL에서 해도 된다. "서버 PC가 항상 Windows"라는 명시 기록은 없어
+  `deploy/setup-server.sh`(Linux/macOS)를 최소 기능의 보조로 둔다(WSL에서 실행하면 경고).
+- **기본 포트는 8000**이다. 8001은 8000이 WSL의 다른 프로세스에 점유돼 우연히 쓴 값이었다.
+- **판단 로직은 `deploy/server_setup.py`(stdlib) 한 곳에 있고 OS 스크립트는 얇다.** OS 스크립트는 pytest로
+  돌릴 수 없지만 이건 돌릴 수 있다. **`.env`는 멱등** — 기존 값(JWT 키·포트)을 보존하고 빠진 키만
+  채운다(`.env.example`을 그대로 복사한 **플레이스홀더 비밀은 빠진 것으로** 본다). 덮어쓰기는 `--reset`뿐.
+  관리자 비밀번호는 난수 12자(헷갈리는 글자 제외)를 만들어 화면에 1회 + `data/admin-password.txt`(gitignore).
+- **프런트는 백엔드가 같은 포트로 서빙한다**(`app/frontend_serve.py`) — `dist/index.html`이 있을 때만.
+  SPA 폴백이 **`/api`·`/ws`·`/docs` 등의 404를 가리면 안 된다**(오타 난 API가 200 HTML로 보이면 안 된다).
+  라우터를 전부 등록한 **뒤**에 붙여야 한다(`/{path}`를 먹는다). 상태 확인은 `GET /api/health`이고
+  `dist`가 없을 때만 `/`가 예전 JSON(개발 호환). 프런트 `API_BASE`는 프로덕션 빌드에서 동일 출처(`''`),
+  WebSocket은 `wsBase()`(`location.origin` 기반). `dist`는 커밋하지 않는다.
+- **`setup-server.ps1`는 UTF-8 BOM이 필수**다(Windows PowerShell 5.1이 BOM 없는 UTF-8을 CP949로 읽는다).
+  `Do`는 PowerShell 예약어라 함수 이름으로 못 쓴다(`Act`). **`$ErrorActionPreference='Stop'`에서 네이티브
+  명령의 stderr를 `2>$null`로 돌리면 5.1이 `NativeCommandError`로 중단한다** — `py.exe`가 없는 버전을 stderr로
+  알려 실제로 걸렸다. `python` 명령은 쓰지 않는다(Microsoft Store 스텁). 백엔드는 `--reload`/`--workers`
+  없이 띄운다(하트비트 버퍼·APScheduler가 한 프로세스). 변경하는 일은 전부 `Act`를 거쳐 `-DryRun`이 막는다.
+  `tests/test_server_setup_scripts.py`가 이를 고정한다.
+
+## Pi 자동 발견 · 등록 · 승인 — 설계 결정
+
+Pi가 서버를 스스로 찾아 등록한다(`device/server_discovery.py`·`server_join.py` ↔ 서버 `discovery_responder.py`·
+`enrollment.py`·`pending_enrollments.py`, `POST /api/bootstrap/enroll`). 서버가 바뀐 Pi는 **승인 한 번**으로 옮긴다.
+
+- **★ 소속 확인 방법이 두 가지로 위험하다 — 그래서 키를 보내지 않는 챌린지-응답을 쓴다.**
+  ① 신원을 다시 보내 보기: Pi의 `POST /api/identity`는 키가 틀려도 **덮어쓴다**(인수) — 시험이 곧 탈취다.
+  ② 키를 헤더로 보내 보기: 상대가 **아직 증명되지 않았다.** 가짜 Pi가 우리 기기의 `device_id`(`pi-<ip>`로 추측
+  가능)를 주장하면 코드 푸시·재부팅까지 가능한 `control_key`를 건네게 된다(독립 리뷰가 잡은 설계 결함이었다).
+  → `GET /api/identity/proof?nonce=`(Pi) 가 `HMAC-SHA256(api_key, nonce)`를 돌려주고, 서버(`PiClient.prove_identity`)가
+  매번 새 nonce로 자기 키의 값과 비교한다. 키는 전송되지 않고 응답은 재사용할 수 없다. `GET /api/identity`는
+  `api_key`를 돌려주지 않으므로 직접 비교할 수도 없다. proof가 없는 구버전은 **안전한 쪽(승인 대기)**.
+  **증명이 끝나기 전에는 우리 행을 바꾸지 않는다**(`adopt_peer_ip`도 증명 뒤에만).
+- **판정은 서버가 Pi를 직접 읽어서 한다**(`handle_enroll`) — 요청 본문의 자기 신고는 쓰지 않는다.
+  신원 없음→즉시 등록 / 키를 아는 우리 행→주소만 갱신 / 우리 행이 없지만 기기가 이미 **우리 서버를 보고 있음**
+  (DB 유실 복구)→재등록 / 그 외→승인 대기(**기기에 아무것도 보내지 않는다**, 행도 만들지 않는다).
+- **★ 주소 갱신(`address_sync.refresh_device_address`)도 보내기 전에 소유를 증명한다 — 승인 이동 뒤 핑퐁을 막는다.** 실기기 실험에서
+  승인으로 A→B로 옮긴 기기를 A의 `address-reconcile` 루프(하트비트가 끊긴 기기를 점검)가 약 40초 만에 **도로 빼앗고**, 이어서 B가 다시
+  빼앗는 핑퐁이 계속돼 기기에 인수 경고와 부저가 반복됐다. 원인은 이 함수가 증명 없이 우리 키로 신원을 다시 보냈기 때문이다(Pi는 키가
+  틀려도 덮어쓴다). **두 서버가 같은 `pi-<ip>` id를 쓰므로 `device_id` 비교로는 못 막는다.** 지금은 `prove_identity`가 False면 아무것도 보내지
+  않고 `skipped`("다른 서버 소속")로 끝낸다 — 가져오려면 승인 대기에서 승인한다. 증명 엔드포인트가 없는 구버전(404)만 예전 동작을 유지한다.
+  주소가 이미 맞아 보낼 것이 없으면 증명도 묻지 않는다. 승인 이동(A→B)과 되돌리기(B→A) 모두 실기기에서 검증했다.
+- **같은 IP의 요청은 직렬화한다**(IP별 `asyncio.Lock`) — `install.sh`의 등록과 `JoinAgent`의 첫 시도가 몇 초 안에 겹쳐,
+  둘이 동시에 키를 돌리면 Pi와 DB의 키가 갈라지거나 같은 id로 두 번 INSERT해 500이 난다. **무인증 엔드포인트가
+  증폭기가 되지 않게** 같은 IP는 10초 안에 다시 받으면 직전 결과(**실패 포함**)를 돌려준다(서버가 요청자의 :5000을
+  두드리므로). 상대 기기가 준 필드는 타입을 확인하고 200자로 자른다(대기 목록에 그대로 저장된다). 사설 LAN 외 요청은 400, `AUTO_ENROLL=false`면 403이고 UDP 응답기도 침묵한다.
+- **프로토콜**: UDP 48555, 요청 `b"VISIONGUIDE?"`(+JSON) 브로드캐스트 → 응답 JSON `{"service":"visionguide","url":…}`
+  유니캐스트. 서버가 여러 NIC를 가질 수 있어 응답 `url`은 **요청자 IP 기준**(`public_url_for`)이다. Pi는 전역
+  브로드캐스트와 기본 경로 /24 지향 브로드캐스트 양쪽으로 보낸다. 상수는 양쪽에 있으므로 `test_discovery.py`가
+  **진짜 `discover()`를 진짜 응답기에 붙여** 대조한다(`install.sh`의 인라인 구현도 같은 상수를 테스트가 대조).
+  운영 응답기는 `0.0.0.0`에 바인딩해야 브로드캐스트 목적지를 받는다(특정 주소 바인딩은 못 받는다).
+- **승인은 그 순간 기기를 다시 확인한다**(`approve_pending`): 대기 항목은 최대 15분 묵은 것이라 그 사이 같은 IP를 다른
+  기기가 받았을 수 있다 — `device_id`가 달라졌으면 409(`PENDING_STALE`)로 거부하고 덮어쓰지 않는다. 기존 행의 키는
+  **Pi가 받아들인 뒤에만** 바꾼다(주입 실패 시 멀쩡한 기기의 키가 서버에서 거부되면 안 된다).
+- **UDP 응답기는 출발지별로 1초에 한 번만 답한다**(12바이트 요청에 ~150바이트 응답이라 출발지를 속이면 반사 증폭).
+- **`install.sh`가 LAN에서 찾은 서버는 터미널이면 사람이 확인한다**(`--yes`로 생략). 그 서버가 내려주는 코드를 root로
+  설치하는데 UDP에는 누구나 답할 수 있다. 서버가 내려준 명령(주소가 박힌 스크립트)에는 이 경로가 없다.
+- **승인 대기는 메모리**(`--workers` 금지 전제). 기기가 **5분마다** 다시 알리고 서버는 **15분 무요청이면 만료**한다 —
+  `JoinAgent`의 재질의 간격(`pending` 5분)이 만료보다 짧아야 한다. 거절하면 1시간 억제.
+- **`JoinAgent`는 신원을 바꾸지 않는다.** `load_identity`만 쓴다(테스트가 import를 고정). 자기 `server_url`과 같은
+  서버에는 아무것도 하지 않고 다른 서버에만 요청한다. `threading.Thread`의 내부 메서드 `_stop`을 속성으로 덮으면
+  `join()`이 깨지므로 `_stop_event`를 쓴다. 첫 시도는 10초 늦춘다 — 서버가 등록 요청을 받으면 이 Pi의 :5000을
+  되불러 확인하는데 이 스레드는 `uvicorn.run` 이전에 시작되기 때문이다.
+- `url_key`(host:port 정규화)는 서버·Pi·`install.sh`가 같은 규칙이다. 잘못된 포트(`http://h:bad`)에서 예외를
+  던지면 `enroll`이 500으로 죽는다(Pi 신원에 이상한 `server_url`이 있을 수 있다) — 빈 문자열을 돌려준다.
+- 발견은 편의 기능이다: UDP 포트가 점유돼도 서버는 **경고만 하고 계속 뜬다**. 브로드캐스트가 막힌 망(AP 격리)에서는
+  동작하지 않으므로 수동 등록·설치 토큰 경로는 그대로 남긴다.
+- 토큰 없는 내려받기(`authorize`): **토큰이 있으면 항상 엄격히 검증**하고(만료된 명령을 LAN이라는 이유로 통과시키지
+  않는다), 없을 때만 `AUTO_ENROLL` + 사설 LAN을 본다. `register`(토큰 1회용)는 그대로고 토큰 없는 등록은 `enroll`뿐이다.
+
+## 기존 기기 모델 일괄 변경 — 설계 결정
+
+신규 설치의 기본 모델이 바뀌어도 **이미 깔린 기기의 `camera_config.json`은 그대로**다(예: `v4_320`). 대시보드 기기 목록의
+"모델 일괄 변경"(`POST /api/devices/model-variant`, `services/model_rollout.py`)이 기존 경로를 재사용해 올린다 —
+`GET /api/cameras` → `merge_camera_profiles`(모르는 필드 보존) → 선검증 → `POST /api/cameras`(전체 치환). 새 Pi API는 없다
+(`/api/model-variants`에 `available`만 추가). Pi가 `camera_config.json` mtime을 0.5초 단위로 감시해 **바뀐 카메라의 파이프라인만**
+다시 띄우므로 서비스 재시작은 필요 없다.
+
+- **가중치가 없으면 바꾸지 않는다.** 파일이 없는 모델이면 파이프라인이 시작하자마자 죽고 재시작을 반복해 탐지가 멈춘다.
+  `/api/model-variants`의 목록은 정적 표라 **없는 모델도 나온다** — 그래서 Pi가 `available`(best_int8.tflite 실재)을 알려 준다.
+  이 값이 없는 구버전은 증명할 수 없으므로 **건너뛴다.** `push_models`면 코드 번들(기본 모델 포함)을 먼저 올린 뒤 다시 확인한다.
+- **Coral(edgetpu) 카메라는 건드리지 않는다**(모델 형식·백엔드가 다르다). 비활성 카메라도 건드리지 않는다.
+- **바꾼 뒤 FPS ≥ 10을 확인하고 미달이면 그 카메라만 되돌린다**(KPI). 측정할 수 없는 것(지표 없음·오래됨·조회 실패)도 미달로 본다.
+  **측정 전에 8초 안정화 대기**를 둔다 — 파이프라인이 다시 뜨기 전에는 *이전 모델이 보고한* 지표가 아직 신선해 보여 새 모델이
+  느려도 통과로 오판한다. 롤백은 최신 카메라 목록을 다시 읽어 그 위에 얹는다. 롤백도 실패하면 이전 값을 알려 직접 확인하게 한다.
+- **미리보기(`dry_run`) → 확인 → 실행** 순서가 UI의 흐름이다. 서버 캐시(`Camera.model_variant`)는 Pi가 받아들인 뒤에만 바꾼다.
+  기기는 **한 대씩 순서대로** 돈다(같은 DB 세션 공유 + 한 기기가 FPS를 기다리는 동안 다른 기기의 부하가 측정에 섞이지 않게).
+- 바꾼 카메라의 **구조물 마스크는 재수집을 권장**한다 — 후보는 *그 모델이 무엇을 오탐하느냐*에 달려 있다(자동 실행하지 않는다).
+- ★ **함수의 기본 인자에 모듈 상수·함수를 넣지 말 것** — 정의 시점에 값이 고정돼 설정·테스트가 바꿔도 반영되지 않는다
+  (`build_response(url_for=public_url_for)`, `rollout_device(settle_sec=SETTLE_SEC)`에서 두 번 겪었다. 후자는 테스트가
+  8초·45초를 진짜로 기다려 4분이 걸렸다). `None`으로 두고 호출 시점에 읽는다.
+
+## Pi 파이썬 의존성 — 선언 · 실제 import · 기기 점검
+
+`bleak`이 기기에 없어 ESP32 BLE 중계가 `"Pi 패키지가 없습니다: bleak"`으로 멈춰 있던 일이 두 겹의 문제였다.
+
+- **푸시 업데이트는 코드만 올리고 pip를 실행하지 않는다.** 선언(`install.sh`·Makefile·`requirements-pi.txt`)이 맞아도, 새 기능이
+  패키지를 추가하면 푸시로 갱신된 기기에는 설치되지 않고 **그 기능만 조용히** 멈춘다(`esp32_relay`가 `bleak`을 지연 import해서
+  탐지·안내는 멀쩡해 눈에 띄지 않는다). 기기에서 `python3 -m pip install --break-system-packages <패키지>`(Pi 파이썬은 3.13) 또는
+  `install.sh` 재실행이 필요하다.
+- **기기가 스스로 점검한다**: `device/diagnose.py`의 `REQUIRED_MODULES`를 `find_spec`으로 찾아(import하지 않는다 — cv2·
+  ai_edge_litert는 느리고 메모리를 쓴다) `GET /api/diagnose`의 `python_modules`로 낸다. 대시보드 "연결 진단"의 "필수 파이썬 패키지"가
+  누락을 **경고**로 보이고 설치 명령을 알려 준다. 구버전 기기는 필드가 없어 `unknown`(문제라고 단정하지 않는다).
+  `GET /api/device/status`의 스키마는 늘리지 않는다.
+- **선언 목록끼리와 실제 코드를 정적으로 대조한다**(`tests/test_pi_dependencies.py`): `REQUIRED_MODULES` = `install.sh` PIP_PACKAGES =
+  `requirements-pi.txt` = Makefile `deps`·`deps-roi-editor`. 그리고 Pi 런타임 코드가 import하는 모든 서드파티 모듈이 필수 목록이나
+  `OPTIONAL`(이유 명시: picamera2는 apt, pygame·torch는 폴백 등)에 분류돼 있어야 한다 — **새 서드파티 import를 추가하고 설치 목록에
+  넣지 않으면 테스트가 실패한다.** (`requirements-pi.txt`에는 `gpiozero`·`lgpio`가 빠져 있었다.)
+- 코어 파일 일부는 UTF-8 BOM이 있어 AST로 읽을 때 `utf-8-sig`를 써야 한다.
+
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
 `tests/test_pipeline_integration.py`가 **프레임 루프를 끝까지 실제로 돌리는 유일한
@@ -501,6 +689,13 @@ outbox 코드가 한 줄도 실행되지 않는다. 사람과 지팡이가 실�
   완전히 끈 것과 모든 영상·모든 임계값에서 같았다. 즉 ①(프레임 단위 연관 끊김)은 이론상
   존재하지만 실측에서는 거의 발생하지 않는다. 지팡이가 탐지되고 두 게이트를 통과한
   프레임에서는 사람 연관이 거의 항상 성립한다.
+
+## 음성 안내 음소거 — 설계 결정
+
+대시보드 기기 상세 '설정' 탭의 "음성 안내" 토글이 `audio_settings.json`(`{"muted": bool}`, Pi 로컬 런타임 파일·gitignore)을
+`GET/PUT /api/audio/settings`(roi_editor)로 바꾼다. `AudioPlayer._worker`가 **재생 직전마다** 파일을 읽으므로(`read_muted`)
+탐지 루프·재시작 없이 즉시 반영된다. 음소거여도 **`on_done`은 호출**한다(쿨다운 기산점 유지 — 해제 직후 안내가 몰리지 않게).
+탐지·이벤트 기록·유동인구는 그대로이고 재생만 건너뛴다. 파일이 없거나 깨지면 소리가 난다(안전 쪽 기본값).
 
 ## 영상 녹화 (설계 결정)
 
@@ -752,7 +947,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` · `diagnose.py` · `server_discovery.py` · `server_join.py` · `esp32_relay.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —
@@ -850,6 +1045,8 @@ Pi에서 실행될 코드를 작성하거나 수정할 때 반드시 지켜야 �
 ---
 
 ## 대시보드 백엔드 개발 명령어
+
+> 운영 서버는 `setup-server.bat`로 세운다(위 '서버 한 줄 설치'). 아래는 **개발 서버**(`--reload`) 절차다.
 
 ```bash
 cd dashboard/backend

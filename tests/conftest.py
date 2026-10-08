@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # tools/ 는 기능별 하위 디렉터리(data·eval·dev)로 나뉘어 있고 각 스크립트는
 # 패키지가 아니라 단독 실행 스크립트라, 상위 디렉터리만 넣으면 import되지 않는다.
-_PATHS = [ROOT, ROOT / "device", ROOT / "apps"]
+_PATHS = [ROOT, ROOT / "device", ROOT / "apps", ROOT / "deploy"]   # deploy/: server_setup.py(설치 도구)
 if (ROOT / "tools").is_dir():
     _PATHS += sorted(p for p in (ROOT / "tools").iterdir() if p.is_dir())
 

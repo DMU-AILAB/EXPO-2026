@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { API_BASE, getToken } from '../api/client'
+import { getToken, wsBase } from '../api/client'
 import type { WsMessage } from '../types'
 
 type Options = {
@@ -34,7 +34,7 @@ export function useEventStream({ deviceIds, onMessage }: Options = {}) {
 
     const connect = () => {
       if (closed) return
-      const url = `${API_BASE.replace(/^http/, 'ws')}/ws/events?token=${encodeURIComponent(token)}`
+      const url = `${wsBase()}/ws/events?token=${encodeURIComponent(token)}`
       ws = new WebSocket(url)
 
       ws.onopen = () => {

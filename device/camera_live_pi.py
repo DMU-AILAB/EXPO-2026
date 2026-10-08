@@ -63,6 +63,7 @@ import cv2
 import numpy as np
 
 from camera_config import (CameraProfile, MODEL_VARIANTS, CAPTURE_PRESETS,
+                           _DEFAULT_MODEL_VARIANT, normalize_model_variant,
                            load_camera_config, validate_camera_config,
                            adapt_profiles_to_hardware, coral_present)
 from yolo_postprocess import CLASS_NAMES, postprocess_multiclass, set_input, get_output
@@ -169,7 +170,7 @@ def camera_display_name(camera_id: str) -> str:
 def _model_paths(weights_dir: str) -> dict[str, Path]:
     """카메라 프로필의 model_variant(camera_config.MODEL_VARIANTS)가 가리키는 weights
     폴더를 실제 모델 파일 경로들로 변환한다 — 카메라마다 다른 모델(예: 정확도 우선
-    white_cane_v2/640 vs 속도 우선 white_cane_v3_320/320)을 쓸 수 있게 한다.
+    white_cane_v4_320(Coral 가능) vs 기본 white_cane_v15_320)을 쓸 수 있게 한다.
     """
     base = _BASE / weights_dir
     return {
@@ -1435,8 +1436,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--camera-config", default=None, metavar="PATH",
                    help="다중 카메라 프로필 JSON 경로 — 지정하면 카메라 1대(위 --source 등)가 아니라 "
                         "이 파일에 정의된 카메라들을 각각 독립 파이프라인으로 동시 구동한다")
-    p.add_argument("--model-variant", choices=tuple(MODEL_VARIANTS), default="v2_640",
-                   help="legacy mode model variant (for example: v4_320)")
+    p.add_argument("--model-variant", type=normalize_model_variant, choices=tuple(MODEL_VARIANTS),
+                   default=_DEFAULT_MODEL_VARIANT,
+                   help="legacy mode model variant (for example: v4_320). 선택지에서 뺀 이름은 기본 모델로 대체한다")
     p.add_argument("--status-led", type=int, default=None, metavar="GPIO_PIN",
                    help="탐지 루프 동작 확인용 LED GPIO 핀 (기본값: 비활성)")
     p.add_argument("--led-stall-sec", type=float, default=3.0, metavar="SEC",
@@ -1593,7 +1595,7 @@ class CameraPipeline:
         mjpeg: MJPEGServer | None = None
         foot_counter = None
 
-        variant = MODEL_VARIANTS.get(profile.model_variant, MODEL_VARIANTS["v2_640"])
+        variant = MODEL_VARIANTS.get(profile.model_variant, MODEL_VARIANTS[_DEFAULT_MODEL_VARIANT])
 
         try:
             # 카메라 존재 확인을 추론 백엔드 로딩보다 먼저 한다 — USB 웹캠처럼 나중에

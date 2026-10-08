@@ -130,3 +130,17 @@ def test_put_rf_detection_rejects_out_of_range_without_calling_pi(client, auth, 
                          json={"rssi_threshold": bad})
         assert res.status_code == 400   # 명세 §16: 요청 바디 오류는 400 VALIDATION_ERROR
     assert put.call_count == 0
+
+
+@respx.mock
+def test_audio_settings_relay(client, auth, device):
+    respx.get(f"{PI}/api/audio/settings").mock(return_value=httpx.Response(200, json={"muted": False}))
+    res = client.get(f"/api/devices/{device.id}/audio-settings", headers=auth)
+    assert res.json()["data"] == {"muted": False}
+
+    put = respx.put(f"{PI}/api/audio/settings").mock(
+        return_value=httpx.Response(200, json={"ok": True, "muted": True}))
+    res = client.put(f"/api/devices/{device.id}/audio-settings", headers=auth, json={"muted": True})
+    assert res.status_code == 200
+    assert json.loads(put.calls[0].request.content) == {"muted": True}
+    assert res.json()["data"] == {"muted": True}

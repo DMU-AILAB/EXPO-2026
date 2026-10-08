@@ -39,7 +39,7 @@ def test_legacy_camera_model_update_materializes_profile(client, auth, db_sessio
     db_session.commit()
 
     respx.get(f"{PI}/api/model-variants").mock(return_value=httpx.Response(
-        200, json={"variants": [{"key": "v10_320"}, {"key": "v11_yolo26n_320"}]}))
+        200, json={"variants": [{"key": "v10_320"}, {"key": "v4_320"}]}))
     respx.get(f"{PI}/api/cameras").mock(return_value=httpx.Response(
         200, json={"cameras": []}))
     post = respx.post(f"{PI}/api/cameras").mock(return_value=httpx.Response(
@@ -47,11 +47,11 @@ def test_legacy_camera_model_update_materializes_profile(client, auth, db_sessio
 
     response = client.patch(
         f"/api/devices/{device.id}/cameras/legacy",
-        json={"model_variant": "v11_yolo26n_320"},
+        json={"model_variant": "v4_320"},
         headers={**auth, "If-Match": "etag-1"},
     )
 
     assert response.status_code == 200, response.text
     payload = json.loads(post.calls[0].request.content)
     assert payload["cameras"][0]["id"] == "legacy"
-    assert payload["cameras"][0]["model_variant"] == "v11_yolo26n_320"
+    assert payload["cameras"][0]["model_variant"] == "v4_320"

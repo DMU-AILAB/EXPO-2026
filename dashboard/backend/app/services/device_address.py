@@ -34,12 +34,12 @@ _LAN_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
 ))
 
 
-def peer_ipv4(request: Request) -> Optional[str]:
-    """요청의 TCP 상대 주소를 서버가 믿고 쓸 수 있는 IPv4 문자열로. 아니면 None.
+def lan_ipv4(host: Optional[str]) -> Optional[str]:
+    """`host`를 서버가 믿고 쓸 수 있는 LAN IPv4 문자열로. 아니면 None.
 
-    `X-Forwarded-For`는 보지 않는다 — 클라이언트가 마음대로 쓸 수 있는 헤더다.
+    HTTP 요청의 상대 주소(`peer_ipv4`)와 UDP 발견 응답기가 **같은 기준**을 쓰도록 한 곳에 둔다 —
+    기준이 둘이면 발견은 되는데 등록은 거부되는 기기가 생긴다.
     """
-    host = request.client.host if request.client else None
     if not host:
         return None
     try:
@@ -53,6 +53,14 @@ def peer_ipv4(request: Request) -> Optional[str]:
     if not any(addr in net for net in _LAN_NETWORKS):
         return None
     return str(addr)
+
+
+def peer_ipv4(request: Request) -> Optional[str]:
+    """요청의 TCP 상대 주소를 서버가 믿고 쓸 수 있는 IPv4 문자열로. 아니면 None.
+
+    `X-Forwarded-For`는 보지 않는다 — 클라이언트가 마음대로 쓸 수 있는 헤더다.
+    """
+    return lan_ipv4(request.client.host if request.client else None)
 
 
 def adopt_peer_ip(db: Session, device: Device, peer_ip: Optional[str]) -> bool:

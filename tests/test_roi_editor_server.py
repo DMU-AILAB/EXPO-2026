@@ -30,6 +30,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(srv, "camera_config_path", tmp_path / "camera_config.json")
     monkeypatch.setattr(srv, "identity_path", tmp_path / "device_identity.json")
     monkeypatch.setattr(srv, "rf_config_path", tmp_path / "rf_config.json")
+    monkeypatch.setattr(srv, "audio_settings_path", tmp_path / "audio_settings.json")
     return TestClient(srv.app)
 
 
@@ -173,6 +174,24 @@ def test_get_model_variants_lists_known_keys(client):
     assert keys == set(camera_config.MODEL_VARIANTS)
 
 
+def test_model_variants는_가중치_존재를_available로_알린다(client, tmp_path, monkeypatch):
+    """목록은 정적 표라 없는 모델도 나온다 — 대시보드의 모델 일괄 변경이 이 값을 보고 건너뛴다."""
+    root = tmp_path / "root"
+    present = camera_config.MODEL_VARIANTS["v10_320"]["weights_dir"]
+    (root / present).mkdir(parents=True)
+    (root / present / "best_int8.tflite").write_bytes(b"x")
+    # 디렉터리만 있고 파일이 없는 경우도 '없음'이다
+    (root / camera_config.MODEL_VARIANTS["v15_320"]["weights_dir"]).mkdir(parents=True)
+    monkeypatch.setattr(srv, "_ROOT", root)
+
+    by_key = {v["key"]: v for v in client.get("/api/model-variants").json()["variants"]}
+    assert by_key["v10_320"]["available"] is True
+    assert by_key["v15_320"]["available"] is False
+    assert by_key["v4_320"]["available"] is False
+    assert all(isinstance(v["available"], bool) for v in by_key.values())
+    assert by_key["v10_320"]["weights_dir"] == present                 # 기존 필드는 그대로
+
+
 def test_get_device_status_returns_expected_keys(client):
     res = client.get("/api/device/status")
     assert res.status_code == 200
@@ -221,6 +240,62 @@ def test_identity_takeover_leaves_signal_and_log(client, tmp_path, capsys):
                         headers={"X-Device-Key": "nope"})
     assert wrong.status_code == 200
     assert (tmp_path / "takeover.flag").exists()
+
+
+def _proof(key: str, nonce: str) -> str:
+    import hashlib
+    import hmac as _hmac
+    return _hmac.new(key.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+
+
+def test_identity_proof는_키를_보내지_않고_안다는_것을_증명한다(client):
+    """서버가 다른 서버 소속 기기를 빼앗지 않고, 가짜 기기에 비밀을 건네지도 않고 소속을 확인하는 수단."""
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1", "server_url": "http://pc:8000"})
+    res = client.get("/api/identity/proof", params={"nonce": "n" * 16})
+    assert res.status_code == 200
+    assert res.json()["proof"] == _proof("key-1", "n" * 16) and res.json()["device_id"] == "pi-01"
+    assert "key-1" not in res.text                                           # 키는 나가지 않는다
+
+
+def test_identity_proof는_nonce마다_다르다(client):
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1", "server_url": "http://pc:8000"})
+    a = client.get("/api/identity/proof", params={"nonce": "a" * 16}).json()["proof"]
+    b = client.get("/api/identity/proof", params={"nonce": "b" * 16}).json()["proof"]
+    assert a != b                                                            # 응답을 재사용할 수 없다
+
+
+def test_identity_proof는_다른_키로는_위조할_수_없다(client):
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1", "server_url": "http://pc:8000"})
+    proof = client.get("/api/identity/proof", params={"nonce": "n" * 16}).json()["proof"]
+    assert proof != _proof("wrong-key", "n" * 16)
+
+
+def test_identity_proof는_신원이_없으면_403이다(client):
+    assert client.get("/api/identity/proof", params={"nonce": "n" * 16}).status_code == 403
+
+
+@pytest.mark.parametrize("nonce", ["short", "x" * 129])
+def test_identity_proof는_nonce_길이를_검증한다(client, nonce):
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1", "server_url": "http://pc:8000"})
+    assert client.get("/api/identity/proof", params={"nonce": nonce}).status_code == 400
+
+
+def test_identity_proof는_아무것도_바꾸지_않는다(client, tmp_path):
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1", "server_url": "http://pc:8000"})
+    ident_file = next(tmp_path.glob("device_identity.json"))
+    raw = ident_file.read_bytes()
+    client.get("/api/identity/proof", params={"nonce": "n" * 16})
+    assert ident_file.read_bytes() == raw and not (tmp_path / "takeover.flag").exists()
+
+
+def test_틀린_키로_신원을_보내면_덮어쓰지만_proof는_그렇지_않다(client):
+    """이 비대칭이 proof를 따로 둔 이유다 — POST /api/identity로 소속을 '시험'하면 곧 인수가 된다."""
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1", "server_url": "http://pc:8000"})
+    client.get("/api/identity/proof", params={"nonce": "n" * 16})
+    assert client.get("/api/identity").json()["device_id"] == "pi-01"        # proof는 건드리지 않았다
+    client.post("/api/identity", json={"device_id": "pi-02", "api_key": "k2", "server_url": "http://x:1"},
+                headers={"X-Device-Key": "wrong"})
+    assert client.get("/api/identity").json()["device_id"] == "pi-02"        # POST는 틀린 키로도 덮어쓴다
 
 
 def test_identity_delete_requires_current_device_key(client, tmp_path):
@@ -500,3 +575,30 @@ def test_update_rollback_requires_key_and_restores(update_env):
     assert (dest / "detect.py").read_text() == "OLD = 1\n"
     assert restarts == [1, 1]
     assert client.post("/api/update/rollback", headers={"X-Device-Key": "key-1"}).status_code == 409
+
+
+def test_diagnose_endpoint_reports_server_power_and_clock(client, monkeypatch):
+    import diagnose
+    monkeypatch.setattr(diagnose, "check_server", lambda url: {"url": url, "dns": {"ok": True}})
+    monkeypatch.setattr(diagnose, "read_throttled", lambda: {"raw": "0x0"})
+    monkeypatch.setattr(diagnose, "ntp_synchronized", lambda: True)
+
+    # 신원이 없으면 서버 점검은 건너뛴다
+    body = client.get("/api/diagnose").json()
+    assert body["server"] is None and body["power"] == {"raw": "0x0"} and body["ntp_synchronized"] is True
+
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "k", "server_url": "http://pc:8001"})
+    assert client.get("/api/diagnose").json()["server"]["url"] == "http://pc:8001"
+    mods = client.get("/api/diagnose").json()["python_modules"]       # 푸시 업데이트가 설치하지 않는 패키지의 누락을 알린다
+    assert mods["checked"] >= 10 and isinstance(mods["missing"], list)
+    assert all({"module", "package", "feature"} <= set(m) for m in mods["missing"])
+    assert "api_key" not in client.get("/api/diagnose").text           # 키는 나가지 않는다
+
+
+def test_audio_settings_default_is_audible_and_put_persists(client, tmp_path):
+    assert client.get("/api/audio/settings").json() == {"muted": False}
+    res = client.put("/api/audio/settings", json={"muted": True})
+    assert res.status_code == 200 and res.json()["muted"] is True
+    assert (tmp_path / "audio_settings.json").read_text().count("true") == 1
+    assert client.get("/api/audio/settings").json() == {"muted": True}
+    assert client.put("/api/audio/settings", json={"muted": "maybe"}).status_code == 422

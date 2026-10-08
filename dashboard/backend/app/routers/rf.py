@@ -104,6 +104,28 @@ class RfDetectionUpdate(BaseModel):
     rssi_threshold: int = Field(ge=1, le=255)
 
 
+class AudioSettingsUpdate(BaseModel):
+    muted: bool
+
+
+@router.get("/{device_id}/audio-settings", response_model=dict)
+async def get_audio_settings(device_id: str, db: Session = Depends(get_db),
+                             current_user=Depends(get_current_user)):
+    device = _get_device(db, device_id)
+    result = await PiClient(device.ip).get_audio_settings()
+    return {"data": {"muted": result.get("muted") is True}, "ok": True}
+
+
+@router.put("/{device_id}/audio-settings", response_model=dict)
+async def update_audio_settings(device_id: str, body: AudioSettingsUpdate,
+                                db: Session = Depends(get_db),
+                                current_user=Depends(get_current_user)):
+    """음성 안내 음소거 on/off. 탐지·이벤트 기록은 그대로이고 재생만 건너뛴다."""
+    device = _get_device(db, device_id)
+    result = await PiClient(device.ip).put_audio_settings(body.muted)
+    return {"data": {"muted": result.get("muted", body.muted)}, "ok": True}
+
+
 @router.put("/{device_id}/rf/detection", response_model=dict)
 async def update_rf_detection(device_id: str, body: RfDetectionUpdate, db: Session = Depends(get_db),
                               current_user=Depends(get_current_user)):

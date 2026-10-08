@@ -238,3 +238,43 @@ def rollback(dest: Path) -> dict:
             pass
     shutil.rmtree(backup, ignore_errors=True)
     return {"restored": len(index.get("restored", [])), "removed": len(index.get("created", []))}
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """명령줄 — 설치 스크립트(`deploy/install.sh`)가 검증 로직을 셸로 다시 구현하지 않고
+    이 모듈을 그대로 쓰게 한다. 결과는 JSON 한 줄, 실패는 종료코드 2(번들 거부)/1(그 밖)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="self_update.py", description="코드 번들 적용/상태")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    ap = sub.add_parser("apply", help="번들을 검증하고 적용한다")
+    ap.add_argument("bundle", help="tar.gz 번들 경로")
+    ap.add_argument("--dest", required=True, help="적용할 디렉터리(예: ~/visionguide)")
+    ap.add_argument("--include-models", action="store_true")
+    ap.add_argument("--no-smoke", action="store_true",
+                    help="roi_editor 임포트 스모크를 건너뛴다 — 의존성을 설치하기 전의 첫 설치용")
+    st = sub.add_parser("status", help="적용된 번들 id")
+    st.add_argument("--dest", required=True)
+    args = parser.parse_args(argv)
+
+    import json
+    try:
+        if args.cmd == "status":
+            out = {"bundle_id": read_bundle_version(Path(args.dest).expanduser()),
+                   "has_backup": has_backup(Path(args.dest).expanduser())}
+        else:
+            data = Path(args.bundle).expanduser().read_bytes()
+            out = apply_bundle(data, Path(args.dest).expanduser(),
+                               include_models=args.include_models, smoke=not args.no_smoke)
+    except UpdateError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, **out}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main())

@@ -4,8 +4,10 @@ import {
 } from 'lucide-react'
 
 import * as api from '../api'
+import PendingEnrollments from '../components/PendingEnrollments'
 import { ApiError } from '../api/client'
 import BleSetup from '../components/BleSetup'
+import BootstrapInstall from '../components/BootstrapInstall'
 import type { DiscoveredDevice, ScanResult } from '../types'
 
 type Verify = { state: 'idle' | 'loading' | 'ok' | 'fail'; version?: string | null; cameras?: number | null }
@@ -129,6 +131,8 @@ export default function PiScan() {
         </p>
       </div>
 
+      <PendingEnrollments />
+
       {/* 발급된 API 키 — 1회만 노출되므로 눈에 띄게 남긴다 */}
       {issued.length > 0 && (
         <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200">
@@ -239,7 +243,7 @@ export default function PiScan() {
                         onClick={() => void addDevice(d)}
                         disabled={busyIp === d.ip}
                         className="text-[10.5px] font-semibold text-[#2c4be0] border border-[#2c4be0]/40 px-3 py-1 rounded-lg hover:bg-[#2c4be0]/10 disabled:opacity-50 transition whitespace-nowrap">
-                        {busyIp === d.ip ? '등록 중…' : '추가'}
+                        {busyIp === d.ip ? '등록 중…' : d.registered ? '인수' : '추가'}
                       </button>
                     )}
                   </div>
@@ -342,6 +346,7 @@ export default function PiScan() {
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <BleSetup onRegister={registerByIp} />
+        <BootstrapInstall />
       </div>
     </div>
   )

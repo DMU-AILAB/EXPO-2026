@@ -31,7 +31,7 @@ def fleet(db_session):
         Device(id="dev-c", name="C 꺼짐", ip="192.168.1.103", api_key_hash="x", config_etag="e", status="offline"),
         Camera(id="cam0", device_id="dev-a", port=8081, model_variant="v10_320"),
         Camera(id="cam1", device_id="dev-a", port=8091, model_variant="v10_320", is_active=False),
-        Camera(id="cam0", device_id="dev-b", port=8082, model_variant="v11_yolo26n_320"),
+        Camera(id="cam0", device_id="dev-b", port=8082, model_variant="v4_320"),
         Camera(id="cam0", device_id="dev-c", port=8083, model_variant="v10_320"),
     ])
     db_session.commit()
@@ -80,9 +80,9 @@ def test_run_all_starts_every_active_camera_and_skips_offline(client, auth, flee
 def test_run_by_model_only_targets_that_model(client, auth, fleet):
     ra, rb = _ok(A), _ok(B)
     body = client.post("/api/calibration/run", headers=auth, json={
-        "target_mode": "model", "targets": ["v11_yolo26n_320"], "seconds": 60}).json()["data"]
+        "target_mode": "model", "targets": ["v4_320"], "seconds": 60}).json()["data"]
     assert rb.called and not ra.called
-    assert [(r["device_id"], r["model_variant"]) for r in body["results"]] == [("dev-b", "v11_yolo26n_320")]
+    assert [(r["device_id"], r["model_variant"]) for r in body["results"]] == [("dev-b", "v4_320")]
 
 
 @respx.mock
@@ -113,7 +113,7 @@ def test_run_validation(client, auth, fleet):
     assert post({"target_mode": "model", "targets": []}) == 400
     assert post({"target_mode": "model", "targets": ["v99"]}) == 400
     assert post({"target_mode": "devices", "targets": ["ghost"]}) == 400
-    assert post({"target_mode": "model", "targets": ["v2_640"]}) == 400   # 해당 카메라 없음
+    assert post({"target_mode": "model", "targets": ["v15_320"]}) == 400   # 해당 카메라 없음
 
 
 @respx.mock

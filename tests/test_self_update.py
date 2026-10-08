@@ -177,3 +177,39 @@ def test_is_allowed_허용_목록():
     assert all(su.is_allowed(p) for p in ok)
     assert not any(su.is_allowed(p) for p in no)
     assert su.is_allowed("runs/m/weights/best_int8.tflite", include_models=True)
+
+
+# ---------------------------------------------------------------------------
+# 명령줄 — 설치 스크립트가 쓴다
+# ---------------------------------------------------------------------------
+
+def test_cli_apply_and_status(tmp_path, capsys):
+    bundle = tmp_path / "b.tar.gz"
+    bundle.write_bytes(make_bundle({"detect.py": "NEW = 2\n"}, bundle_id="v3"))
+    dest = tmp_path / "vg"
+
+    assert su._main(["apply", str(bundle), "--dest", str(dest), "--no-smoke"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "bundle_id": "v3", "applied": 1, "skipped": []}
+    assert (dest / "detect.py").read_text() == "NEW = 2\n"
+
+    assert su._main(["status", "--dest", str(dest)]) == 0
+    assert json.loads(capsys.readouterr().out)["bundle_id"] == "v3"
+
+
+def test_cli_rejects_bad_bundle_with_exit_2_and_leaves_dest_alone(tmp_path, capsys):
+    bundle = tmp_path / "bad.tar.gz"
+    bundle.write_bytes(make_bundle({"detect.py": "def (:\n"}))
+    dest = tmp_path / "vg"
+    dest.mkdir()
+    (dest / "detect.py").write_text("OLD = 1\n")
+
+    assert su._main(["apply", str(bundle), "--dest", str(dest), "--no-smoke"]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and "문법" in out["error"]
+    assert (dest / "detect.py").read_text() == "OLD = 1\n"
+
+
+def test_cli_missing_bundle_is_exit_1(tmp_path, capsys):
+    assert su._main(["apply", str(tmp_path / "nope.tar.gz"), "--dest", str(tmp_path / "vg")]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False

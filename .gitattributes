@@ -1,1 +1,4 @@
 * text=auto eol=lf
+
+# Windows cmd는 LF만 있는 .bat에서 오동작할 수 있다(라벨/괄호 블록) — 체크아웃 때 CRLF로 고정
+*.bat text eol=crlf

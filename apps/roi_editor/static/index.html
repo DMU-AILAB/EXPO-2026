@@ -911,7 +911,7 @@ main {
           <div class="cam-enabled-row">
             <input type="checkbox" id="camPrivacyMask"> <span>얼굴 모자이크 (기본 켜짐 — 화면에 나가는 영상에서만 가리며 탐지·안내에는 영향 없음. 구역만 잘라서 인식과 같이 쓰면 전체 화면 사람 탐지를 한 번 더 돌려 느려질 수 있음)</span>
           </div>
-          <label for="camPrivacyRatio">모자이크 범위 — 사람 키의 위쪽 <span id="camPrivacyRatioVal">25</span>%</label>
+          <label for="camPrivacyRatio">모자이크 범위 — 사람 키의 위쪽 최소 <span id="camPrivacyRatioVal">25</span>%</label>
           <input type="range" id="camPrivacyRatio" min="10" max="60" step="5" value="25"
                  oninput="document.getElementById('camPrivacyRatioVal').textContent=this.value">
           <div class="form-btns">
@@ -1407,7 +1407,7 @@ async function addCameraFromScan(num, model) {
     roi_crop_inference: false,
     privacy_mask: true,
     privacy_mask_ratio: 0.25,
-    model_variant: 'v2_640',
+    model_variant: 'v15_320',
   };
 
   const updated = [...cameras, newCam];
@@ -1552,7 +1552,7 @@ function fillCameraForm() {
   const _pr = Math.round((cam.privacy_mask_ratio ?? 0.25) * 100);
   document.getElementById('camPrivacyRatio').value = _pr;
   document.getElementById('camPrivacyRatioVal').textContent = _pr;
-  document.getElementById('camModelVariant').value = cam.model_variant || 'v2_640';
+  document.getElementById('camModelVariant').value = cam.model_variant || 'v15_320';
   document.getElementById('camCapturePreset').value = cam.capture_preset || 'auto';
 }
 

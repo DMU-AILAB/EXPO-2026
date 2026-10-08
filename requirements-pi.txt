@@ -16,6 +16,8 @@ opencv-python-headless>=4.8.0
 numpy>=1.24.0
 shapely>=2.0.0
 pillow>=9.0.0          # 한글 오버레이 (PIL)
+gpiozero>=2.0       # 버튼·LED·팬·부저 (gpio_controls.py 등)
+lgpio>=0.2           # gpiozero의 GPIO 백엔드(Pi 5·Bookworm 이후)
 
 # ── ROI 웹 에디터 (roi_editor/server.py) ─────────────────────────────────
 fastapi>=0.100.0

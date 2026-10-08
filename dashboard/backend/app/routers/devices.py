@@ -14,13 +14,19 @@ from ..models.camera import Camera
 from ..models.event import DetectionEvent
 from ..models.roi import Roi
 from ..schemas.device import (
-    BulkUpdateRequest, DeviceCreate, DeviceUpdate, ProvisionDeviceRequest, UpdateRequest,
+    BulkUpdateRequest, DeviceCreate, DeviceUpdate, ModelRolloutRequest, ProvisionDeviceRequest,
+    RefreshAddressRequest,
+    UpdateRequest,
 )
 from ..deps import get_current_user
 from ..services.device_address import adopt_peer_ip, peer_ipv4
 from ..services.device_view import build_device_summary, build_status_payload, is_stale
+from ..services.address_sync import refresh_device_address
+from ..services.diagnosis import run_diagnosis
 from ..services.bundle_builder import Bundle, BundleError, build_bundle
+from ..services.model_rollout import rollout_device
 from ..services.pi_client import PiClient
+from ..services.server_address import public_url_for
 from ..services.heartbeat_service import get_buffered_cameras, get_buffered_status
 from ..utils.timeutil import kst_day_bounds_utc, utcnow
 
@@ -174,7 +180,7 @@ async def _provision_device(device: Device, raw_api_key: str) -> tuple[bool, Opt
         await client.post_identity(
             device_id=device.id,
             api_key=raw_api_key,
-            server_url=settings.public_base_url.rstrip("/"),
+            server_url=public_url_for(device.ip),
             name=device.name or "",
             location=device.location or "",
             registered_at=utcnow().isoformat(timespec="seconds") + "Z",
@@ -290,6 +296,62 @@ async def update_devices(req: BulkUpdateRequest, db: Session = Depends(get_db),
     return {"data": {"bundle_id": bundle.bundle_id, "results": list(results)}, "ok": True}
 
 
+# --------------------------------------------------------------------------- 모델 일괄 변경
+#
+# 신규 설치의 기본 모델이 바뀌어도 이미 깔린 기기의 camera_config.json은 그대로다. 기기별 결과를 따로 돌려주고
+# 한 대가 실패해도 나머지는 계속한다. `/{device_id}`보다 먼저 선언해야 한다(경로 변수로 먹힌다).
+
+@router.post("/model-variant")
+async def change_model_variant(req: ModelRolloutRequest, db: Session = Depends(get_db),
+                               current_user = Depends(get_current_user)):
+    """여러 기기의 카메라 모델을 바꾼다. 가중치가 없으면 건너뛰고(`push_models`면 먼저 올림), 바꾼 뒤 FPS가
+    미달이면 그 카메라만 이전 값으로 되돌린다. `dry_run`이면 아무것도 바꾸지 않고 계획만 돌려준다."""
+    query = db.query(Device)
+    devices = (query.filter(Device.id.in_(req.device_ids)).all() if req.device_ids is not None else query.all())
+    found = {d.id for d in devices}
+    missing = [{"device_id": i, "ok": False, "skipped": False, "changed": [], "skipped_cameras": [],
+                "error": "디바이스를 찾을 수 없습니다", "reason": None} for i in (req.device_ids or []) if i not in found]
+
+    async def run(device: Device) -> dict:
+        return await rollout_device(db, device, to=req.to, from_variants=req.from_variants,
+                                    push_models=req.push_models, verify=req.verify, dry_run=req.dry_run)
+
+    # 한 기기씩 순서대로 돈다 — 같은 SQLAlchemy 세션을 동시에 쓰지 않고, 기기 하나가 FPS를 기다리는 동안
+    # 다른 기기를 건드려 서로의 부하가 측정에 섞이는 일도 없다.
+    results = [await run(d) for d in devices]
+    return {"data": {"to": req.to, "dry_run": req.dry_run, "results": results + missing}, "ok": True}
+
+
+# --------------------------------------------------------------------------- 서버 주소 갱신
+#
+# 서버 IP가 바뀌었을 때(Wi-Fi 이동 등) 기기가 아는 `server_url`을 지금 주소로 맞춘다.
+# **키를 새로 발급하지 않는다**(`services/address_sync.py`) — 신원 재주입(/provision)과 다르다.
+# 일괄 경로는 `/{device_id}`보다 먼저 선언해야 한다.
+
+@router.post("/refresh-address")
+async def refresh_addresses(req: RefreshAddressRequest | None = None, db: Session = Depends(get_db),
+                            current_user = Depends(get_current_user)):
+    """신원이 있는 기기(또는 지정한 기기)의 서버 주소를 맞춘다. 기기별 결과를 따로 돌려준다."""
+    ids = req.device_ids if req and req.device_ids is not None else None
+    query = db.query(Device)
+    devices = (query.filter(Device.id.in_(ids)).all() if ids is not None
+               else query.filter(Device.control_key.isnot(None)).all())
+    found = {d.id for d in devices}
+    missing = [{"device_id": i, "ok": False, "changed": False, "skipped": False,
+                "error": "디바이스를 찾을 수 없습니다"} for i in (ids or []) if i not in found]
+    results = list(await asyncio.gather(*(refresh_device_address(db, d) for d in devices)))
+    return {"data": {"results": results + missing}, "ok": True}
+
+
+@router.post("/{device_id}/refresh-address")
+async def refresh_one_address(device_id: str, db: Session = Depends(get_db),
+                              current_user = Depends(get_current_user)):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
+    return {"data": await refresh_device_address(db, device), "ok": True}
+
+
 @router.post("/{device_id}/update")
 async def update_device_code(device_id: str, req: UpdateRequest | None = None,
                              db: Session = Depends(get_db), current_user = Depends(get_current_user)):
@@ -317,6 +379,16 @@ async def get_device_update_status(device_id: str, db: Session = Depends(get_db)
     current = status.get("bundle_id", "")
     return {"data": {"bundle_id": current, "has_backup": bool(status.get("has_backup")),
                      "latest": latest, "up_to_date": current == latest}, "ok": True}
+
+
+@router.get("/{device_id}/diagnose")
+async def diagnose_device(device_id: str, db: Session = Depends(get_db),
+                          current_user = Depends(get_current_user)):
+    """연결 진단 — 원인과 해결 방법이 붙은 점검 목록 (`services/diagnosis.py`)."""
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail={"error": "DEVICE_NOT_FOUND", "message": "디바이스를 찾을 수 없습니다"})
+    return {"data": await run_diagnosis(db, device), "ok": True}
 
 
 @router.post("/{device_id}/update/rollback")
