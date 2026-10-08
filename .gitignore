@@ -73,6 +73,7 @@ datasets/staging/
 !.env.example
 *.env
 rf_config.json
+audio_settings.json
 /tools/dev/esp32_relay/secrets.h
 esp32_status.json
 

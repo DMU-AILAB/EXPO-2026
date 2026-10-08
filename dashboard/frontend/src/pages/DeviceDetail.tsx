@@ -652,7 +652,13 @@ function SettingsTab({ device, reload }: Ctx) {
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [thresholdSaved, setThresholdSaved] = useState(false)
+  // 음성 안내 음소거 — null이면 아직 모르는 상태(기기 오프라인 포함)라 토글을 막는다.
+  const [muted, setMuted] = useState<boolean | null>(null)
+  const [muteBusy, setMuteBusy] = useState(false)
+  const [muteError, setMuteError] = useState<string | null>(null)
   const [thresholds, setThresholds] = useState({ person: 0.55, white_cane: 0.55 })
+  // 같은 사람에게 안내를 다시 하기까지 기다리는 시간(초). rois.json의 cooldown과 같은 값.
+  const [cooldown, setCooldown] = useState(10)
   const [deviceSaved, setDeviceSaved] = useState(false)
   const [deviceForm, setDeviceForm] = useState({
     name: device.name,
@@ -662,6 +668,29 @@ function SettingsTab({ device, reload }: Ctx) {
   useEffect(() => {
     setDeviceForm({ name: device.name, location: device.location ?? '' })
   }, [device.id, device.name, device.location])
+
+  useEffect(() => {
+    let cancelled = false
+    setMuted(null)
+    void api.getAudioSettings(device.id)
+      .then((r) => { if (!cancelled) setMuted(r.muted) })
+      .catch(() => { /* 오프라인이면 알 수 없음 상태로 둔다 */ })
+    return () => { cancelled = true }
+  }, [device.id])
+
+  const toggleMuted = async () => {
+    if (muted === null) return
+    setMuteBusy(true)
+    setMuteError(null)
+    try {
+      const r = await api.setAudioSettings(device.id, !muted)
+      setMuted(r.muted)
+    } catch (e) {
+      setMuteError(describe(e))
+    } finally {
+      setMuteBusy(false)
+    }
+  }
 
   const cam: CameraType | undefined = device.cameras[selectedCam]
   const [form, setForm] = useState(() => camFormOf(cam))
@@ -673,7 +702,9 @@ function SettingsTab({ device, reload }: Ctx) {
     if (!cam) return () => { cancelled = true }
     void api.getDetectionParams(device.id, cam.id)
       .then((params: DetectionParams) => {
-        if (!cancelled) setThresholds(params.conf)
+        if (cancelled) return
+        setThresholds(params.conf)
+        setCooldown(params.cooldown)
       })
       .catch((e) => {
         if (!cancelled) setError(describe(e))
@@ -705,7 +736,7 @@ function SettingsTab({ device, reload }: Ctx) {
     if (!cam) return
     setBusy(true); setError(null)
     try {
-      await api.updateDetectionParams(device.id, cam.id, device.etag, { conf: thresholds })
+      await api.updateDetectionParams(device.id, cam.id, device.etag, { conf: thresholds, cooldown })
       setThresholdSaved(true)
       setTimeout(() => setThresholdSaved(false), 2500)
       reload()
@@ -969,6 +1000,32 @@ function SettingsTab({ device, reload }: Ctx) {
                       </div>
                     ))}
                   </div>
+                  <div className="rounded-xl bg-white/75 border border-white/80 px-3.5 py-3 shadow-sm mt-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div>
+                        <p className="text-xs font-bold text-slate-700">안내 쿨다운</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          같은 사람에게 안내를 다시 하기까지 기다리는 시간입니다. 짧을수록 자주 반복됩니다.
+                        </p>
+                      </div>
+                      <span className="rounded-lg bg-[#2c4be0]/10 px-2 py-1 text-sm font-extrabold text-[#2c4be0] tabular-nums">
+                        {cooldown}초
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="60"
+                      step="1"
+                      value={cooldown}
+                      onChange={(e) => setCooldown(Number(e.target.value))}
+                      className="w-full accent-[#2c4be0]"
+                      aria-label="안내 쿨다운(초)"
+                    />
+                    <div className="flex justify-between mt-1 text-[9px] text-slate-400 tabular-nums">
+                      <span>0초</span><span>30초</span><span>60초</span>
+                    </div>
+                  </div>
                   <div className="flex justify-end mt-3">
                     <button
                       onClick={() => void saveThresholds()}
@@ -976,7 +1033,7 @@ function SettingsTab({ device, reload }: Ctx) {
                       className="bg-slate-800 text-white px-4 py-1.5 rounded-xl text-xs font-semibold hover:bg-slate-700 disabled:opacity-50 transition flex items-center gap-1.5"
                     >
                       {busy && <Loader2 className="w-3 h-3 animate-spin" />}
-                      임계값 저장
+                      저장
                     </button>
                   </div>
                 </div>
@@ -987,6 +1044,36 @@ function SettingsTab({ device, reload }: Ctx) {
       </div>
 
       <div className="flex flex-col gap-5">
+        {/* 음성 안내 */}
+        <div className="glass-panel p-5">
+          <h2 className="text-sm font-bold text-slate-700 mb-4 pb-3 border-b border-slate-200/70">음성 안내</h2>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-slate-700">
+                {muted === null ? '상태를 확인할 수 없음' : muted ? '음소거 중' : '소리 켜짐'}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                끄면 안내 음성만 나오지 않습니다. 감지와 기록은 그대로입니다.
+              </p>
+            </div>
+            <button
+              role="switch"
+              aria-checked={muted === false}
+              aria-label="음성 안내 소리"
+              disabled={muted === null || muteBusy}
+              onClick={() => void toggleMuted()}
+              className={`relative w-11 h-6 rounded-full transition shrink-0 disabled:opacity-50 ${
+                muted === false ? 'bg-[#2c4be0]' : 'bg-slate-300'
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                muted === false ? 'translate-x-5' : ''
+              }`} />
+            </button>
+          </div>
+          {muteError && <p className="mt-3 text-xs font-semibold text-red-600">{muteError}</p>}
+        </div>
+
         {/* 재시작 / 전원 */}
         <div className="glass-panel p-5">
           <h2 className="text-sm font-bold text-slate-700 mb-4 pb-3 border-b border-slate-200/70">재시작 / 전원</h2>

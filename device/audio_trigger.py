@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import platform
 import queue
 import shutil
@@ -30,6 +31,21 @@ def _detect_alsa_device() -> str | None:
 
 
 _ALSA_DEVICE = _detect_alsa_device()
+
+# 음소거 설정 — 대시보드가 roi_editor를 거쳐 쓰는 Pi 로컬 런타임 파일(rois.json과 같은 자리).
+# 평면(Pi) vs 중첩(PC) 배치를 판별하는 관용구는 다른 device/ 모듈과 같다.
+_HERE = Path(__file__).parent
+_BASE = _HERE if (_HERE / "runs").is_dir() else _HERE.parent
+AUDIO_SETTINGS_PATH = _BASE / "audio_settings.json"
+
+
+def read_muted(path: Path | None = None) -> bool:
+    """`audio_settings.json`의 muted 값. 파일이 없거나 깨져 있으면 False(소리 남)."""
+    try:
+        data = json.loads((path or AUDIO_SETTINGS_PATH).read_text(encoding="utf-8"))
+        return data.get("muted") is True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +376,14 @@ class AudioPlayer:
     def _worker(self) -> None:
         while True:
             path, on_done = self._queue.get()
+            if read_muted():
+                # 재생만 건너뛴다 — on_done은 호출해야 쿨다운 기산점이 갱신된다.
+                if on_done:
+                    try:
+                        on_done()
+                    except Exception as exc:
+                        print(f"[WARN] AudioPlayer on_done 콜백 오류: {exc}")
+                continue
             with self._lock:
                 self._playing = True
             usb_powered = False
