@@ -937,6 +937,8 @@ def get_diagnose():
         "server": _diagnose.check_server(ident.server_url) if ident and ident.server_url else None,
         "power": _diagnose.read_throttled(),
         "ntp_synchronized": _diagnose.ntp_synchronized(),
+        # 필수 파이썬 패키지 설치 여부 — 푸시 업데이트는 pip를 실행하지 않아 새 패키지가 빠질 수 있다.
+        "python_modules": _diagnose.check_python_modules(),
     }
 
 

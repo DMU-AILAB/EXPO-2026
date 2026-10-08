@@ -578,6 +578,24 @@ Pi가 서버를 스스로 찾아 등록한다(`device/server_discovery.py`·`ser
   (`build_response(url_for=public_url_for)`, `rollout_device(settle_sec=SETTLE_SEC)`에서 두 번 겪었다. 후자는 테스트가
   8초·45초를 진짜로 기다려 4분이 걸렸다). `None`으로 두고 호출 시점에 읽는다.
 
+## Pi 파이썬 의존성 — 선언 · 실제 import · 기기 점검
+
+`bleak`이 기기에 없어 ESP32 BLE 중계가 `"Pi 패키지가 없습니다: bleak"`으로 멈춰 있던 일이 두 겹의 문제였다.
+
+- **푸시 업데이트는 코드만 올리고 pip를 실행하지 않는다.** 선언(`install.sh`·Makefile·`requirements-pi.txt`)이 맞아도, 새 기능이
+  패키지를 추가하면 푸시로 갱신된 기기에는 설치되지 않고 **그 기능만 조용히** 멈춘다(`esp32_relay`가 `bleak`을 지연 import해서
+  탐지·안내는 멀쩡해 눈에 띄지 않는다). 기기에서 `python3 -m pip install --break-system-packages <패키지>`(Pi 파이썬은 3.13) 또는
+  `install.sh` 재실행이 필요하다.
+- **기기가 스스로 점검한다**: `device/diagnose.py`의 `REQUIRED_MODULES`를 `find_spec`으로 찾아(import하지 않는다 — cv2·
+  ai_edge_litert는 느리고 메모리를 쓴다) `GET /api/diagnose`의 `python_modules`로 낸다. 대시보드 "연결 진단"의 "필수 파이썬 패키지"가
+  누락을 **경고**로 보이고 설치 명령을 알려 준다. 구버전 기기는 필드가 없어 `unknown`(문제라고 단정하지 않는다).
+  `GET /api/device/status`의 스키마는 늘리지 않는다.
+- **선언 목록끼리와 실제 코드를 정적으로 대조한다**(`tests/test_pi_dependencies.py`): `REQUIRED_MODULES` = `install.sh` PIP_PACKAGES =
+  `requirements-pi.txt` = Makefile `deps`·`deps-roi-editor`. 그리고 Pi 런타임 코드가 import하는 모든 서드파티 모듈이 필수 목록이나
+  `OPTIONAL`(이유 명시: picamera2는 apt, pygame·torch는 폴백 등)에 분류돼 있어야 한다 — **새 서드파티 import를 추가하고 설치 목록에
+  넣지 않으면 테스트가 실패한다.** (`requirements-pi.txt`에는 `gpiozero`·`lgpio`가 빠져 있었다.)
+- 코어 파일 일부는 UTF-8 BOM이 있어 AST로 읽을 때 `utf-8-sig`를 써야 한다.
+
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
 `tests/test_pipeline_integration.py`가 **프레임 루프를 끝까지 실제로 돌리는 유일한

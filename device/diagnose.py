@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import socket
 import subprocess
 import time
@@ -21,7 +22,50 @@ import urllib.request
 from typing import Callable, Optional
 from urllib.parse import urlsplit
 
-__all__ = ["parse_throttled", "read_throttled", "check_server", "ntp_synchronized"]
+__all__ = ["parse_throttled", "read_throttled", "check_server", "ntp_synchronized",
+           "REQUIRED_MODULES", "check_python_modules"]
+
+# 기기에 **설치돼 있어야 하는 파이썬 패키지** — import 이름 → (pip 패키지, 없으면 멈추는 기능).
+# ★ `deploy/install.sh`의 PIP_PACKAGES와 같은 집합이어야 한다(`tests/test_pi_dependencies.py`가 대조하고, 코드가
+# import하는 서드파티 모듈이 여기나 선택 목록에 빠져 있으면 실패한다).
+# 이 점검이 있는 이유: **푸시 업데이트는 코드만 올리고 pip를 실행하지 않는다.** 새 기능이 패키지를 추가해도(예: ESP32
+# 중계의 bleak) 푸시로 갱신된 기기에는 설치되지 않고, 그 기능만 조용히 "Pi 패키지가 없습니다"로 멈춘다.
+REQUIRED_MODULES: dict[str, tuple[str, str]] = {
+    "ai_edge_litert": ("ai-edge-litert", "CPU TFLite 추론"),
+    "cv2": ("opencv-python-headless", "카메라·영상 처리"),
+    "numpy": ("numpy", "추론·영상 처리"),
+    "shapely": ("shapely", "ROI 판정"),
+    "PIL": ("pillow", "한글 오버레이"),
+    "spidev": ("spidev", "RF 수신(SI4432)"),
+    "gpiozero": ("gpiozero", "버튼·LED·팬·부저"),
+    "lgpio": ("lgpio", "GPIO 백엔드"),
+    "dbus_next": ("dbus-next", "BLE Wi-Fi 페어링"),
+    "bleak": ("bleak", "ESP32 BLE 중계"),
+    "fastapi": ("fastapi", "Pi API(:5000)"),
+    "uvicorn": ("uvicorn[standard]", "Pi API(:5000)"),
+    "multipart": ("python-multipart", "오디오 업로드"),
+}
+# 패키지가 import 이름을 바꾼 경우의 대체 이름 — 하나라도 있으면 설치된 것이다.
+_ALIASES = {"multipart": ("python_multipart",)}
+
+
+def check_python_modules(find_spec: Callable = importlib.util.find_spec) -> dict:
+    """필수 모듈 중 **설치되지 않은 것**을 낸다: `{"checked": N, "missing": [{module, package, feature}]}`.
+
+    import하지 않고 `find_spec`으로만 찾는다 — cv2·ai_edge_litert를 불러오면 느리고 메모리를 쓴다.
+    """
+    def present(name: str) -> bool:
+        try:
+            return find_spec(name) is not None
+        except (ImportError, ValueError, AttributeError):
+            return False
+
+    missing = []
+    for module, (package, feature) in REQUIRED_MODULES.items():
+        if not any(present(n) for n in (module, *_ALIASES.get(module, ()))):
+            missing.append({"module": module, "package": package, "feature": feature})
+    return {"checked": len(REQUIRED_MODULES), "missing": missing}
+
 
 # vcgencmd get_throttled 비트 (라즈베리파이 공식 문서)
 _NOW = {0: "undervoltage", 1: "freq_capped", 2: "throttled", 3: "soft_temp_limit"}

@@ -230,5 +230,23 @@ async def run_diagnosis(db: Session, device: Device) -> dict:
         checks.append(_check("clock", "시계(NTP)", WARN, "동기화되지 않았습니다",
                              "이벤트 시각이 어긋나 통계가 엉킬 수 있습니다 — make setup-ntp"))
 
+    mods = (diag or {}).get("python_modules") if diag else None
+    if not reachable:
+        checks.append(_unreachable("deps", "필수 파이썬 패키지"))
+    elif not isinstance(mods, dict) or not isinstance(mods.get("missing"), list):
+        # 구버전 기기는 이 필드가 없다 — 없다고 해서 문제라고 단정하지 않는다
+        checks.append(_check("deps", "필수 파이썬 패키지", UNKNOWN,
+                             "구버전 기기라 확인할 수 없습니다 — 코드를 업데이트하세요"))
+    elif not mods["missing"]:
+        checks.append(_check("deps", "필수 파이썬 패키지", OK, f"{mods.get('checked', '?')}개 모두 설치됨"))
+    else:
+        names = ", ".join(f"{m.get('package', m.get('module'))}({m.get('feature', '?')})" for m in mods["missing"])
+        pkgs = " ".join(str(m.get("package", m.get("module"))) for m in mods["missing"])
+        checks.append(_check(
+            "deps", "필수 파이썬 패키지", WARN, f"설치되지 않음: {names}",
+            f"기기에서 `python3 -m pip install --break-system-packages {pkgs}` 를 실행하거나 install.sh를 다시 "
+            "실행하세요. 코드 푸시 업데이트는 패키지를 설치하지 않습니다 — 새 기능이 패키지를 추가하면 이렇게 "
+            "빠질 수 있습니다."))
+
     overall = max((c["status"] for c in checks), key=_ORDER.__getitem__)
     return {"overall": overall, "checks": checks, "checked_at": utcnow().isoformat(timespec="seconds") + "Z"}

@@ -589,6 +589,9 @@ def test_diagnose_endpoint_reports_server_power_and_clock(client, monkeypatch):
 
     client.post("/api/identity", json={"device_id": "pi-01", "api_key": "k", "server_url": "http://pc:8001"})
     assert client.get("/api/diagnose").json()["server"]["url"] == "http://pc:8001"
+    mods = client.get("/api/diagnose").json()["python_modules"]       # 푸시 업데이트가 설치하지 않는 패키지의 누락을 알린다
+    assert mods["checked"] >= 10 and isinstance(mods["missing"], list)
+    assert all({"module", "package", "feature"} <= set(m) for m in mods["missing"])
     assert "api_key" not in client.get("/api/diagnose").text           # 키는 나가지 않는다
 
 

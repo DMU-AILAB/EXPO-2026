@@ -196,3 +196,73 @@ def test_temperature_thresholds(client, auth_headers, db_session):
 
 def test_diagnose_unknown_device_is_404(client, auth_headers):
     assert client.get("/api/devices/ghost/diagnose", headers=auth_headers).status_code == 404
+
+
+# --- 필수 파이썬 패키지 ---------------------------------------------------------------------
+# 푸시 업데이트는 코드만 올리고 pip를 실행하지 않는다 — 새 기능이 패키지를 추가하면 기기에서 그 기능만 조용히 멈춘다
+# (실제로 bleak이 빠져 ESP32 중계가 "Pi 패키지가 없습니다"로 멈춰 있었다).
+
+def _with_modules(modules):
+    respx.get(f"{PI}/api/diagnose").mock(return_value=httpx.Response(200, json={
+        "server": GOOD_SERVER, "ntp_synchronized": True, "power": None, "python_modules": modules}))
+
+
+@respx.mock
+def test_deps_ok_when_nothing_is_missing(client, auth_headers, db_session):
+    _register(client, auth_headers, db_session)
+    _healthy_pi()
+    _with_modules({"checked": 13, "missing": []})
+    data, c = _diag(client, auth_headers)
+    assert c["deps"]["status"] == "ok" and "13개" in c["deps"]["detail"]
+
+
+@respx.mock
+def test_missing_package_is_a_warning_with_the_exact_fix(client, auth_headers, db_session):
+    _register(client, auth_headers, db_session)
+    _healthy_pi()
+    _with_modules({"checked": 13, "missing": [{"module": "bleak", "package": "bleak", "feature": "ESP32 BLE 중계"}]})
+    data, c = _diag(client, auth_headers)
+    assert c["deps"]["status"] == "warn"
+    assert "bleak" in c["deps"]["detail"] and "ESP32 BLE 중계" in c["deps"]["detail"]
+    assert "pip install --break-system-packages bleak" in c["deps"]["fix"]
+    assert "푸시 업데이트" in c["deps"]["fix"]                 # 왜 빠졌는지도 알려 준다
+    assert data["overall"] in ("warn", "fail")
+
+
+@respx.mock
+def test_multiple_missing_packages_are_all_listed_in_one_command(client, auth_headers, db_session):
+    _register(client, auth_headers, db_session)
+    _healthy_pi()
+    _with_modules({"checked": 13, "missing": [
+        {"module": "bleak", "package": "bleak", "feature": "ESP32 BLE 중계"},
+        {"module": "multipart", "package": "python-multipart", "feature": "오디오 업로드"}]})
+    _, c = _diag(client, auth_headers)
+    assert "bleak python-multipart" in c["deps"]["fix"]
+
+
+@respx.mock
+def test_old_device_without_the_field_is_unknown_not_failed(client, auth_headers, db_session):
+    _register(client, auth_headers, db_session)
+    _healthy_pi()                                           # python_modules 필드가 없는 구버전 응답
+    _, c = _diag(client, auth_headers)
+    assert c["deps"]["status"] == "unknown" and "업데이트" in c["deps"]["detail"]
+
+
+@respx.mock
+def test_malformed_modules_field_does_not_break_diagnosis(client, auth_headers, db_session):
+    _register(client, auth_headers, db_session)
+    _healthy_pi()
+    for bad in ("x", [], {"missing": "bleak"}, {"missing": None}):
+        _with_modules(bad)
+        _, c = _diag(client, auth_headers)
+        assert c["deps"]["status"] == "unknown", bad
+
+
+@respx.mock
+def test_unreachable_device_leaves_deps_unknown(client, auth_headers, db_session):
+    _register(client, auth_headers, db_session)
+    respx.get(f"{PI}/api/version").mock(side_effect=httpx.ConnectError("down"))
+    for path in ("update/status", "identity", "outbox", "diagnose", "metrics", "device/status"):
+        respx.get(f"{PI}/api/{path}").mock(side_effect=httpx.ConnectError("down"))
+    _, c = _diag(client, auth_headers)
+    assert c["deps"]["status"] == "unknown"
