@@ -218,6 +218,8 @@ Write-Step '백엔드 환경 (venv · 의존성)'
 $Venv   = Join-Path $Backend '.venv'
 $VenvPy = Join-Path $Venv 'Scripts\python.exe'
 $VenvPyW = Join-Path $Venv 'Scripts\pythonw.exe'
+$RunServer = Join-Path $Backend 'run_server.py'
+$LogFile = Join-Path $Backend 'data\logs\server.log'
 if (-not (Test-Path $VenvPy)) { Act "venv 생성: $Venv" { & $Python -m venv $Venv; if ($LASTEXITCODE -ne 0) { Fail 'venv를 만들지 못했습니다' } } }
 else { Write-Info "venv 있음: $Venv" }
 Act 'pip install -r requirements.txt' {
@@ -287,15 +289,17 @@ if (Test-Health) {
 if ($NoAutostart) {
     Write-Info '-NoAutostart — 로그온 시 자동 시작을 만들지 않습니다'
     if (-not $alreadyUp) {
-        Act "서버 시작 (이 창을 닫아도 계속 실행): pythonw -m uvicorn app.main:app --port $Port" {
+        Act "서버 시작 (이 창을 닫아도 계속 실행): pythonw run_server.py --port $Port" {
             Start-Process -FilePath $VenvPyW -WorkingDirectory $Backend -WindowStyle Hidden `
-                -ArgumentList @('-X', 'utf8', '-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', "$Port")
+                -ArgumentList @('-X', 'utf8', "`"$RunServer`"", '--port', "$Port", '--log-file', "`"$LogFile`"")
         }
     }
 } else {
     # --reload/--workers 없음: 하트비트 버퍼와 APScheduler가 한 프로세스 안에 있다.
+    # ★ `pythonw -m uvicorn`을 직접 띄우면 안 된다: pythonw는 콘솔이 없어 sys.stderr가 None이고 uvicorn의 로그 설정이
+    # 시작 직후 죽는다(창이 숨겨져 있어 아무 메시지도 없이 서버가 안 뜬다). run_server.py가 출력을 로그 파일로 돌린다.
     # -X utf8: 작업 스케줄러는 이 세션의 환경변수를 물려받지 않으므로 인자로 UTF-8 모드를 켠다.
-    $uvArgs = "-X utf8 -m uvicorn app.main:app --host 0.0.0.0 --port $Port"
+    $uvArgs = "-X utf8 `"$RunServer`" --port $Port --log-file `"$LogFile`""
     Act "작업 스케줄러 등록: $TaskName (로그온 시, 숨김)" {
         $action    = New-ScheduledTaskAction -Execute $VenvPyW -Argument $uvArgs -WorkingDirectory $Backend
         $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -325,7 +329,12 @@ else {
     Write-Step '서버 응답 대기 (최대 60초)'
     $up = $false
     for ($i = 0; $i -lt 60; $i++) { if (Test-Health) { $up = $true; break }; Start-Sleep -Seconds 1 }
-    if (-not $up) { Fail "60초 안에 서버가 응답하지 않습니다. 직접 확인: cd $Backend; .venv\Scripts\python.exe -X utf8 -m uvicorn app.main:app --port $Port" }
+    if (-not $up) {
+        Write-Warn "서버 로그($LogFile)의 마지막 줄:"
+        if (Test-Path $LogFile) { Get-Content $LogFile -Tail 25 -Encoding UTF8 | ForEach-Object { Write-Host "    $_" } }
+        else { Write-Info '(로그 파일이 없습니다 — 서버 프로세스가 시작되지 못했습니다. 작업 스케줄러에서 VisionGuide Dashboard의 마지막 실행 결과를 확인하세요)' }
+        Fail "60초 안에 서버가 응답하지 않습니다. 콘솔에서 직접 확인: cd $Backend; .venv\Scripts\python.exe run_server.py --port $Port"
+    }
     Write-Ok "서버 응답 확인: http://localhost:$Port"
 }
 $url = "http://$(if ($lan) { $lan } else { 'localhost' }):$Port"
@@ -346,6 +355,7 @@ if ($EnvResult -and $EnvResult.admin_password) {
 Write-Host ''
 Write-Host '  다음 단계 : 대시보드 로그인 -> "기기 추가" -> "새 기기 설치" 명령을 Pi에 붙여 넣기'
 if (-not $NoAutostart) { Write-Host '  자동 시작 : 이 PC에 로그온할 때 서버가 시작됩니다.' }
+Write-Host "  서버 로그 : $LogFile"
 Write-Warn '이 PC가 절전·최대 절전에 들어가면 서버가 멈추고 기기 연결이 끊깁니다 (전원 옵션에서 끄세요).'
 Write-Host ''
 

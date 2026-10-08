@@ -512,6 +512,15 @@ Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 �
   없이 띄운다(하트비트 버퍼·APScheduler가 한 프로세스). 변경하는 일은 전부 `Act`를 거쳐 `-DryRun`이 막는다.
   `tests/test_server_setup_scripts.py`가 이를 고정한다.
 
+- **★ 서버를 `pythonw -m uvicorn`으로 직접 띄우면 안 된다 — `dashboard/backend/run_server.py`를 쓴다.** `pythonw`는 콘솔이 없어
+  `sys.stdout`/`sys.stderr`가 `None`이고 uvicorn의 로그 설정이 시작 직후 죽는다. 창이 숨겨져 있어 **아무 메시지도 없이 서버가 안 떠서**
+  새 Windows PC의 setup-server가 "60초 안에 응답하지 않습니다"로 실패했다(같은 앱을 `python.exe`로 띄우면 정상 — 실제 백엔드로 재현).
+  `run_server.py --log-file`이 stdout·stderr를 파일(`dashboard/backend/data/logs/server.log`, 5MB 넘으면 `.1`로 회전)로 돌려
+  시작 실패의 트레이스백도 거기 남는다. 인자 없이 쓰면 콘솔 그대로라 개발 중에는 평소와 같다. 설치 스크립트는 응답이 없을 때 이 로그의
+  마지막 25줄을 화면에 보여 준다 — 원인이 안 보여 추측해야 했던 일을 막는다. 리눅스에서도 `sys.stdout = sys.stderr = None`으로 재현해
+  `tests/test_run_server.py`가 고정한다. 같은 조건의 실제 Windows 검증은 venv → `pip install -r` → `.env`/DB → `pythonw run_server.py` →
+  `GET /`까지 임시 폴더에서 돌려 확인했다(관리자 권한이 필요한 방화벽·작업 스케줄러만 제외).
+
 ## Pi 자동 발견 · 등록 · 승인 — 설계 결정
 
 Pi가 서버를 스스로 찾아 등록한다(`device/server_discovery.py`·`server_join.py` ↔ 서버 `discovery_responder.py`·
