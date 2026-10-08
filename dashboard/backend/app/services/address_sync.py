@@ -7,6 +7,12 @@
 키로 같은 신원을 다시 보내면 되고(`api_key_hash`도 그대로), Pi는 키가 맞으니 인수로 취급하지
 않는다(로그·부저 없음). 신원 재주입(`/provision`)은 키를 바꾸므로 이 용도로 쓰지 않는다.
 
+★ **보내기 전에 소유를 증명한다**(`PiClient.prove_identity` — 키를 보내지 않는 챌린지-응답). Pi의
+`POST /api/identity`는 키가 틀려도 **덮어쓰므로**, 증명 없이 보내면 다른 서버로 **승인 이동된 기기**를 이전 서버가
+도로 빼앗는다. 실기기 실험에서 실제로 일어났다: 승인으로 A→B로 옮겨진 기기를 A의 이 점검이 약 40초 만에 되찾고, 이어서
+B가 되찾는 **핑퐁**이 이어져 기기에 인수 경고와 부저가 반복됐다(두 서버가 같은 `pi-<ip>` id를 쓰므로 `device_id` 비교로는
+못 막는다). 증명이 실패하면 아무것도 보내지 않고 건너뛴다. 증명 엔드포인트가 없는 구버전(404)만 예전 동작을 유지한다.
+
 자동으로 건드리는 범위는 **이미 신원이 있는 기기**뿐이다. 신원이 없는 기기를 인수하는 것은
 다른 서버에서 쓰는 기기를 빼앗을 수 있어 사람이 누른다(진단 탭이 안내).
 """
@@ -76,6 +82,20 @@ async def refresh_device_address(db: Session, device: Device) -> dict:
     out["previous"] = current
     if current == expected:
         out["ok"] = True
+        return out
+
+    # 보내기 전에 이 기기가 정말 우리 키를 아는지 증명한다 — 다른 서버로 옮겨 간 기기를 빼앗지 않으려는 것.
+    try:
+        owned = await client.prove_identity(device.control_key)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            owned = None            # 증명 엔드포인트가 없는 구버전 — 예전 동작(키가 틀리면 Pi가 인수로 기록·부저)
+        else:
+            out["error"] = f"기기의 소속을 확인하지 못했습니다: {_detail(exc)}"
+            return out
+    if owned is False:
+        out.update(skipped=True, error="이 기기는 다른 서버 소속입니다(키가 맞지 않음) — 서버 주소를 바꾸지 않았습니다. "
+                                       "이 서버로 가져오려면 기기가 올리는 승인 대기에서 승인하세요")
         return out
 
     try:
