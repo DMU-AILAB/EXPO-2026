@@ -32,7 +32,10 @@ router = APIRouter(prefix="/api/scan", tags=["scan"])
 _scan_results: Dict[str, Dict[str, Any]] = {}
 
 # 공유기 NAT 테이블 병목과 MJPEG 스트림 간섭을 피하려고 동시 접속을 묶는다.
-_CONCURRENCY = 15
+# 15 이상이면 /24 스캔이 살아 있는 기기를 **무작위로 놓친다**(실측, Wi-Fi + WSL 미러 네트워크:
+# 기기 2대 중 1대만 찾은 스캔이 반복됐다). 8에서는 같은 조건으로 3회 모두 2대를 찾았다
+# (/24 약 33초). 속도를 올리려고 키우기 전에 같은 방식으로 재현율부터 잴 것.
+_CONCURRENCY = 8
 
 
 class ScanNetworkRequest(BaseModel):
