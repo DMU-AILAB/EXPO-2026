@@ -315,6 +315,13 @@ Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세�
   → **서버 연동을 쓰려면 `visionguide-roi-editor` 서비스를 켜 두어야 한다.**
 - **신원의 주인은 서버다.** `device_id`·`api_key`는 서버가 발급해 `POST /api/identity`로
   심는다. 기기가 자기 id를 지어내면 서버 것과 두 체계가 생긴다.
+  - **기존 키 없이도 덮어쓸 수 있다(인수).** 서버를 바꾸거나 DB를 잃어 키가 없어진
+    기기를 대시보드에서 바로 다시 등록하기 위해서다. 보호는 대시보드 관리자 로그인과
+    **망이 통제된다는 전제**에 둔다 — 포트 5000은 LAN에서 직접 호출되므로 공용 망에서는
+    부적합하다(그 경우 공용 비밀값 등 별도 증명이 필요). 대신 키가 맞지 않는 덮어쓰기는
+    `[WARN] 기기 신원 인수` 로그와 부저 1회(0.8초)로 알린다 — `roi_editor`가
+    `takeover.flag`를 남기면 GPIO 소유 프로세스 `gpio_controls`가 집어가 울린다.
+    `DELETE /api/identity`는 여전히 키가 필요하다.
 - **이벤트는 보관하고 하트비트는 버린다.** 못 보낸 이벤트는 outbox에 남지만(나중에라도
   올라가야 의미가 있다), 5분 전의 CPU 온도는 쓸모가 없어 다음 주기에 최신값으로 대체한다.
 - **`GET /api/device/status`의 응답 스키마를 늘리지 말 것.** 백엔드의 기기 탐색(명세 §12)이
@@ -376,6 +383,36 @@ Pi가 여러 대로 흩어지면서 생긴 경로다. **백엔드 기능명세�
     동안은 비콘을 멈춰야 한다.
   - **Web Bluetooth는 `localhost` 또는 HTTPS에서만** 동작한다. 다른 PC에서 LAN IP로 대시보드를
     열면 쓸 수 없다(HTTPS 구성은 범위 밖).
+
+## 푸시 업데이트 (대시보드 → Pi 코드 배포) — 설계 결정
+
+SSH 키·sudo 비밀번호 없이 대시보드 버튼 한 번으로 선택한 기기들에 코드를 올린다.
+`make sync`를 대체하는 게 아니라 **편의 경로**다(처음 한 번과 sudoers가 없는 기기는
+여전히 `make sync`/`make install-service`).
+
+- **번들은 `Makefile`의 `DEPLOY_PY`를 그대로 읽어 만든다**(`dashboard/backend/app/services/
+  bundle_builder.py`) — 목록을 복제하지 않으므로 `make sync`와 어긋날 수 없다. 배치는 Pi의
+  평면 배치(`device/*.py`는 최상위, `roi_editor/`, `simulator/roi_manager.py`). `bundle_id`는
+  **코드 파일의 내용 해시**라 같은 코드면 언제나 같고, 기기가 보고한 값과 비교해 최신 여부를 안다.
+  모델 가중치는 `include_models`일 때만 싣는다(28MB 안팎).
+- **Pi 쪽은 `device/self_update.py`(`POST /api/update`)** — 번들을 받아 실행하는 경로라
+  `X-Device-Key`를 요구하고, 적용 전에 ① 경로 검증(절대경로·`..`·링크 거부) ② **허용 목록**
+  (런타임 파일 `rois.json`·`camera_config.json`·`device_identity.json`·`recordings/`·`*.db`는
+  번들에 있어도 무시) ③ manifest sha256 ④ 문법 검사 + **`roi_editor/server.py --help` 스모크**를
+  모두 통과해야 한다. 하나라도 실패하면 **기기는 그대로**다.
+  - 스모크가 필요한 이유: 재시작하고 나면 `roi_editor` 자신이 죽어 있어 **스스로 롤백할 수
+    없다.** 임포트가 깨진 번들은 재시작 전에 거부해야 한다.
+  - 교체는 `.update_backup/`에 옮긴 뒤 `os.replace`(원자적). `POST /api/update/rollback`이 되돌린다.
+  - 응답을 먼저 돌려주고 1초 뒤 `device`·`controls`·`roi-editor` 순으로 재시작한다(자신이 마지막).
+  - **개발 트리(`device/` 디렉터리가 있는 배치)에는 적용을 거부한다** — 저장소를 덮어쓰므로.
+- **보안 전제**: `POST /api/identity`가 키 없이 덮어쓰기(인수)를 허용하므로 이 키 검사는
+  "**망이 통제된다**"는 가정 위에 있다. 같은 LAN의 누군가가 인수 → 키 획득 → 코드 업로드로
+  이어질 수 있다. 공용 망에서 쓰려면 인수에 별도 증명(물리 버튼·공용 비밀값)을 먼저 넣을 것.
+- 일괄 업데이트(`POST /api/devices/update`)는 **기기별 결과를 따로** 돌려주고 한 대가 실패해도
+  나머지는 계속한다. 기기들은 독립이라 동시에 진행하고, 각 기기가 새 `bundle_id`로 돌아올
+  때까지(최대 60초) 기다려 `came_back`을 알린다.
+- ★ `GET /api/devices/update-info`·`/update`는 `/{device_id}`보다 **먼저 선언**해야 한다
+  (아니면 경로 변수로 먹힌다).
 
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
@@ -715,7 +752,7 @@ make check-time PI="192.168.0.101 192.168.0.102 192.168.0.103"
 
 | 변수 | 파일 | 설명 |
 |------|------|------|
-| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
+| `DEPLOY_PY` | `camera_live_pi.py` · `detect.py` · `edgetpu_infer.py` · `audio_trigger.py` · `announcement_router.py` · `kics_protocol.py` · `si4432_radio.py` · `rf_audio_trigger.py` · `rf_group.py` · `rf_test_mode.py` · `rf_monitor.py` · `rf_led_test.py` · `rf_sweep.py` · `gpio_controls.py` · `ble_provisioning.py` · `fan_controller.py` · `yolo_postprocess.py` · `simple_tracker.py` · `cane_person_assoc.py` · `pedestrian_entity.py` · `gate_chain.py` · `replay_engine.py` · `device_identity.py` · `event_logger.py` · `device_status.py` · `device_metrics.py` · `foot_traffic_counter.py` · `camera_config.py` · `detection_events.py` · `fp_hotspots.py` · `static_mask.py` · `privacy_mask.py` · `ble_beacon.py` · `self_update.py` | Pi에 배포할 Python 소스(개수는 `Makefile`이 기준). 이 표는 손으로 관리하면 반드시 낡는다(실제로 12개만 적혀 있었다) — `Makefile`이 단일 출처이고 `tests/test_deploy_list.py`가 둘의 일치를 검증한다 |
 | `DEPLOY_MODEL` | `best_int8.tflite` | TFLite INT8 추론 모델 |
 
 `camera_config.json`(다중 카메라 프로필)과 `rois.json`(ROI/제외구역)은 `rsync` 배포 대상이 아니다 —

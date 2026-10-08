@@ -60,8 +60,9 @@ from device_metrics import read_metrics  # noqa: E402
 from device_status import read_status  # noqa: E402
 from device_identity import (  # noqa: E402
     APP_VERSION, DeviceIdentity, clear_identity,
-    default_path, load_identity, save_identity,
+    default_path, load_identity, save_identity, signal_takeover,
 )
+import self_update  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths (overridden by CLI args at startup)
@@ -818,6 +819,76 @@ def post_system_reboot(request: Request, confirm: bool = False):
     return {"ok": True, "rebooting_in_sec": 1}
 
 
+# ---------------------------------------------------------------------------
+# 푸시 업데이트 — 대시보드가 보낸 코드 번들을 적용한다(`device/self_update.py`).
+#
+# SSH 없이 대시보드 버튼 한 번으로 코드를 올리기 위한 경로다. **코드를 받아 실행하는
+# 경로**라 `_require_device_key`로 막고, 적용 전에 경로·허용 목록·sha256·문법·임포트
+# 스모크를 모두 통과해야 한다(검증은 `self_update`가 한다). 인수(`/api/identity`)가
+# 키 없이 열려 있으므로 이 키 검사는 "망이 통제된다"는 전제 위에 있다.
+# ---------------------------------------------------------------------------
+
+update_dest = _ROOT                     # Pi: ~/visionguide (평면 배치)
+_MAX_UPDATE_BYTES = 200 * 1024 * 1024
+# 이 순서가 중요하다 — roi_editor 자신이 마지막이어야 앞의 재시작 호출이 끝까지 간다.
+_UPDATE_RESTART_UNITS = ("visionguide-device", "visionguide-controls", "visionguide-roi-editor")
+
+
+def _require_deployed_layout() -> None:
+    """저장소(PC 개발 트리)에는 적용하지 않는다 — 번들이 소스를 덮어쓰게 된다."""
+    if (Path(update_dest) / "device").is_dir():
+        raise HTTPException(409, "개발 트리에는 업데이트를 적용하지 않습니다 (기기 배치에서만 동작)")
+
+
+def _schedule_update_restart() -> None:
+    """응답을 먼저 돌려주고 서비스를 재시작한다 — roi_editor 자신도 대상이라 즉시 죽으면
+    호출자는 연결 리셋만 보고 성공인지 구분할 수 없다."""
+    def _run() -> None:
+        for unit in _UPDATE_RESTART_UNITS:
+            try:
+                subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "restart", unit],
+                               capture_output=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                print(f"[WARN] 업데이트 후 {unit} 재시작 실패: {exc}")
+    threading.Timer(1.0, _run).start()
+
+
+@app.get("/api/update/status")
+def get_update_status():
+    return {"bundle_id": self_update.read_bundle_version(update_dest),
+            "has_backup": self_update.has_backup(update_dest)}
+
+
+@app.post("/api/update")
+def post_update(request: Request, file: UploadFile = File(...), include_models: bool = False):
+    _require_device_key(request)
+    _require_deployed_layout()
+    data = file.file.read(_MAX_UPDATE_BYTES + 1)
+    if len(data) > _MAX_UPDATE_BYTES:
+        raise HTTPException(413, "번들이 너무 큽니다")
+    try:
+        result = self_update.apply_bundle(data, update_dest, include_models=include_models)
+    except self_update.UpdateError as exc:
+        print(f"[WARN] 업데이트 거부: {exc}")
+        raise HTTPException(422, str(exc)) from exc
+    print(f"[INFO] 원격 업데이트 적용: {result['bundle_id']} ({result['applied']}개), 1초 후 재시작")
+    _schedule_update_restart()
+    return {"ok": True, "restarting": True, **result}
+
+
+@app.post("/api/update/rollback")
+def post_update_rollback(request: Request):
+    _require_device_key(request)
+    _require_deployed_layout()
+    try:
+        result = self_update.rollback(update_dest)
+    except self_update.UpdateError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    print(f"[INFO] 원격 요청으로 업데이트 롤백: {result}, 1초 후 재시작")
+    _schedule_update_restart()
+    return {"ok": True, "restarting": True, **result}
+
+
 @app.get("/api/metrics")
 def get_metrics():
     """카메라별 런타임 지표(추론 시간·프레임 시간·스트리밍 여부).
@@ -880,14 +951,16 @@ def get_identity():
 def post_identity(req: IdentityIn, request: Request):
     """서버가 등록 시 발급한 신원을 심는다.
 
-    미등록 기기는 네트워크 검색 후 등록할 수 있고, 이미 등록된 기기는 기존
-    `X-Device-Key`로만 덮어쓸 수 있다. 등록 후 제어 요청은 계속 키로 보호한다.
+    이미 신원이 있어도 **기존 키 없이 덮어쓸 수 있다**(인수) — 서버를 바꾸거나 DB를
+    잃어 키가 없어진 기기를 대시보드에서 바로 다시 등록하기 위해서다. 대신 키가 맞지
+    않는 덮어쓰기는 **로그에 남기고 부저로 알린다**. 보호는 대시보드의 관리자 로그인과
+    망이 통제된다는 전제에 있다.
     """
     current = load_identity(identity_path)
+    takeover = False
     if current is not None:
         presented = request.headers.get("x-device-key", "")
-        if not presented or not hmac.compare_digest(presented, current.api_key):
-            raise HTTPException(status_code=401, detail="기존 device key가 일치하지 않습니다")
+        takeover = not (presented and hmac.compare_digest(presented, current.api_key))
 
     ident = DeviceIdentity(
         device_id=req.device_id.strip(), api_key=req.api_key.strip(),
@@ -900,6 +973,12 @@ def post_identity(req: IdentityIn, request: Request):
         save_identity(identity_path, ident)
     except OSError as exc:
         raise HTTPException(500, f"신원 저장 실패: {exc}") from exc
+    if takeover:
+        caller = request.client.host if request.client else "?"
+        print(f"[WARN] 기기 신원 인수: {current.device_id} -> {ident.device_id}, "
+              f"서버 {current.server_url or '(미지정)'} -> {ident.server_url or '(미지정)'} "
+              f"(요청 {caller}, 기존 키 없음)")
+        signal_takeover(identity_path.parent)
     print(f"[INFO] 기기 신원 등록: {ident.device_id} -> {ident.server_url or '(서버 미지정)'}")
     return {"ok": True, "device_id": ident.device_id, "usable": ident.is_usable()}
 

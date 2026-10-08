@@ -191,12 +191,39 @@ def test_identity_bootstrap_does_not_require_pairing_token(client):
     assert registered.status_code == 200
     assert registered.json()["usable"] is True
 
+    # 기존 키 없이도 덮어쓸 수 있다(인수) — 서버를 바꾸거나 DB를 잃은 기기를 다시 등록한다.
     overwritten = client.post("/api/identity", json={**payload, "device_id": "pi-02"})
-    assert overwritten.status_code == 401
-    assert client.get("/api/identity").json()["device_id"] == "pi-01"
+    assert overwritten.status_code == 200
+    assert client.get("/api/identity").json()["device_id"] == "pi-02"
 
 
-def test_identity_reprovision_and_delete_require_current_device_key(client, tmp_path):
+def test_identity_takeover_leaves_signal_and_log(client, tmp_path, capsys):
+    base = {"device_id": "pi-01", "api_key": "old-key", "server_url": "http://pc:8000"}
+    assert client.post("/api/identity", json=base).status_code == 200
+    # 최초 등록은 인수가 아니다
+    assert not (tmp_path / "takeover.flag").exists()
+
+    # 올바른 키로 다시 심는 것도 인수가 아니다
+    ok = client.post("/api/identity", json={**base, "api_key": "k2"},
+                     headers={"X-Device-Key": "old-key"})
+    assert ok.status_code == 200
+    assert not (tmp_path / "takeover.flag").exists()
+
+    # 키 없이 덮어쓰면 인수 — 신호 파일과 로그가 남는다
+    taken = client.post("/api/identity", json={**base, "device_id": "pi-02", "api_key": "k3"})
+    assert taken.status_code == 200
+    assert (tmp_path / "takeover.flag").exists()
+    assert "기기 신원 인수" in capsys.readouterr().out
+
+    # 틀린 키도 인수로 취급한다
+    (tmp_path / "takeover.flag").unlink()
+    wrong = client.post("/api/identity", json={**base, "api_key": "k4"},
+                        headers={"X-Device-Key": "nope"})
+    assert wrong.status_code == 200
+    assert (tmp_path / "takeover.flag").exists()
+
+
+def test_identity_delete_requires_current_device_key(client, tmp_path):
     initial = {
         "device_id": "pi-01",
         "api_key": "old-key",
@@ -205,7 +232,6 @@ def test_identity_reprovision_and_delete_require_current_device_key(client, tmp_
     assert client.post("/api/identity", json=initial).status_code == 200
 
     replacement = {**initial, "device_id": "pi-02", "api_key": "new-key"}
-    assert client.post("/api/identity", json=replacement).status_code == 401
     response = client.post("/api/identity", json=replacement,
                            headers={"X-Device-Key": "old-key"})
     assert response.status_code == 200
@@ -395,3 +421,82 @@ def test_put_rf_detection_rejects_out_of_range(client, tmp_path):
         assert client.put("/api/rf/detection", json={"rssi_threshold": bad}).status_code == 422
     assert client.put("/api/rf/detection", json={"rssi_threshold": "abc"}).status_code == 422
     assert not (tmp_path / "rf_config.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# 푸시 업데이트 (/api/update) — 코드를 받아 적용하는 경로라 키·배치·검증을 고정한다.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def update_env(client, tmp_path, monkeypatch):
+    dest = tmp_path / "visionguide"
+    dest.mkdir()
+    (dest / "detect.py").write_text("OLD = 1\n")
+    monkeypatch.setattr(srv, "update_dest", dest)
+    restarts = []
+    monkeypatch.setattr(srv, "_schedule_update_restart", lambda: restarts.append(1))
+    # 스모크는 별도 테스트(test_self_update)가 맡는다 — 여기서는 서버를 또 띄우지 않는다.
+    real = srv.self_update.apply_bundle
+    monkeypatch.setattr(srv.self_update, "apply_bundle",
+                        lambda data, d, include_models=False: real(data, d, include_models, smoke=False))
+    client.post("/api/identity", json={"device_id": "pi-01", "api_key": "key-1",
+                                       "server_url": "http://pc:8000"})
+    return client, dest, restarts
+
+
+def _upload(client, bundle, key="key-1", **params):
+    headers = {"X-Device-Key": key} if key is not None else {}
+    return client.post("/api/update", params=params, headers=headers,
+                       files={"file": ("bundle.tar.gz", bundle, "application/gzip")})
+
+
+def test_update_requires_device_key(update_env):
+    from tests.test_self_update import make_bundle
+    client, dest, restarts = update_env
+    bundle = make_bundle({"detect.py": "NEW = 2\n"})
+    assert _upload(client, bundle, key=None).status_code == 401
+    assert _upload(client, bundle, key="wrong").status_code == 401
+    assert (dest / "detect.py").read_text() == "OLD = 1\n"
+    assert restarts == []
+
+
+def test_update_applies_and_schedules_restart(update_env):
+    from tests.test_self_update import make_bundle
+    client, dest, restarts = update_env
+    res = _upload(client, make_bundle({"detect.py": "NEW = 2\n"}, bundle_id="v9"))
+    assert res.status_code == 200
+    body = res.json()
+    assert body["restarting"] is True and body["bundle_id"] == "v9"
+    assert (dest / "detect.py").read_text() == "NEW = 2\n"
+    assert restarts == [1]
+    assert client.get("/api/update/status").json() == {"bundle_id": "v9", "has_backup": True}
+
+
+def test_update_rejects_bad_bundle_without_restart(update_env):
+    from tests.test_self_update import make_bundle
+    client, dest, restarts = update_env
+    res = _upload(client, make_bundle({"detect.py": "def (:\n"}))
+    assert res.status_code == 422
+    assert (dest / "detect.py").read_text() == "OLD = 1\n"
+    assert restarts == []
+
+
+def test_update_refuses_dev_tree(update_env):
+    from tests.test_self_update import make_bundle
+    client, dest, restarts = update_env
+    (dest / "device").mkdir()                    # 저장소처럼 보이는 배치
+    res = _upload(client, make_bundle({"detect.py": "NEW = 2\n"}))
+    assert res.status_code == 409
+    assert (dest / "detect.py").read_text() == "OLD = 1\n"
+
+
+def test_update_rollback_requires_key_and_restores(update_env):
+    from tests.test_self_update import make_bundle
+    client, dest, restarts = update_env
+    _upload(client, make_bundle({"detect.py": "NEW = 2\n"}))
+    assert client.post("/api/update/rollback").status_code == 401
+    res = client.post("/api/update/rollback", headers={"X-Device-Key": "key-1"})
+    assert res.status_code == 200
+    assert (dest / "detect.py").read_text() == "OLD = 1\n"
+    assert restarts == [1, 1]
+    assert client.post("/api/update/rollback", headers={"X-Device-Key": "key-1"}).status_code == 409

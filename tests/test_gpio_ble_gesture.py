@@ -180,3 +180,25 @@ def test_toggle_home_gives_up_after_two(gc, monkeypatch):
     mod.toggle_wifi(None, threading.Event(), {"kind": None, "until": 0.0}, threading.Lock())
     assert run.ups == ["enjoy", "204_WIFI"]
     assert mod._test_beeps[-1] == 3
+
+
+def test_takeover_flag_beeps_once(gc, tmp_path, monkeypatch):
+    import threading
+    gc = gc[0]
+    import device_identity as di
+    monkeypatch.setattr(gc, "_HERE", tmp_path)
+    monkeypatch.setattr(gc, "TAKEOVER_POLL_SEC", 0.01)
+    beeps = []
+    monkeypatch.setattr(gc, "_beep", lambda b, n, **kw: beeps.append((n, kw.get("on_time"))))
+    di.signal_takeover(tmp_path)
+    stop = threading.Event()
+    t = threading.Thread(target=gc._takeover_beep_loop, args=(object(), stop), daemon=True)
+    t.start()
+    for _ in range(100):
+        if beeps:
+            break
+        stop.wait(0.02)
+    stop.set()
+    t.join(1)
+    assert beeps == [(1, 0.8)]
+    assert not (tmp_path / "takeover.flag").exists()

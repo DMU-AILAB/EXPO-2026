@@ -94,6 +94,8 @@ export type Device = {
   name: string
   ip: string
   location: string | null
+  /** 기기에 신원이 심어졌는가 — false면 원격 제어(재시작·업데이트)가 안 된다. */
+  provisioned: boolean
   status: DeviceStatus
   last_seen: string | null
   cpu: number | null

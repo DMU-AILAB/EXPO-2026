@@ -70,6 +70,39 @@ export const restartDevice = (id: string) =>
 export const rebootDevice = (id: string) =>
   request<{ job_id: string; message: string }>(`/api/devices/${id}/reboot`, { method: 'POST' })
 
+// ---------------------------------------------------------------- 코드 업데이트
+
+/** 기기별 업데이트 결과 — 한 대가 실패해도 나머지는 계속 진행되므로 배열로 온다. */
+export interface UpdateResult {
+  device_id: string
+  ok: boolean
+  bundle_id?: string
+  applied?: number | null
+  /** 재시작 뒤 새 번들로 돌아왔는가. false면 기기를 확인해야 한다. */
+  came_back?: boolean
+  error?: string
+}
+
+export interface DeviceUpdateStatus {
+  bundle_id: string
+  has_backup: boolean
+  latest: string
+  up_to_date: boolean
+  error?: string
+}
+
+export const updateDevices = (deviceIds: string[], includeModels = false) =>
+  request<{ bundle_id: string; results: UpdateResult[] }>('/api/devices/update', {
+    method: 'POST',
+    body: { device_ids: deviceIds, include_models: includeModels },
+  })
+
+export const getDeviceUpdateStatus = (id: string) =>
+  request<DeviceUpdateStatus>(`/api/devices/${id}/update-status`)
+
+export const rollbackDeviceUpdate = (id: string) =>
+  request<unknown>(`/api/devices/${id}/update/rollback`, { method: 'POST' })
+
 // ---------------------------------------------------------------- 카메라
 
 /** `stale: true`면 기기가 꺼져 있어 캐시를 보여주는 중이다. */
