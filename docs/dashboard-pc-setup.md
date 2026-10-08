@@ -4,16 +4,69 @@
 동작한다. 카메라 MJPEG 스트림은 Pi의 포트 8080에서 제공되며 PC 백엔드가
 브라우저로 프록시한다.
 
+## 처음 시작하기 (서버 한 줄 → Pi 한 줄)
+
+### 1. 서버 PC — Windows 네이티브
+
+저장소를 받은 폴더에서 **`setup-server.bat`을 더블클릭**한다(또는 터미널에서 실행).
+권한 확인 창이 한 번 뜬다(방화벽·자동 시작 등록에 관리자 권한이 필요하다).
+
+```powershell
+.\setup-server.bat                 # 기본: 포트 8000
+.\setup-server.bat -Port 8080      # 포트 변경
+.\setup-server.bat -DryRun         # 아무것도 바꾸지 않고 할 일만 보기
+.\setup-server.bat -Uninstall      # 자동 시작 작업과 방화벽 규칙 제거 (파일·DB는 그대로)
+```
+
+스크립트가 하는 일: Git·Python 3.11·Node.js를 `winget`으로 설치 → `dashboard\backend\.venv` 와
+의존성 → `.env`(JWT 키·관리자 비밀번호 자동 생성)와 DB → 프런트 빌드 → 방화벽(TCP 8000,
+UDP 48555) → **로그온 시 자동 시작**(작업 스케줄러 `VisionGuide Dashboard`) → 시작.
+끝나면 접속 주소(`http://<이 PC의 LAN 주소>:8000`)와 관리자 비밀번호를 한 번 보여 준다
+(`dashboard\backend\data\admin-password.txt`에도 저장된다).
+
+- **다시 실행해도 안전하다.** 기존 `.env`의 값(JWT 키·포트)과 DB는 바꾸지 않고 빠진 키만 채운다.
+  `-ResetEnv`만 `.env`를 새로 만든다(로그인이 모두 풀린다).
+- 프런트는 백엔드가 **같은 포트로 서빙**한다 — Node/Vite/CORS 설정이 필요 없다.
+  코드를 받은 뒤 화면을 다시 빌드하려면 `-Rebuild`.
+- **서버는 WSL이 아니라 Windows 네이티브로 돌린다.** WSL(NAT/미러)에서는 Pi가 서버에 닿지
+  못하거나 Hyper-V 방화벽이 막는다(아래 "개발용: WSL2"). 코드 편집·테스트는 WSL에서 해도 된다.
+- **이 PC가 절전·최대 절전에 들어가면 서버가 멈추고 기기 연결이 끊긴다.** 전원 옵션에서 끈다.
+- Linux/macOS는 보조로 `bash deploy/setup-server.sh`(venv·의존성·`.env`·DB·빌드·실행 안내까지)를 쓴다.
+  방화벽·자동 시작은 직접 설정한다.
+- 저장소가 공개일 때는 원격 한 줄도 가능하다(관리자 PowerShell):
+  `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/DMU-AILAB/EXPO-2026/main/deploy/setup-server.ps1)))`
+  비공개이면 `git clone` 후 `setup-server.bat`.
+
+### 2. 새 Pi — 설치 명령 한 줄
+
+대시보드 로그인 → **기기 추가 → 새 기기 설치**가 토큰이 든 명령을 만들어 준다. Pi에서 그 명령을
+붙여 넣으면 코드·서비스·**모델**(현행 `v15_320` + 예비 `v10_320`, 약 6MB)·**핫스팟 프로필**이
+설치되고 서버에 등록된다.
+
+```bash
+bash <(curl -fsSL "http://<서버>:8000/api/bootstrap/install.sh?token=<토큰>")
+bash <(curl -fsSL "...") --dry-run                 # 먼저 할 일만 보기
+bash <(curl -fsSL "...") --models all              # 모델 전부(수십 MB). 기본은 default, none은 코드만
+bash <(curl -fsSL "...") --ap-password '내비밀번호'  # 핫스팟 비밀번호(8자 이상, 기본 visionguide)
+```
+
+- 모델은 이미 있으면 다시 받지 않는다. 핫스팟 프로필(`VisionGuide-AP`, `192.168.4.1`)은
+  **없을 때만** 만든다 — 기존 기기의 프로필은 건드리지 않는다.
+- 핫스팟 프로필이 있어야 Wi-Fi가 없을 때 핫스팟으로 전환된다(`auto_ap.sh`, Wi-Fi 버튼).
+
 ## 네트워크
 
 - PC → 각 Pi: `http://<pi-ip>:5000`
 - 각 Pi → PC: `http://<pc-lan-ip>:8000`
-- 브라우저 → PC 프론트엔드: `http://<pc-lan-ip>:5173`
+- 브라우저 → 대시보드: `http://<pc-lan-ip>:8000` (백엔드가 화면까지 서빙. 개발 서버를 쓰면 `:5173`)
 
-PC 방화벽에서 TCP 8000을 허용하고, Pi와 PC가 같은 LAN 또는 서로 접근 가능한
+PC 방화벽에서 TCP 8000(과 기기 자동 발견용 UDP 48555)을 허용하고(`setup-server`가 해 준다), Pi와 PC가 같은 LAN 또는 서로 접근 가능한
 VPN에 있어야 한다. `localhost`는 Pi가 PC를 가리키는 주소로 사용할 수 없다.
 
-### WSL2에서 실행할 때
+### 개발용: WSL2에서 실행할 때
+
+> 운영(기기가 붙는 서버)에는 쓰지 말고 위의 Windows 네이티브 설치를 쓴다. 아래는 코드를 고치며
+> 개발 서버를 띄울 때의 주의사항이다.
 
 WSL2 기본(NAT) 모드에서는 Pi가 WSL 안의 백엔드에 닿지 못한다. Windows의
 `%USERPROFILE%\.wslconfig`에 다음을 넣고 `wsl --shutdown` 후 다시 연다.
@@ -41,7 +94,11 @@ New-NetFirewallHyperVRule -Name VisionGuide8000 -DisplayName "VisionGuide 8000" 
 대시보드는 그 PC의 브라우저에서만 쓸 수 있다(다른 PC에서 쓰려면 LAN IP로 빌드).
 블루투스 페어링(Web Bluetooth)도 `localhost` 또는 HTTPS에서만 동작하므로 같은 제약이다.
 
-## 백엔드 설정
+## 수동 설치 · 개발 서버 설정
+
+`setup-server`를 쓰지 않고 직접 하거나 개발 서버(`vite dev` + `uvicorn --reload`)를 띄울 때의 절차다.
+
+### 백엔드 설정
 
 `dashboard/backend/.env.example`을 `.env`로 복사하고 PC의 LAN 주소와 운영용
 시크릿을 설정한다.
@@ -49,7 +106,7 @@ New-NetFirewallHyperVRule -Name VisionGuide8000 -DisplayName "VisionGuide 8000" 
 ```dotenv
 HOST=0.0.0.0
 PORT=8000
-PUBLIC_BASE_URL=http://192.168.0.50:8000
+PUBLIC_BASE_URL=auto            # 기기에 닿는 경로의 서버 IP를 그때그때 계산한다(권장). 고정하려면 URL을 쓴다
 CORS_ORIGINS=http://192.168.0.50:5173
 JWT_SECRET_KEY=<long-random-secret>
 INITIAL_ADMIN_PASSWORD=<admin-password>
@@ -69,10 +126,10 @@ python -m app.db.init_db
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-## 프론트엔드 설정
+### 프론트엔드 설정 (개발 서버)
 
-`dashboard/frontend/.env.example`을 `.env`로 복사하고 같은 백엔드 주소를
-설정한다.
+`npm run build`로 만든 화면은 백엔드가 같은 포트로 서빙하므로 설정이 필요 없다. 개발 서버는
+`dashboard/frontend/.env.example`을 `.env`로 복사하고 백엔드 주소를 설정한다.
 
 ```dotenv
 VITE_API_BASE=http://192.168.0.50:8000
@@ -116,8 +173,8 @@ API 키는 등록 성공 후 한 번만 화면에 표시된다.
 - `X-Forwarded-For`는 믿지 않는다. 서버 앞에 리버스 프록시를 두면 프록시 주소가 보여서 동작하지 않는다.
 
 이 기능은 **Pi → 서버** 방향이 살아 있어야 한다. 새 PC로 옮겼다면 Pi의 `server_url`
-(`device_identity.json`)이 여전히 이전 PC를 가리키므로, 새 PC의 `PUBLIC_BASE_URL`로 Pi를
-다시 등록해야 하트비트가 도착한다.
+(`device_identity.json`)이 여전히 이전 PC를 가리키므로, 새 PC에서 Pi를 다시 등록해야
+하트비트가 도착한다(대시보드의 Pi 검색에서 **인수**).
 
 ## 확인 순서
 

@@ -472,6 +472,45 @@ Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 �
   쪼갠 이유: 치환이 그 줄까지 바꾸면 주소가 지워진다. 주소는 URL 문자만 허용한다(셸 삽입 방지).
 - 보안 전제는 푸시 업데이트와 같다 — **서버가 내려준 스크립트를 root 권한으로 실행하는 경로**라
   통제된 망을 가정한다(토큰 만료·`--dry-run`이 완화책).
+- **모델은 기본으로 싣는다**(`--models default|all|none`, 기본 `default`). 모델이 없으면 탐지가 안
+  되는 기기가 조용히 만들어진다. `default` = `bundle_builder.BOOTSTRAP_MODELS`(`v15_320` 현행 후보 +
+  `v10_320` 예비, 약 6MB)이고 **가중치 경로는 `camera_config.MODEL_VARIANTS`에서 읽는다**(`ast`로
+  리터럴만 — 값 복제 금지). 기본 모델이 이미 있으면 받지 않는다. `bundle_id`는 코드 해시라 **모델 범위와
+  무관해야 한다**(달라지면 푸시 업데이트가 항상 구버전으로 보인다 — 테스트가 고정). 푸시 업데이트는
+  `none` 기본. 설치 스크립트의 `BOOTSTRAP_MODEL_DIRS`는 서버 값과 `tests/test_installer_matches_makefile.py`가 대조한다.
+  **코드 기본 모델(`_DEFAULT_MODEL_VARIANT`)은 아직 `v10_320`이다** — v15는 기기 FPS 실측 게이트(≥10fps,
+  헛트리거 없음)를 통과한 뒤에 바꾼다.
+- **핫스팟 프로필(`VisionGuide-AP`)은 없을 때만 만든다.** 저장소 어디에도 이 프로필을 만드는 코드가
+  없어서(기존 기기는 손으로 만든 것) 새 기기에서는 Wi-Fi가 없을 때 핫스팟 폴백이 조용히 실패했다.
+  **프로필 *이름*은 코드가 `nmcli connection up`에 쓰는 이름이고 SSID와 다를 수 있다** — 기존 기기는
+  SSID `VisionGuide-Pi`·`192.168.50.1`을 쓰는 프로필이라, 있으면 절대 덮어쓰지 않는다.
+  새로 만들 때는 `192.168.4.1`(`auto_ap.sh`와 같음), 비밀번호 기본 `visionguide`(`--ap-password`, 8~63자).
+
+## 서버 한 줄 설치 (`setup-server.bat` · `deploy/server_setup.py`) — 설계 결정
+
+새 PC에서 서버를 세우는 일(환경·의존성·`.env`·DB·프런트 빌드·방화벽·자동 시작)을 한 번에 한다.
+`start-dashboard.bat`은 **개발용**(conda 환경 + Vite 개발 서버 `:5173`)으로 남는다.
+
+- **서버는 Windows 네이티브로 돌린다 — WSL이 아니다.** 이 저장소의 PC 도구(`deploy.ps1`·`start-dashboard.bat`·
+  `docs/dashboard-pc-setup.md`)가 전부 Windows용이고, WSL(NAT/미러 모드·Hyper-V 방화벽)이 기기 연결 문제의
+  주된 원인이었다. 코드 편집·테스트는 WSL에서 해도 된다. "서버 PC가 항상 Windows"라는 명시 기록은 없어
+  `deploy/setup-server.sh`(Linux/macOS)를 최소 기능의 보조로 둔다(WSL에서 실행하면 경고).
+- **기본 포트는 8000**이다. 8001은 8000이 WSL의 다른 프로세스에 점유돼 우연히 쓴 값이었다.
+- **판단 로직은 `deploy/server_setup.py`(stdlib) 한 곳에 있고 OS 스크립트는 얇다.** OS 스크립트는 pytest로
+  돌릴 수 없지만 이건 돌릴 수 있다. **`.env`는 멱등** — 기존 값(JWT 키·포트)을 보존하고 빠진 키만
+  채운다(`.env.example`을 그대로 복사한 **플레이스홀더 비밀은 빠진 것으로** 본다). 덮어쓰기는 `--reset`뿐.
+  관리자 비밀번호는 난수 12자(헷갈리는 글자 제외)를 만들어 화면에 1회 + `data/admin-password.txt`(gitignore).
+- **프런트는 백엔드가 같은 포트로 서빙한다**(`app/frontend_serve.py`) — `dist/index.html`이 있을 때만.
+  SPA 폴백이 **`/api`·`/ws`·`/docs` 등의 404를 가리면 안 된다**(오타 난 API가 200 HTML로 보이면 안 된다).
+  라우터를 전부 등록한 **뒤**에 붙여야 한다(`/{path}`를 먹는다). 상태 확인은 `GET /api/health`이고
+  `dist`가 없을 때만 `/`가 예전 JSON(개발 호환). 프런트 `API_BASE`는 프로덕션 빌드에서 동일 출처(`''`),
+  WebSocket은 `wsBase()`(`location.origin` 기반). `dist`는 커밋하지 않는다.
+- **`setup-server.ps1`는 UTF-8 BOM이 필수**다(Windows PowerShell 5.1이 BOM 없는 UTF-8을 CP949로 읽는다).
+  `Do`는 PowerShell 예약어라 함수 이름으로 못 쓴다(`Act`). **`$ErrorActionPreference='Stop'`에서 네이티브
+  명령의 stderr를 `2>$null`로 돌리면 5.1이 `NativeCommandError`로 중단한다** — `py.exe`가 없는 버전을 stderr로
+  알려 실제로 걸렸다. `python` 명령은 쓰지 않는다(Microsoft Store 스텁). 백엔드는 `--reload`/`--workers`
+  없이 띄운다(하트비트 버퍼·APScheduler가 한 프로세스). 변경하는 일은 전부 `Act`를 거쳐 `-DryRun`이 막는다.
+  `tests/test_server_setup_scripts.py`가 이를 고정한다.
 
 ## 파이프라인 루프를 건드리면 통합 테스트를 돌릴 것
 
@@ -909,6 +948,8 @@ Pi에서 실행될 코드를 작성하거나 수정할 때 반드시 지켜야 �
 ---
 
 ## 대시보드 백엔드 개발 명령어
+
+> 운영 서버는 `setup-server.bat`로 세운다(위 '서버 한 줄 설치'). 아래는 **개발 서버**(`--reload`) 절차다.
 
 ```bash
 cd dashboard/backend

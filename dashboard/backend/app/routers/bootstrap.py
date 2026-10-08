@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Device
-from ..services.bundle_builder import BundleError, build_assets, build_bundle, installer_script, repo_root
+from ..services.bundle_builder import (BundleError, build_assets, build_bundle, installer_script,
+                                       normalize_models, repo_root)
 from ..services.device_address import peer_ipv4
 from ..services.server_address import public_url_default
 
@@ -114,10 +115,18 @@ async def get_self_update(token: str = ""):
 
 
 @router.get("/bundle.tar.gz")
-async def get_bundle(token: str = "", include_models: bool = False):
+async def get_bundle(token: str = "", models: str = "", include_models: bool = False):
+    """`models=none|default|all` — 신규 설치는 `default`(현행 모델 + 예비, 약 6MB).
+
+    `include_models=true`는 예전 호출을 위한 별칭이다(`all`). 둘 다 없으면 코드만 보낸다.
+    """
     require_token(token)
     try:
-        bundle = build_bundle(include_models)
+        mode = normalize_models(models or include_models)
+    except BundleError as exc:
+        raise HTTPException(status_code=400, detail={"error": "INVALID_MODELS", "message": str(exc)}) from exc
+    try:
+        bundle = build_bundle(mode)
     except BundleError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return Response(bundle.data, media_type="application/gzip",

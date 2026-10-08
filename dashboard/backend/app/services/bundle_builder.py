@@ -16,6 +16,7 @@ id라 기기와 서버의 "최신 여부"를 비교할 수 있다.
 
 from __future__ import annotations
 
+import ast
 import gzip
 import hashlib
 import io
@@ -27,7 +28,16 @@ from pathlib import Path
 
 from ..config import settings
 
-__all__ = ["Bundle", "BundleError", "build_bundle", "build_assets", "installer_script", "repo_root"]
+__all__ = ["Bundle", "BundleError", "build_bundle", "build_assets", "installer_script", "repo_root",
+           "BOOTSTRAP_MODELS", "MODEL_MODES", "normalize_models"]
+
+# 모델을 번들에 싣는 범위. `none`은 코드만(푸시 업데이트 기본), `default`는 신규 설치에 필요한 만큼만,
+# `all`은 Makefile `DEPLOY_MODEL_DIRS` 전부다.
+MODEL_MODES = ("none", "default", "all")
+# 신규 설치 기본 모델 — 앞이 현행 채택 후보, 뒤가 예비. 키는 `camera_config.MODEL_VARIANTS`의 것이고,
+# 가중치 경로는 거기서 읽는다(값을 복제하지 않는다).
+BOOTSTRAP_MODELS = ("v15_320", "v10_320")
+_MODEL_FILES = ("best_int8.tflite", "best_int8_edgetpu.tflite")
 
 
 class BundleError(Exception):
@@ -54,8 +64,40 @@ def _makefile_list(makefile: str, name: str) -> list[str]:
     return re.findall(r"[\w./-]+", m.group(1).replace("\\\n", " "))
 
 
-def _collect(root: Path, include_models: bool) -> tuple[dict[str, Path], dict[str, Path]]:
+def normalize_models(models: "bool | str | None") -> str:
+    """`include_models: bool` 호환 — True는 `all`, False/None은 `none`. 문자열은 `MODEL_MODES`만."""
+    if models is True:
+        return "all"
+    if models is False or models is None:
+        return "none"
+    if models in MODEL_MODES:
+        return models
+    raise BundleError(f"models는 {'|'.join(MODEL_MODES)} 중 하나여야 합니다: {models!r}")
+
+
+def _model_variant_dirs(root: Path) -> dict[str, str]:
+    """`device/camera_config.py`의 `MODEL_VARIANTS`에서 `{변형 키: weights_dir}`를 읽는다.
+
+    모듈을 import하지 않고 소스에서 리터럴만 읽는다 — `settings.repo_root`가 가리키는 저장소의
+    값을 보고, import 부작용(dataclass 등록 등)이 없다.
+    """
+    src = root / "device" / "camera_config.py"
+    if not src.is_file():
+        raise BundleError("device/camera_config.py가 없습니다 — 모델 경로를 알 수 없습니다")
+    for node in ast.parse(src.read_text(encoding="utf-8")).body:
+        targets = [node.target] if isinstance(node, ast.AnnAssign) else getattr(node, "targets", [])
+        if any(isinstance(t, ast.Name) and t.id == "MODEL_VARIANTS" for t in targets) and node.value is not None:
+            try:
+                table = ast.literal_eval(node.value)
+            except ValueError as exc:
+                raise BundleError("MODEL_VARIANTS를 리터럴로 읽지 못했습니다") from exc
+            return {k: v["weights_dir"] for k, v in table.items() if isinstance(v, dict) and "weights_dir" in v}
+    raise BundleError("camera_config.py에서 MODEL_VARIANTS를 찾지 못했습니다")
+
+
+def _collect(root: Path, models: "bool | str" = "none") -> tuple[dict[str, Path], dict[str, Path]]:
     """`(코드 파일, 모델 파일)` — 둘 다 `{번들 안 경로: 디스크 경로}`."""
+    mode = normalize_models(models)
     mk = root / "Makefile"
     if not mk.is_file():
         raise BundleError(f"저장소 루트에서 Makefile을 찾지 못했습니다: {root}")
@@ -82,14 +124,26 @@ def _collect(root: Path, include_models: bool) -> tuple[dict[str, Path], dict[st
         if (src.is_file() and "__pycache__" not in src.parts and src.suffix != ".pyc"):
             code[f"roi_editor/{src.relative_to(editor).as_posix()}"] = src
 
-    models: dict[str, Path] = {}
-    if include_models:
-        for rel in _makefile_list(text, "DEPLOY_MODEL_DIRS"):
-            for name in ("best_int8.tflite", "best_int8_edgetpu.tflite"):
+    model_files: dict[str, Path] = {}
+    if mode != "none":
+        if mode == "all":
+            dirs = _makefile_list(text, "DEPLOY_MODEL_DIRS")
+        else:
+            variants = _model_variant_dirs(root)
+            missing_keys = [k for k in BOOTSTRAP_MODELS if k not in variants]
+            if missing_keys:
+                raise BundleError(f"기본 모델 변형이 MODEL_VARIANTS에 없습니다: {missing_keys}")
+            dirs = [variants[k] for k in BOOTSTRAP_MODELS]
+        for rel in dirs:
+            for name in _MODEL_FILES:
                 src = root / rel / name
                 if src.is_file():                    # EdgeTPU 컴파일본은 없는 디렉터리가 있다
-                    models[f"{rel}/{name}"] = src
-    return code, models
+                    model_files[f"{rel}/{name}"] = src
+        if mode == "default" and not any(a.endswith("/best_int8.tflite") for a in model_files):
+            # 모델이 하나도 없는 번들은 탐지가 안 되는 기기를 조용히 만든다 — 실패로 알린다.
+            raise BundleError("기본 모델 가중치(best_int8.tflite)를 찾지 못했습니다: "
+                              + ", ".join(BOOTSTRAP_MODELS))
+    return code, model_files
 
 
 def _sha(path: Path) -> str:
@@ -100,9 +154,17 @@ def _sha(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_bundle(include_models: bool = False) -> Bundle:
+def build_bundle(models: "bool | str" = "none", include_models: "bool | None" = None) -> Bundle:
+    """코드 번들. `models`는 `none|default|all`(bool도 받는다 — True는 `all`).
+
+    `include_models`는 예전 키워드 호출(`build_bundle(include_models=True)`)을 위한 별칭이고,
+    주어지면 `models`보다 우선한다.
+
+    `bundle_id`는 코드 파일의 해시라 모델을 얼마나 싣는지와 무관하다 — 기기가 보고한 id와 비교해
+    최신 여부를 판정하므로, 모델 때문에 id가 달라지면 푸시 업데이트가 항상 "구버전"으로 보인다.
+    """
     root = repo_root()
-    code, models = _collect(root, include_models)
+    code, models = _collect(root, models if include_models is None else include_models)
     files = {**code, **models}
     hashes = {arc: _sha(src) for arc, src in files.items()}
 

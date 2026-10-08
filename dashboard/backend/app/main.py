@@ -6,6 +6,7 @@ import logging
 
 from .config import settings
 from .errors import register_error_handlers
+from .frontend_serve import mount_frontend
 from .routers import auth, devices, cameras, rois, events, ws, stats, audio, schedules, scan, rf
 # [녹화 비활성] 개인정보 보호 — recording 라우터는 등록하지 않는다(Pi도 /recording/* 에 404)
 from .routers import replay, calibration, calibration_fleet, network, esp32, bootstrap
@@ -115,6 +116,15 @@ app.include_router(network.router)
 app.include_router(esp32.router)
 app.include_router(bootstrap.router)
 
-@app.get("/")
-def read_root():
+@app.get("/api/health")
+def health():
+    # 설치 스크립트(setup-server)가 기동 완료를 기다릴 때 쓴다 — dist 유무와 무관하게 항상 응답한다.
     return {"status": "VisionGuide Backend is running", "ok": True}
+
+
+# 라우터를 전부 등록한 **뒤**에 붙여야 한다(SPA 폴백이 `/{path}`를 먹는다). dist가 없으면
+# 개발 모드 그대로라 `/`가 예전 상태 JSON이다.
+if not mount_frontend(app, settings.frontend_dist or None):
+    @app.get("/")
+    def read_root():
+        return {"status": "VisionGuide Backend is running", "ok": True}

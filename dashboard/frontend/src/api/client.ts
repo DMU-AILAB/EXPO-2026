@@ -12,9 +12,23 @@
 
 const TOKEN_KEY = 'visionguide.token'
 
-/** 개발 서버는 Vite 프록시 없이 백엔드를 직접 부른다. */
+/**
+ * `VITE_API_BASE`가 있으면 그것이 우선이다.
+ * 없으면 개발 서버는 Vite 프록시 없이 백엔드를 직접 부르고(`http://localhost:8000`),
+ * 프로덕션 빌드는 백엔드가 이 페이지를 같은 포트로 서빙하므로 동일 출처(빈 문자열)를 쓴다.
+ */
 export const API_BASE: string =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000'
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  (import.meta.env.PROD ? '' : 'http://localhost:8000')
+
+/**
+ * WebSocket 기준 주소. `API_BASE`가 빈 문자열(동일 출처)이면 `API_BASE.replace(/^http/, 'ws')`가
+ * 상대 경로가 되어 깨지므로 현재 페이지의 origin에서 만든다.
+ */
+export function wsBase(): string {
+  const base = API_BASE || window.location.origin
+  return base.replace(/^http/, 'ws')
+}
 
 export function getToken(): string | null {
   try {

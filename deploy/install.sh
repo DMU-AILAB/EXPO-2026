@@ -25,7 +25,15 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 DRY_RUN=0
 UNITS_ONLY=0
 NO_REGISTER=0
-INCLUDE_MODELS=0
+MODELS="default"        # none | default | all — 서버 번들 안의 모델 범위
+AP_PASSWORD="${AP_PASSWORD:-visionguide}"
+# ★ 서버 번들의 기본 모델 = dashboard/backend/app/services/bundle_builder.py BOOTSTRAP_MODELS가 가리키는
+# camera_config.MODEL_VARIANTS의 weights_dir. 이미 있으면 다시 받지 않는 데 쓴다
+# (tests/test_installer_matches_makefile.py가 대조한다).
+BOOTSTRAP_MODEL_DIRS=(runs/white_cane_v15_vid_s2/weights runs/white_cane_v10_nolkc/weights)
+# ★ deploy/auto_ap.sh의 AP_IP와 같아야 한다(같은 테스트가 대조). 프로필 *이름*은 코드가 전환에 쓰는 이름이다.
+AP_CONNECTION="VisionGuide-AP"
+AP_IP="192.168.4.1"
 
 # ★ Makefile의 deps(apt) + install-service(iptables). 바꾸면 Makefile도 같이 바꿀 것.
 APT_PACKAGES=(python3-picamera2 fonts-nanum mpg123 uhubctl iptables)
@@ -40,7 +48,11 @@ usage() {
   --token TOKEN       설치 토큰 — 코드 내려받기와 서버 등록에 쓴다
   --user NAME         서비스를 돌릴 사용자 (기본: 지금 사용자)
   --python PATH       파이썬 경로 (기본: pyenv 3.10 → python3)
-  --include-models    모델 가중치(수십 MB)도 받는다
+  --models MODE       받을 모델: default(현행 v15 + 예비 v10, 약 6MB — 기본) | all(전부, 수십 MB) | none
+                      기본 모델이 이미 있으면 default는 다시 받지 않는다
+  --include-models    --models all 과 같다
+  --ap-password PW    핫스팟 프로필(VisionGuide-AP)을 새로 만들 때의 비밀번호 (8자 이상, 기본: visionguide)
+                      프로필이 이미 있으면 건드리지 않는다
   --units-only        코드는 건드리지 않고 유닛·sudoers만 다시 설치한다
   --no-register       서버 등록을 건너뛴다 (이후 대시보드 기기 추가에서 등록)
   --dry-run           실제 변경 없이 단계와 명령만 출력한다
@@ -54,7 +66,9 @@ while [[ $# -gt 0 ]]; do
     --token) TOKEN="${2:?--token 값이 필요합니다}"; shift 2 ;;
     --user) INSTALL_USER="${2:?--user 값이 필요합니다}"; shift 2 ;;
     --python) PYTHON_BIN="${2:?--python 값이 필요합니다}"; shift 2 ;;
-    --include-models) INCLUDE_MODELS=1; shift ;;
+    --models) MODELS="${2:?--models 값이 필요합니다}"; shift 2 ;;
+    --include-models) MODELS="all"; shift ;;
+    --ap-password) AP_PASSWORD="${2:?--ap-password 값이 필요합니다}"; shift 2 ;;
     --units-only) UNITS_ONLY=1; shift ;;
     --no-register) NO_REGISTER=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -63,8 +77,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$MODELS" in none|default|all) ;; *) echo "--models 는 none|default|all 중 하나여야 합니다: $MODELS" >&2; exit 2 ;; esac
+# WPA2 비밀번호는 8~63자다 — 나중에 nmcli가 실패해 설치가 중간에 멈추지 않도록 지금 거른다.
+if [[ ${#AP_PASSWORD} -lt 8 || ${#AP_PASSWORD} -gt 63 ]]; then
+  echo "--ap-password 는 8~63자여야 합니다" >&2; exit 2
+fi
+
 SERVER_URL="${SERVER_URL%/}"
-APP_DIR="/home/${INSTALL_USER}/visionguide"
+APP_DIR="${APP_DIR:-/home/${INSTALL_USER}/visionguide}"   # 환경변수로 바꿀 수 있다(테스트용)
 CURRENT_STEP="시작"
 STEP_NO=0
 
@@ -118,6 +138,15 @@ info "파이썬: ${PYTHON_BIN} ($("$PYTHON_BIN" --version 2>&1 || echo '?'))"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+models_present() {   # 기본 모델 가중치가 모두 이미 있는가
+  local d
+  for d in "${BOOTSTRAP_MODEL_DIRS[@]}"; do [[ -f "${APP_DIR}/${d}/best_int8.tflite" ]] || return 1; done
+}
+
+# 실제로 받을 모델 범위. default는 이미 갖춰져 있으면 none으로 낮춘다(6MB를 매번 받지 않는다).
+FETCH_MODELS="$MODELS"
+if [[ "$MODELS" == "default" ]] && models_present; then FETCH_MODELS="none"; fi
+
 fetch() {   # fetch <경로> <저장 파일> — 토큰은 쿼리로 보낸다
   local path="$1" out="$2" sep='?'
   [[ "$path" == *\?* ]] && sep='&'
@@ -129,10 +158,11 @@ fetch() {   # fetch <경로> <저장 파일> — 토큰은 쿼리로 보낸다
 step "서버에서 설치 파일 받기"
 if [[ $DRY_RUN -eq 1 ]]; then
   info "[dry-run] ${SERVER_URL}/api/bootstrap/{self_update.py,assets.tar.gz$([[ $UNITS_ONLY -eq 0 ]] && echo ',bundle.tar.gz')}"
+  [[ $UNITS_ONLY -eq 1 ]] || info "[dry-run] 모델: --models ${MODELS}$([[ "$FETCH_MODELS" != "$MODELS" ]] && echo " (기본 모델이 이미 있어 받지 않음)")"
 else
   fetch /api/bootstrap/self_update.py "$WORK/self_update.py"
   fetch /api/bootstrap/assets.tar.gz "$WORK/assets.tar.gz"
-  [[ $UNITS_ONLY -eq 1 ]] || fetch "/api/bootstrap/bundle.tar.gz$([[ $INCLUDE_MODELS -eq 1 ]] && echo '?include_models=true')" "$WORK/bundle.tar.gz"
+  [[ $UNITS_ONLY -eq 1 ]] || fetch "/api/bootstrap/bundle.tar.gz?models=${FETCH_MODELS}" "$WORK/bundle.tar.gz"
   mkdir -p "$WORK/assets" && tar -xzf "$WORK/assets.tar.gz" -C "$WORK/assets"
   info "받음: $(ls "$WORK" | tr '\n' ' ')"
 fi
@@ -147,7 +177,7 @@ if [[ $UNITS_ONLY -eq 0 ]]; then
     info "[dry-run] ${PYTHON_BIN} self_update.py apply bundle.tar.gz --dest ${APP_DIR} --no-smoke"
   else
     "$PYTHON_BIN" "$WORK/self_update.py" apply "$WORK/bundle.tar.gz" --dest "$APP_DIR" --no-smoke \
-      $([[ $INCLUDE_MODELS -eq 1 ]] && echo --include-models) || die "코드 번들 적용에 실패했습니다 (기기의 파일은 그대로입니다)"
+      $([[ "$FETCH_MODELS" != "none" ]] && echo --include-models) || die "코드 번들 적용에 실패했습니다 (기기의 파일은 그대로입니다)"
   fi
 fi
 
@@ -188,7 +218,29 @@ else
   install -m 755 "$WORK/assets/auto_ap.sh" "$APP_DIR/deploy/auto_ap.sh"
 fi
 
-# --------------------------------------------------------------------------- 7. 서비스 시작
+# --------------------------------------------------------------------------- 7. 핫스팟 프로필
+# Wi-Fi가 없을 때 auto_ap.sh·Wi-Fi 버튼이 `nmcli connection up VisionGuide-AP`로 전환한다. 프로필이
+# 없으면 그 폴백이 조용히 실패한다 — 저장소 어디에도 이 프로필을 만드는 코드가 없었다(손으로 만든 것).
+# ★ 있으면 건드리지 않는다: 기존 기기는 SSID·IP가 다른 프로필(예: VisionGuide-Pi/192.168.50.1)을 쓴다.
+step "핫스팟 프로필 (${AP_CONNECTION})"
+AP_STATUS="만들지 못함(nmcli 없음)"
+HAVE_NMCLI=0; command -v nmcli >/dev/null 2>&1 && HAVE_NMCLI=1
+if [[ $HAVE_NMCLI -eq 0 && $DRY_RUN -eq 0 ]]; then
+  warn "nmcli가 없습니다 — 핫스팟 프로필을 만들 수 없습니다 (NetworkManager 환경이 아닙니다)"
+elif [[ $HAVE_NMCLI -eq 1 ]] && nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$AP_CONNECTION"; then
+  AP_STATUS="기존 프로필 유지"
+  info "이미 있습니다 — 그대로 둡니다"
+else
+  AP_STATUS="새로 만듦 (SSID ${AP_CONNECTION}, ${AP_IP}, 비밀번호 ${AP_PASSWORD})"
+  # autoconnect no: 평소에는 홈 Wi-Fi를 쓰고, 연결이 없을 때만 auto_ap.sh가 올린다.
+  run sudo nmcli connection add type wifi ifname wlan0 con-name "$AP_CONNECTION" autoconnect no \
+    ssid "$AP_CONNECTION" mode ap 802-11-wireless.band bg \
+    ipv4.method shared ipv4.addresses "${AP_IP}/24" \
+    wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASSWORD" \
+    || { warn "핫스팟 프로필 생성에 실패했습니다 — 계속합니다 (Wi-Fi가 없을 때 핫스팟 폴백이 동작하지 않습니다)"; AP_STATUS="생성 실패"; }
+fi
+
+# --------------------------------------------------------------------------- 8. 서비스 시작
 step "서비스 시작 (탐지가 몇 초 끊깁니다)"
 run sudo systemctl daemon-reload
 run sudo usermod -aG bluetooth "$INSTALL_USER"
@@ -201,7 +253,7 @@ else
   info "[dry-run] sudo systemctl enable --now <유닛들> && restart visionguide-{device,controls,roi-editor}"
 fi
 
-# --------------------------------------------------------------------------- 8. 검증
+# --------------------------------------------------------------------------- 9. 검증
 step "동작 확인"
 if [[ $DRY_RUN -eq 1 ]]; then
   info "[dry-run] http://127.0.0.1:5000/api/version 응답과 서비스 상태를 확인합니다"
@@ -218,7 +270,7 @@ else
   done
 fi
 
-# --------------------------------------------------------------------------- 9. 서버 등록
+# --------------------------------------------------------------------------- 10. 서버 등록
 step "서버 등록"
 if [[ $NO_REGISTER -eq 1 || $UNITS_ONLY -eq 1 || -z "$TOKEN" ]]; then
   info "건너뜁니다 — 대시보드 '기기 추가'에서 이 기기를 찾아 등록하세요"
@@ -233,6 +285,23 @@ import json, sys
 d = json.loads(sys.argv[1]).get("data", {})
 print(f"    등록: {d.get('device_id')}  신원 주입: {'성공' if d.get('provisioned') else '실패 — ' + str(d.get('provision_error'))}")
 PY
+fi
+
+# --------------------------------------------------------------------------- 요약
+printf '\n요약\n'
+if [[ $DRY_RUN -eq 1 ]]; then
+  info "모델: (dry-run — 변경 없음) --models ${MODELS}"
+else
+  have=0; total=${#BOOTSTRAP_MODEL_DIRS[@]}
+  for d in "${BOOTSTRAP_MODEL_DIRS[@]}"; do [[ -f "${APP_DIR}/${d}/best_int8.tflite" ]] && have=$((have + 1)); done
+  info "모델: 기본 ${total}개 중 ${have}개 설치됨"
+  [[ $have -eq $total ]] || warn "기본 모델이 모두 있지 않습니다 — 모델이 없는 카메라는 탐지하지 못합니다 (--models default 로 다시 실행)"
+fi
+info "핫스팟 프로필: ${AP_STATUS}"
+if [[ $DRY_RUN -eq 0 ]] && command -v rpicam-hello >/dev/null 2>&1; then
+  cams="$(timeout 8 rpicam-hello --list-cameras 2>/dev/null | grep -cE '^[[:space:]]*[0-9]+ : ' || true)"
+  info "카메라: ${cams:-0}대 감지"
+  [[ "${cams:-0}" -gt 0 ]] || warn "카메라가 감지되지 않았습니다 — 케이블·연결을 확인하세요"
 fi
 
 printf '\n완료. 대시보드에서 이 기기가 "온라인"으로 바뀌는지 확인하세요.\n'
