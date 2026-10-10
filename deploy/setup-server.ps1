@@ -20,6 +20,8 @@
 .PARAMETER ResetEnv      기존 .env를 새로 만든다 (JWT 키가 바뀌어 로그인이 풀린다)
 .PARAMETER Uninstall     자동 시작 작업과 방화벽 규칙을 제거한다 (파일·DB는 지우지 않는다)
 .PARAMETER DryRun        아무것도 바꾸지 않고 할 일만 출력한다
+.PARAMETER NoWinget      winget을 쓰지 않고 공식 설치 파일을 직접 받아 설치한다 (winget이 없거나 고장 난 PC)
+.PARAMETER VerifyDownloads  Python·Node.js·Git 공식 설치 파일을 받아 서명·체크섬만 검증하고 설치하지 않는다
 
 .EXAMPLE
     .\setup-server.ps1
@@ -37,6 +39,8 @@ param(
     [switch]$ResetEnv,
     [switch]$Uninstall,
     [switch]$DryRun,
+    [switch]$NoWinget,
+    [switch]$VerifyDownloads,
     # 저장소 밖에서 실행할 때(원격 한 줄) 받아올 곳과 위치
     [string]$RepoUrl = 'https://github.com/DMU-AILAB/EXPO-2026.git',
     [string]$InstallDir = (Join-Path $env:USERPROFILE 'VisionGuide'),
@@ -68,6 +72,7 @@ function Fail       { param($m) Write-Host "`n[ERROR] $m" -ForegroundColor Red; 
 
 function Finish {
     param([int]$Code = 0)
+    if ($script:DownloadDir -and (Test-Path $script:DownloadDir)) { Remove-Item -Recurse -Force $script:DownloadDir -ErrorAction SilentlyContinue }
     if ($Elevated) { Read-Host "`nEnter를 누르면 이 창을 닫습니다" | Out-Null }
     exit $Code
 }
@@ -92,17 +97,168 @@ function Update-SessionPath {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
-function Install-WithWinget {
-    param([string]$Id, [string]$Name)
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        if ($DryRun) { Write-Warn "$Name 설치 예정 — 그런데 winget이 없습니다 (실제 실행 전에 App Installer가 필요합니다)"; return }
-        Fail "$Name 이(가) 없고 winget도 없습니다. Microsoft Store의 'App Installer'를 설치한 뒤 다시 실행하세요."
+# ── 설치: winget 우선, 없거나 실패하면 공식 설치 파일을 직접 받는다 ──────────────────────────
+# 받은 파일은 **실행하기 전에 검증한다.** 해시를 코드에 박아 두지 않고(버전이 바뀌면 낡는다) 디지털 서명(Authenticode)의
+# 유효성과 게시자를 확인하고, Node.js는 공식 SHASUMS256.txt와도 대조한다. 검증에 실패하면 실행하지 않고 멈춘다.
+# 모두 HTTPS이고 인증서 검사를 끄지 않는다.
+$script:DownloadDir = $null
+$script:ToolInstalled = $false
+
+function Get-Arch {
+    $a = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    switch ($a) { 'AMD64' { return 'x64' } 'ARM64' { return 'arm64' } default { Fail "지원하지 않는 CPU 구조입니다: $a (x64·ARM64만 지원)" } }
+}
+
+function Get-DownloadDir {
+    if (-not $script:DownloadDir) {
+        $script:DownloadDir = Join-Path $env:TEMP ('vg-setup-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:DownloadDir | Out-Null
     }
-    Act "winget install $Id" {
-        & winget.exe install --id $Id -e --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) { Fail "$Name 설치에 실패했습니다 (winget 종료 코드 $LASTEXITCODE)" }
-        Update-SessionPath
+    return $script:DownloadDir
+}
+
+function Save-Url {
+    param([string]$Url, [string]$Name)
+    # Windows PowerShell 5.1은 기본이 TLS 1.0이라 python.org·nodejs.org에 못 붙는다.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $dest = Join-Path (Get-DownloadDir) $Name
+    $prev = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'                 # 5.1의 진행률 표시는 다운로드를 수십 배 느리게 한다
+    try { Invoke-WebRequest -Uri $Url -OutFile $dest -UseBasicParsing }
+    catch { Fail "다운로드에 실패했습니다: $Url ($($_.Exception.Message))" }
+    finally { $ProgressPreference = $prev }
+    return $dest
+}
+
+function Assert-Signed {
+    param([string]$Path, [string]$Publisher)
+    $sig = Get-AuthenticodeSignature -FilePath $Path
+    if ($sig.Status -ne 'Valid') { Fail "설치 파일의 서명이 유효하지 않습니다 ($($sig.Status)): $Path — 실행하지 않았습니다" }
+    $subject = $sig.SignerCertificate.Subject
+    if ($subject -notmatch $Publisher) { Fail "설치 파일의 게시자가 예상과 다릅니다: $subject (예상: $Publisher) — 실행하지 않았습니다" }
+    Write-Info "서명 확인: $(($subject -split ',')[0])"
+}
+
+function Get-ExpectedSha256 {
+    # SHASUMS256.txt("<해시>  <파일명>" 줄들)에서 `Name`의 해시. 없으면 $null.
+    param([string]$SumsPath, [string]$Name)
+    $line = Get-Content $SumsPath | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($Name) + '$') } | Select-Object -First 1
+    if (-not $line) { return $null }
+    return (($line -split '\s+')[0]).ToUpperInvariant()
+}
+
+function Assert-Sha256 {
+    param([string]$Path, [string]$Expected)
+    $actual = (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+    if ($actual -ne $Expected.ToUpperInvariant()) { Fail "설치 파일의 SHA-256이 공식 값과 다릅니다 — 실행하지 않았습니다 (받은 값 $($actual.Substring(0, 16))..., 공식 값 $($Expected.Substring(0, 16))...)" }
+    Write-Info "SHA-256 확인: $($actual.Substring(0, 16))..."
+}
+
+function Select-NodeLts {
+    # 공식 index.json(최신순)에서 LTS이면서 해당 구조의 MSI가 있는 첫 릴리스.
+    param($Index, [string]$Arch)
+    return $Index | Where-Object { $_.lts -and ($_.files -contains "win-$Arch-msi") } | Select-Object -First 1
+}
+
+function Select-GitAsset {
+    # Git for Windows 릴리스의 설치 파일(.exe). 포터블·MinGit·busybox 변형은 고르지 않는다.
+    param($Release, [string]$Arch)
+    $pattern = if ($Arch -eq 'arm64') { '^Git-[\d.]+-arm64\.exe$' } else { '^Git-[\d.]+-64-bit\.exe$' }
+    return $Release.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+}
+
+function Invoke-Installer {
+    param([string]$File, [string[]]$Arguments, [string]$Name)
+    $p = if ($File -like '*.msi') {
+        Start-Process msiexec.exe -ArgumentList (@('/i', "`"$File`"") + $Arguments) -Wait -PassThru
+    } else {
+        Start-Process $File -ArgumentList $Arguments -Wait -PassThru
     }
+    if ($p.ExitCode -notin 0, 3010) { Fail "$Name 설치 프로그램이 실패했습니다 (종료 코드 $($p.ExitCode))" }   # 3010 = 재부팅 필요(설치는 성공)
+    $script:ToolInstalled = $true
+}
+
+# Python: 3.11.9가 3.11의 마지막 바이너리 설치 파일이다. 3.10~3.12면 이 프로젝트가 인정한다.
+function Install-PythonDirect {
+    param([switch]$VerifyOnly)
+    $ver = '3.11.9'
+    $arch = if ((Get-Arch) -eq 'arm64') { 'arm64' } else { 'amd64' }
+    $url = "https://www.python.org/ftp/python/$ver/python-$ver-$arch.exe"
+    Act "Python $ver 공식 설치 파일 받기·검증$(if (-not $VerifyOnly) { '·설치' }): $url" {
+        $f = Save-Url $url "python-$ver-$arch.exe"
+        Assert-Signed $f 'Python Software Foundation'
+        if ($VerifyOnly) { Write-Ok "Python 설치 파일 검증 완료 (설치하지 않음)"; return }
+        Invoke-Installer $f @('/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_launcher=1', 'Include_test=0', 'Include_doc=0') 'Python'
+    }
+}
+
+# Node.js: 최신 LTS를 공식 index.json에서 찾고, SHASUMS256.txt의 해시와 서명을 모두 확인한다.
+function Install-NodeDirect {
+    param([switch]$VerifyOnly)
+    $arch = Get-Arch
+    Act "Node.js LTS 공식 설치 파일 받기·검증$(if (-not $VerifyOnly) { '·설치' }): https://nodejs.org/dist/index.json" {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        try { $index = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' -UseBasicParsing }
+        catch { Fail "Node.js 버전 목록을 받지 못했습니다: $($_.Exception.Message)" }
+        $rel = Select-NodeLts $index $arch
+        if (-not $rel) { Fail "Node.js LTS의 Windows $arch MSI를 찾지 못했습니다" }
+        $ver = $rel.version
+        $name = "node-$ver-$arch.msi"
+        Write-Info "Node.js LTS $ver ($($rel.lts))"
+        $f = Save-Url "https://nodejs.org/dist/$ver/$name" $name
+        $sums = Save-Url "https://nodejs.org/dist/$ver/SHASUMS256.txt" 'SHASUMS256.txt'
+        $expected = Get-ExpectedSha256 $sums $name
+        if (-not $expected) { Fail "SHASUMS256.txt에 $name 항목이 없습니다" }
+        Assert-Sha256 $f $expected
+        Assert-Signed $f 'OpenJS Foundation|Node\.js Foundation'
+        if ($VerifyOnly) { Write-Ok "Node.js 설치 파일 검증 완료 (설치하지 않음)"; return }
+        Invoke-Installer $f @('/qn', '/norestart') 'Node.js'
+    }
+}
+
+# Git: Git for Windows의 최신 릴리스를 GitHub API에서 찾는다.
+function Install-GitDirect {
+    param([switch]$VerifyOnly)
+    $arch = Get-Arch
+    Act "Git for Windows 공식 설치 파일 받기·검증$(if (-not $VerifyOnly) { '·설치' }): github.com/git-for-windows/git" {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        try { $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' -UseBasicParsing -Headers @{ 'User-Agent' = 'VisionGuide-setup' } }
+        catch { Fail "Git for Windows 릴리스를 확인하지 못했습니다: $($_.Exception.Message)" }
+        $asset = Select-GitAsset $rel $arch
+        if (-not $asset) { Fail "Git for Windows $arch 설치 파일을 찾지 못했습니다" }
+        Write-Info "Git for Windows $($rel.tag_name)"
+        $f = Save-Url $asset.browser_download_url $asset.name
+        Assert-Signed $f 'Johannes Schindelin|Git for Windows'
+        if ($VerifyOnly) { Write-Ok "Git 설치 파일 검증 완료 (설치하지 않음)"; return }
+        Invoke-Installer $f @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-') 'Git'
+    }
+}
+
+function Install-Tool {
+    param([string]$WingetId, [string]$Name, [scriptblock]$Direct)
+    $useWinget = (-not $NoWinget) -and [bool](Get-Command winget.exe -ErrorAction SilentlyContinue)
+    $script:ToolInstalled = $false
+    if ($useWinget) {
+        Act "winget install $WingetId" {
+            & winget.exe install --id $WingetId -e --silent --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) { $script:ToolInstalled = $true }
+        }
+        if ($DryRun) { return }
+        if (-not $script:ToolInstalled) { Write-Warn "winget으로 $Name 을(를) 설치하지 못했습니다 — 공식 설치 파일을 직접 받아 설치합니다" }
+    } else {
+        Write-Warn "$(if ($NoWinget) { '-NoWinget' } else { 'winget이 없어' }) $Name 은(는) 공식 설치 파일을 직접 받아 설치합니다"
+    }
+    if (-not $script:ToolInstalled) { & $Direct }
+    if (-not $DryRun) { Update-SessionPath }
+}
+
+# 설치 없이 다운로드·서명·체크섬만 검증한다 — 새 PC에서 직접 설치 경로가 동작할지 미리 본다(관리자 권한 불필요).
+if ($VerifyDownloads) {
+    Write-Step '공식 설치 파일 검증 (설치하지 않습니다)'
+    Install-PythonDirect -VerifyOnly
+    Install-NodeDirect -VerifyOnly
+    Install-GitDirect -VerifyOnly
+    Finish 0
 }
 
 # ── 1. 권한 ─────────────────────────────────────────────────────────
@@ -148,7 +304,7 @@ if ($PSScriptRoot) {
     if (Test-Path (Join-Path $candidate 'dashboard\backend\app\main.py')) { $Repo = $candidate }
 }
 if (-not $Repo) {
-    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { Install-WithWinget 'Git.Git' 'Git' }
+    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { Install-Tool 'Git.Git' 'Git' { Install-GitDirect } }
     if (Test-Path (Join-Path $InstallDir 'dashboard\backend\app\main.py')) {
         $Repo = $InstallDir
         Act "git pull ($InstallDir)" { & git.exe -C $InstallDir pull --ff-only }
@@ -193,7 +349,7 @@ function Find-Python {
 Write-Step 'Python 확인'
 $Python = Find-Python
 if (-not $Python) {
-    Install-WithWinget 'Python.Python.3.11' 'Python 3.11'
+    Install-Tool 'Python.Python.3.11' 'Python 3.11' { Install-PythonDirect }
     $Python = Find-Python
     if (-not $Python -and -not $DryRun) { Fail 'Python 3.10~3.12를 찾지 못했습니다. 설치 후 PowerShell을 새로 열고 다시 실행하세요.' }
 }
@@ -206,7 +362,7 @@ if ($needBuild) {
     Write-Step 'Node.js 확인'
     $NpmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
     if (-not $NpmCmd) {
-        Install-WithWinget 'OpenJS.NodeJS.LTS' 'Node.js LTS'
+        Install-Tool 'OpenJS.NodeJS.LTS' 'Node.js LTS' { Install-NodeDirect }
         $NpmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
         if (-not $NpmCmd) { $NpmCmd = Join-Path $env:ProgramFiles 'nodejs\npm.cmd' }
     }

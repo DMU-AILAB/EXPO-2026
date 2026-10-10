@@ -521,6 +521,17 @@ Pi에서 **한 줄**로 코드 + systemd 유닛 + sudoers + 의존성 + 서버 �
   `tests/test_run_server.py`가 고정한다. 같은 조건의 실제 Windows 검증은 venv → `pip install -r` → `.env`/DB → `pythonw run_server.py` →
   `GET /`까지 임시 폴더에서 돌려 확인했다(관리자 권한이 필요한 방화벽·작업 스케줄러만 제외).
 
+- **도구 설치는 winget 우선, 없거나 실패하면 공식 설치 파일을 직접 받는다**(`Install-Tool` → `Install-{Python,Node,Git}Direct`).
+  **받은 파일은 실행하기 전에 검증한다 — 해시를 코드에 박아 두지 않고**(버전이 바뀌면 낡는다) Authenticode 서명의 **유효성과 게시자를 둘 다**
+  확인한다(`Assert-Signed`: 게시자만 보면 변조된 파일도 통과한다 — 인증서는 그대로 남기 때문. 이 경우를 단독으로 시험하는 테스트가 있다.
+  변이로 "유효성 검사 제거"가 처음에는 살아남아 추가했다). Node.js는 공식 `SHASUMS256.txt`와도 대조한다. 모두 HTTPS이고 TLS 1.2를 명시한다
+  (Windows PowerShell 5.1 기본은 TLS 1.0이라 python.org·nodejs.org에 못 붙는다). 게시자 이름은 실제 파일로 확인했다:
+  `Python Software Foundation`, `OpenJS Foundation`, `Johannes Schindelin`(Git for Windows). Python은 3.11.9를 쓴다(3.11의 마지막 바이너리
+  설치 파일). `-NoWinget`으로 직접 경로를 강제하고, `-VerifyDownloads`는 설치 없이 받아 검증만 한다. 종료 코드 3010은 재부팅 필요(설치는 성공)라 성공이다.
+  `tests/test_setup_server_install.py`는 **ps1에서 함수 정의만 AST로 꺼내 mock과 함께 실제 PowerShell에서** 돌린다(winget 성공·실패·없음·`-NoWinget`·
+  `-DryRun`의 경로, 서명·체크섬 거부, Node LTS·Git 설치 파일 선택). **무음 설치 인자와 설치 프로그램 실행 자체는 이 환경에서 실행해 보지 못했다**
+  (관리자 권한과 실제 설치가 필요) — 새 PC에서 처음 돌리는 부분이다.
+
 ## Pi 자동 발견 · 등록 · 승인 — 설계 결정
 
 Pi가 서버를 스스로 찾아 등록한다(`device/server_discovery.py`·`server_join.py` ↔ 서버 `discovery_responder.py`·
