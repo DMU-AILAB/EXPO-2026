@@ -128,3 +128,77 @@ def test_latch_path_does_not_count_a_person_who_never_latched(tmp_path):
     total, cane = _run_counter(tmp_path, frames_total=100, cane_frames=0,
                                use_latch=True)
     assert (total, cane) == (1, 0)
+
+
+# --- 재식별로 되살아난 track_id의 중복 집계 방지 ---------------------------------------------
+# SimpleTracker는 죽은 트랙을 revive_sec 안에 같은 자리에서 다시 잡으면 같은 track_id로 되살린다.
+# 카운터가 사라지는 즉시 확정하면 같은 사람이 두 번 집계된다(실영상 23편: 118 -> 106).
+
+def _person(tid, x=100):
+    return {"track_id": tid, "bbox": [x, 100, x + 60, 260], "class": 1}
+
+
+def _total(db_path):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return conn.execute(
+            "SELECT COALESCE(SUM(total_count), 0) FROM foot_traffic_hourly").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _run(counter, frames):
+    """frames: [(now, [track...]), ...]"""
+    for now, tracks in frames:
+        counter.update(tracks, {}, now)
+
+
+def test_같은_id가_재식별_창_안에_돌아오면_한_명으로_센다(tmp_path):
+    from foot_traffic_counter import FootTrafficCounter
+    c = FootTrafficCounter(tmp_path / "t.db", min_track_frames=5)
+    frames = [(i * 0.1, [_person(0)]) for i in range(10)]            # 0.0~0.9초 등장
+    frames += [(1.0 + i * 0.1, []) for i in range(10)]               # 1.0~1.9초 사라짐(창 2.0초 안)
+    frames += [(2.0 + i * 0.1, [_person(0)]) for i in range(10)]     # 같은 id로 복귀
+    _run(c, frames)
+    c.finalize_all()
+    c.flush()
+    assert _total(tmp_path / "t.db") == 1
+
+
+def test_재식별_창을_넘겨_사라지면_따로_센다(tmp_path):
+    from foot_traffic_counter import FootTrafficCounter
+    c = FootTrafficCounter(tmp_path / "t.db", min_track_frames=5, revive_grace_sec=2.0)
+    frames = [(i * 0.1, [_person(0)]) for i in range(10)]
+    frames += [(1.0 + i * 0.1, []) for i in range(40)]               # 4초 공백 > 2초 창
+    frames += [(5.0 + i * 0.1, [_person(1)]) for i in range(10)]     # 다른 id(트래커도 되살리지 못한 경우)
+    _run(c, frames)
+    c.finalize_all()
+    c.flush()
+    assert _total(tmp_path / "t.db") == 2
+
+
+def test_보류_중인_트랙도_종료_때_마감된다(tmp_path):
+    from foot_traffic_counter import FootTrafficCounter
+    c = FootTrafficCounter(tmp_path / "t.db", min_track_frames=5)
+    _run(c, [(i * 0.1, [_person(0)]) for i in range(10)])
+    _run(c, [(1.0, [])])                  # 막 사라져 보류 중
+    c.close()                             # 보류 상태에서 종료해도 집계가 사라지면 안 된다
+    assert _total(tmp_path / "t.db") == 1
+
+
+def test_되살아난_id의_지팡이_래치는_이어진다(tmp_path):
+    from foot_traffic_counter import FootTrafficCounter
+    c = FootTrafficCounter(tmp_path / "t.db", min_track_frames=5)
+    for i in range(10):
+        c.update([_person(0)], {}, i * 0.1, cane_user_ids={0} if i == 3 else set())
+    for i in range(5):
+        c.update([], {}, 1.0 + i * 0.1, cane_user_ids=set())
+    for i in range(10):
+        c.update([_person(0)], {}, 2.0 + i * 0.1, cane_user_ids=set())   # 복귀 후 래치 신호 없음
+    c.finalize_all()
+    c.flush()
+    conn = sqlite3.connect(str(tmp_path / "t.db"))
+    total, cane = conn.execute(
+        "SELECT SUM(total_count), SUM(cane_user_count) FROM foot_traffic_hourly").fetchone()
+    conn.close()
+    assert (total, cane) == (1, 1)        # 한 명이고, 앞에서 확정된 지팡이 사용자 판정이 유지된다
