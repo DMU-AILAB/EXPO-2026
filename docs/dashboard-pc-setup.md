@@ -24,6 +24,11 @@ UDP 48555) → **로그온 시 자동 시작**(작업 스케줄러 `VisionGuide 
 끝나면 접속 주소(`http://<이 PC의 LAN 주소>:8000`)와 관리자 비밀번호를 한 번 보여 준다
 (`dashboard\backend\data\admin-password.txt`에도 저장된다).
 
+- **`winget`이 없거나 설치에 실패해도 된다.** Python·Node.js·Git은 `winget`으로 먼저 시도하고, `winget`이 없거나 실패하면
+  **공식 설치 파일을 직접 받아 설치**한다(Python 3.11.9는 python.org, Node.js 최신 LTS는 nodejs.org, Git은 git-for-windows 릴리스).
+  받은 파일은 **실행하기 전에** 디지털 서명(유효성 + 게시자)을 확인하고, Node.js는 공식 `SHASUMS256.txt`의 SHA-256과도 대조한다 —
+  하나라도 틀리면 실행하지 않고 멈춘다. `-NoWinget`으로 이 경로를 강제할 수 있고, 설치 없이 받아서 검증만 해 보려면
+  `.\setup-server.bat -VerifyDownloads`(관리자 권한 불필요)를 쓴다. x64와 ARM64를 지원한다.
 - **다시 실행해도 안전하다.** 기존 `.env`의 값(JWT 키·포트)과 DB는 바꾸지 않고 빠진 키만 채운다.
   `-ResetEnv`만 `.env`를 새로 만든다(로그인이 모두 풀린다).
 - 프런트는 백엔드가 **같은 포트로 서빙**한다 — Node/Vite/CORS 설정이 필요 없다.
