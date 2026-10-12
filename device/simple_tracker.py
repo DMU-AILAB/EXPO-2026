@@ -15,6 +15,10 @@ from __future__ import annotations
 _DEFAULT_REVIVE_SEC = 2.0
 _DEFAULT_REVIVE_DIST_RATIO = 1.0
 
+# 트랙이 죽은 뒤에도 같은 track_id가 돌아올 수 있는 시간 — 이 id를 **세는** 쪽(유동인구 카운터)이
+# 확정을 이만큼 미뤄야 한다. 안 미루면 되살아난 같은 사람이 두 번 집계된다.
+REVIVE_SEC = _DEFAULT_REVIVE_SEC
+
 
 class SimpleTracker:
     """IoU 기반 단순 객체 트래커.

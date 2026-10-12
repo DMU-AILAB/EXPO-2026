@@ -19,6 +19,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Union
 
+# 트랙이 사라진 뒤 확정을 미루는 시간(초). `SimpleTracker`는 죽은 트랙을 이 시간 안에 같은 자리에서
+# 다시 잡으면 **같은 track_id로 되살린다.** 사라지는 즉시 집계하면 되살아난 같은 사람이 새
+# `_TrackStat`으로 다시 시작해 두 번 센다(실측: 1명이 1.2초 가려졌다 나타나면 total=2).
+# 트래커의 재식별 창과 반드시 같이 움직여야 하므로 한 곳(simple_tracker.REVIVE_SEC)에서 가져온다.
+from simple_tracker import REVIVE_SEC
+
 
 @dataclass
 class _TrackStat:
@@ -38,13 +44,16 @@ class FootTrafficCounter:
         cane_ratio_threshold: float = 0.3,
         min_track_frames: int = 5,
         commit_interval_sec: float = 30.0,
+        revive_grace_sec: float = REVIVE_SEC,
     ) -> None:
         self.cane_ratio_threshold = cane_ratio_threshold
         self.min_track_frames = min_track_frames
         self.commit_interval_sec = commit_interval_sec
+        self.revive_grace_sec = revive_grace_sec
 
         self._stats: dict[int, _TrackStat] = {}
         self._active_ids: set[int] = set()
+        self._dying: dict[int, float] = {}   # 사라졌지만 되살아날 수 있어 확정을 미룬 id -> 사라진 시각
         self._pending: dict[str, dict[str, int]] = {}
         self._last_commit = time.time()
 
@@ -93,8 +102,14 @@ class FootTrafficCounter:
             if cane_user_ids is not None:
                 st.latched = bool(st.latched) or (tid in cane_user_ids)
 
-        died = self._active_ids - current_ids
-        for tid in died:
+        # 되살아난 id는 보류를 풀고 **같은 통계에 이어 쌓는다**(위 setdefault가 기존 것을 돌려준다).
+        for tid in current_ids & self._dying.keys():
+            del self._dying[tid]
+        for tid in self._active_ids - current_ids:
+            self._dying[tid] = now
+        # 재식별 창이 지나도 안 돌아온 id만 확정한다.
+        for tid in [t for t, at in self._dying.items() if now - at > self.revive_grace_sec]:
+            del self._dying[tid]
             self._finalize(tid)
         self._active_ids = current_ids
 
@@ -104,9 +119,10 @@ class FootTrafficCounter:
 
     def finalize_all(self) -> None:
         """아직 활성 상태인 모든 트랙을 강제로 마감 처리한다 (종료 시 사용)."""
-        for tid in list(self._active_ids):
+        for tid in list(self._active_ids) + list(self._dying):
             self._finalize(tid)
         self._active_ids.clear()
+        self._dying.clear()
 
     def close(self) -> None:
         self.finalize_all()
