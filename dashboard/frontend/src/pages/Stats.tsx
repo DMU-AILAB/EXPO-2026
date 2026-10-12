@@ -7,6 +7,9 @@ import { formatNumber } from '../format'
 import type { TimeSeriesPoint } from '../types'
 
 type Period = 'today' | '7d' | '30d'
+type ChartKind = 'bar' | 'line'
+
+const CHART_KIND_LABEL: Record<ChartKind, string> = { bar: '막대', line: '선' }
 
 const PERIOD_LABEL: Record<Period, string> = {
   today: '오늘',
@@ -16,6 +19,7 @@ const PERIOD_LABEL: Record<Period, string> = {
 
 export default function Stats() {
   const [period, setPeriod] = useState<Period>('today')
+  const [chartKind, setChartKind] = useState<ChartKind>('bar')
 
   const summaryRes = useApi(() => api.statsSummary(), [], 15_000)
   const byDeviceRes = useApi(() => api.statsByDevice(), [], 15_000)
@@ -96,6 +100,22 @@ export default function Stats() {
             {PERIOD_LABEL[period]} 유동인구 추이
           </h2>
           <div className="flex items-center gap-3 text-[11px] font-semibold">
+            <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-200/60">
+              {(Object.keys(CHART_KIND_LABEL) as ChartKind[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setChartKind(k)}
+                  aria-pressed={chartKind === k}
+                  className={`px-2.5 py-1 rounded-md transition-all ${
+                    chartKind === k
+                      ? 'bg-white text-[#2c4be0] shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  {CHART_KIND_LABEL[k]}
+                </button>
+              ))}
+            </div>
             <span className="flex items-center gap-1.5 text-slate-600">
               <span className="w-2.5 h-2.5 rounded-sm bg-[#2c4be0]" /> 전체
             </span>
@@ -104,7 +124,7 @@ export default function Stats() {
             </span>
           </div>
         </div>
-        <TimeSeriesChart points={series} />
+        <TimeSeriesChart points={series} kind={chartKind} />
       </div>
 
       {/* Bottom grid */}
@@ -214,48 +234,111 @@ function Kpi({ label, icon, value, sub, tone }: {
 }
 
 /**
- * 순수 SVG 막대 그래프 — 차트 라이브러리를 새로 들이지 않는다.
+ * 순수 SVG 시계열 차트(막대/선) — 차트 라이브러리를 새로 들이지 않는다.
  *
  * roi_editor의 통계 탭도 같은 이유로 canvas 직접 그리기를 쓴다. 지표가 두 계열뿐이라
  * 의존성을 추가할 만큼의 복잡도가 아니다.
+ *
+ * 두 계열 모두 y=0(아래쪽 기준선)에서 위로만 자란다. 눈금 최댓값은 **두 계열의 최댓값**이라
+ * 지팡이 사용자 수가 전체보다 커져도(집계 시점 차이) 차트 밖으로 넘치지 않는다.
  */
-function TimeSeriesChart({ points }: { points: TimeSeriesPoint[] }) {
+const CHART_H = 176
+const COLOR_TOTAL = '#2c4be0'
+const COLOR_CANE = '#f59e0b'
+
+function TimeSeriesChart({ points, kind }: { points: TimeSeriesPoint[]; kind: ChartKind }) {
   if (points.length === 0) {
     return <p className="text-xs text-slate-400 py-12 text-center">집계된 데이터가 없습니다</p>
   }
 
-  const max = Math.max(...points.map((p) => p.total_count), 1)
+  const n = points.length
+  const max = Math.max(...points.map((p) => Math.max(p.total_count, p.cane_user_count)), 1)
   const label = (p: TimeSeriesPoint) =>
     p.hour != null ? `${p.hour}시` : (p.date ?? '').slice(5)
+  const pct = (v: number) => Math.min(Math.max(v / max, 0), 1) * 100
+  const cx = (i: number) => ((i + 0.5) / n) * 100
+
+  // viewBox는 0~100 정규화 좌표 — y는 위가 0이므로 뒤집는다.
+  const line = (pick: (p: TimeSeriesPoint) => number) =>
+    points.map((p, i) => `${cx(i)},${100 - pct(pick(p))}`).join(' ')
 
   return (
-    <div className="flex items-end gap-[3px] h-44">
-      {points.map((p, i) => {
-        const totalH = (p.total_count / max) * 100
-        const caneH = (p.cane_user_count / max) * 100
-        return (
-          <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
-            <div className="w-full relative flex flex-col justify-end h-full">
-              <div
-                className="w-full bg-[#2c4be0]/85 rounded-t-sm transition-all"
-                style={{ height: `${totalH}%` }}
-              />
-              {p.cane_user_count > 0 && (
-                <div
-                  className="w-full bg-amber-500 absolute bottom-0 rounded-t-sm"
-                  style={{ height: `${caneH}%` }}
-                />
+    <div>
+      <div className="relative" style={{ height: CHART_H }}>
+        <span className="absolute left-0 -top-0.5 text-[9px] text-slate-400 font-mono z-[1]">
+          {formatNumber(max)}
+        </span>
+        <svg
+          className="absolute inset-0 w-full h-full"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          {[0, 50].map((y) => (
+            <line key={y} x1="0" x2="100" y1={y} y2={y} stroke="#e2e8f0" strokeWidth="1"
+              vectorEffect="non-scaling-stroke" strokeDasharray="3 3" />
+          ))}
+          {kind === 'line' && (
+            <>
+              <polyline points={line((p) => p.total_count)} fill="none" stroke={COLOR_TOTAL}
+                strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              <polyline points={line((p) => p.cane_user_count)} fill="none" stroke={COLOR_CANE}
+                strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+            </>
+          )}
+          {/* 0 기준선 */}
+          <line x1="0" x2="100" y1="100" y2="100" stroke="#94a3b8" strokeWidth="1"
+            vectorEffect="non-scaling-stroke" />
+        </svg>
+
+        {/* 막대와 점은 HTML — preserveAspectRatio="none"에서 SVG 도형은 찌그러진다 */}
+        <div className="absolute inset-0 flex">
+          {points.map((p, i) => (
+            <div key={i} className="flex-1 h-full relative group">
+              {kind === 'bar' ? (
+                <>
+                  <div
+                    className="absolute bottom-0 left-[10%] right-[10%] rounded-t-sm"
+                    style={{ height: `${pct(p.total_count)}%`, background: COLOR_TOTAL, opacity: 0.85 }}
+                  />
+                  {p.cane_user_count > 0 && (
+                    <div
+                      className="absolute bottom-0 left-[10%] right-[10%] rounded-t-sm"
+                      style={{ height: `${pct(p.cane_user_count)}%`, background: COLOR_CANE }}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <Dot bottom={pct(p.total_count)} color={COLOR_TOTAL} />
+                  <Dot bottom={pct(p.cane_user_count)} color={COLOR_CANE} />
+                </>
               )}
+              <div className="hidden group-hover:block absolute inset-0 bg-slate-900/[0.04]" />
+              <div className="hidden group-hover:block absolute -top-8 left-1/2 -translate-x-1/2 z-10 px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-semibold whitespace-nowrap">
+                {label(p)} · {p.total_count}명 (지팡이 {p.cane_user_count})
+              </div>
             </div>
-            <span className="text-[9px] text-slate-400 mt-1 truncate w-full text-center">
-              {i % Math.ceil(points.length / 12) === 0 ? label(p) : ''}
-            </span>
-            <div className="hidden group-hover:block absolute -top-8 z-10 px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-semibold whitespace-nowrap">
-              {label(p)} · {p.total_count}명 (지팡이 {p.cane_user_count})
-            </div>
-          </div>
-        )
-      })}
+          ))}
+        </div>
+      </div>
+
+      <div className="flex mt-1">
+        {points.map((p, i) => (
+          <span key={i} className="flex-1 text-[9px] text-slate-400 truncate text-center">
+            {i % Math.ceil(n / 12) === 0 ? label(p) : ''}
+          </span>
+        ))}
+      </div>
     </div>
+  )
+}
+
+function Dot({ bottom, color }: { bottom: number; color: string }) {
+  return (
+    <span
+      className="absolute left-1/2 w-1.5 h-1.5 rounded-full -translate-x-1/2 translate-y-1/2"
+      style={{ bottom: `${bottom}%`, background: color }}
+    />
   )
 }
