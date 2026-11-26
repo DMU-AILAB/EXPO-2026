@@ -16,6 +16,8 @@ python-multipart
 shapely
 httpx
 mutagen
+# TTS on non-Windows servers (online Edge voices; Windows uses local SAPI)
+edge-tts
 # Used by scheduled reboots (app/services/scheduler_service.py). Missing it made the app
 # die at import time.
 apscheduler

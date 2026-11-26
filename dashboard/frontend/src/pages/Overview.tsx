@@ -30,12 +30,16 @@ export default function Overview() {
   const alertCount = summary?.active_alert_count ?? 0
 
   const q = query.trim().toLowerCase()
-  const filtered = q
+  const matched = q
     ? devices.filter((d) =>
         d.name.toLowerCase().includes(q) ||
         d.ip.includes(q) ||
         (d.location ?? '').toLowerCase().includes(q))
     : devices
+  // 오프라인은 후순위로 — 정상 > 주의 > 오프라인. Array.sort는 안정 정렬이라
+  // 같은 상태끼리는 서버가 준 순서(등록 순)가 유지된다.
+  const statusRank = (s: string) => (s === 'offline' ? 2 : s === 'warning' ? 1 : 0)
+  const filtered = [...matched].sort((a, b) => statusRank(a.status) - statusRank(b.status))
 
   return (
     <div className="max-w-[1720px] mx-auto px-8 py-7 relative z-10">
