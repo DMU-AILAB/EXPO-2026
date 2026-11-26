@@ -1,5 +1,8 @@
+import asyncio
+import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -90,6 +93,33 @@ try {
         raise RuntimeError(detail[-500:])
 
 
+# 리눅스·맥 서버용 TTS (Windows SAPI를 쓸 수 없을 때). Microsoft Edge 온라인 음성이라 인터넷이 필요하고
+# 입력한 문장이 외부 서비스로 전송된다. Windows에서는 쓰지 않는다(로컬 SAPI가 우선).
+DEFAULT_EDGE_VOICE = "ko-KR-SunHiNeural"
+_EDGE_VOICE_RE = re.compile(r"^[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural$")
+
+
+def _edge_tts_available() -> bool:
+    return importlib.util.find_spec("edge_tts") is not None
+
+
+def _edge_voice_name(voice: Optional[str]) -> str:
+    """브라우저 음성 이름(Windows/Google 등)은 edge 음성이 아니므로, edge 형식일 때만 쓴다."""
+    return voice if voice and _EDGE_VOICE_RE.match(voice) else DEFAULT_EDGE_VOICE
+
+
+def _generate_edge_tts(path: str, request: TtsRequest) -> None:
+    import edge_tts  # type: ignore[import]
+
+    # 미리듣기(브라우저)가 1 + rate*0.05 배속이라 같은 눈금(단계당 5%)으로 맞춘다.
+    communicate = edge_tts.Communicate(
+        request.text, _edge_voice_name(request.voice), rate=f"{request.rate * 5:+d}%",
+    )
+    asyncio.run(asyncio.wait_for(communicate.save(path), timeout=30))
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        raise RuntimeError("edge-tts가 음성을 만들지 못했습니다 (인터넷 연결을 확인하세요).")
+
+
 def _audio_response(audio: Audio) -> dict:
     return {
         "filename": audio.filename,
@@ -177,19 +207,25 @@ def generate_tts(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    """Generate a local Windows SAPI voice file for an ROI announcement."""
+    """ROI 안내 음성을 서버에서 만든다. Windows는 로컬 SAPI(wav), 그 외 OS는 edge-tts(mp3)."""
     powershell = _powershell_path()
-    if not powershell:
+    use_edge = powershell is None and _edge_tts_available()
+    if not powershell and not use_edge:
         raise HTTPException(
             status_code=503,
-            detail="로컬 TTS는 Windows PC에서만 사용할 수 있습니다.",
+            detail="TTS를 쓸 수 없습니다. Windows PC이거나 서버에 edge-tts가 설치돼 있어야 합니다 "
+                   "(pip install edge-tts).",
         )
 
-    filename = f"tts_{uuid.uuid4().hex[:12]}.wav"
+    suffix = ".mp3" if use_edge else ".wav"
+    filename = f"tts_{uuid.uuid4().hex[:12]}{suffix}"
     file_path = str(Path(settings.audio_dir) / filename)
     try:
-        _generate_windows_tts(file_path, request, powershell)
-        duration = _audio_duration(file_path, ".wav")
+        if use_edge:
+            _generate_edge_tts(file_path, request)
+        else:
+            _generate_windows_tts(file_path, request, powershell)
+        duration = _audio_duration(file_path, suffix)
         if duration > MAX_DURATION_SECONDS:
             raise ValueError(f"Audio duration exceeds 10 seconds (length: {duration:.1f}s)")
         size_bytes = os.path.getsize(file_path)

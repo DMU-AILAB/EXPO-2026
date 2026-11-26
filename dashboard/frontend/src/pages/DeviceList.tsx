@@ -32,7 +32,9 @@ export default function DeviceList() {
   const devices = data?.data ?? []
   const total = data?.total ?? 0
   const onlineCount = devices.filter((d) => d.status === 'online').length
-  const filtered = devices
+  // 오프라인은 후순위 — 정상 > 주의 > 오프라인. 안정 정렬이라 같은 상태끼리는 서버 순서를 유지한다.
+  const statusRank = (s: string) => (s === 'offline' ? 2 : s === 'warning' ? 1 : 0)
+  const filtered = [...devices].sort((a, b) => statusRank(a.status) - statusRank(b.status))
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [rolloutOpen, setRolloutOpen] = useState(false)
 
